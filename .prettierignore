@@ -1,0 +1,8 @@
+.next
+node_modules
+pnpm-lock.yaml
+public
+.vercel
+coverage
+*.md
+supabase/.branches
