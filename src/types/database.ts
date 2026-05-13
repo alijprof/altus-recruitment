@@ -1,8 +1,11 @@
-// Placeholder until `supabase gen types typescript --local > src/types/database.ts`
-// is run (Task 2). Keeping the export so the supabase client wrappers compile.
+// Placeholder. Once Supabase is provisioned locally, regenerate via:
 //
-// Once generated, this file will contain the full Database type derived from
-// the live schema — do not hand-edit.
+//   pnpm exec supabase gen types typescript --local > src/types/database.ts
+//
+// The full schema (Task 2 migration) covers many more tables than appear
+// here. This minimal shape is enough to keep the supabase clients and the
+// current authenticated layout compiling. Task 3 onward will assume the
+// generated types are in place — do not hand-edit further additions.
 
 export type Json = string | number | boolean | null | { [key: string]: Json | undefined } | Json[]
 
