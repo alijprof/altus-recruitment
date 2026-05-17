@@ -1,5 +1,6 @@
 import 'server-only'
 
+import * as Sentry from '@sentry/nextjs'
 import type { SupabaseClient } from '@supabase/supabase-js'
 
 import type { Database, Tables } from '@/types/database'
@@ -17,8 +18,7 @@ export async function getProfile(
     .maybeSingle()
 
   if (error) {
-    // TODO: Sentry.captureException(error, { tags: { layer: 'db', helper: 'getProfile' } }) — added in Task 0.5
-    console.error('[db/profiles.getProfile]', error)
+    Sentry.captureException(error, { tags: { layer: 'db', helper: 'getProfile' } })
     return { ok: false, code: 'internal' }
   }
   if (!data) return { ok: false, code: 'not_found' }

@@ -1,5 +1,6 @@
 import 'server-only'
 
+import * as Sentry from '@sentry/nextjs'
 import type { SupabaseClient } from '@supabase/supabase-js'
 
 import type { Database, Tables } from '@/types/database'
@@ -17,8 +18,7 @@ export async function getOrganization(
     .maybeSingle()
 
   if (error) {
-    // TODO: Sentry.captureException(error, { tags: { layer: 'db', helper: 'getOrganization' } }) — added in Task 0.5
-    console.error('[db/organizations.getOrganization]', error)
+    Sentry.captureException(error, { tags: { layer: 'db', helper: 'getOrganization' } })
     return { ok: false, code: 'internal' }
   }
   if (!data) return { ok: false, code: 'not_found' }

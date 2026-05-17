@@ -3,3 +3,4 @@ allowBuilds:
   supabase: true
   unrs-resolver: false
   protobufjs: false
+  '@sentry/cli': false

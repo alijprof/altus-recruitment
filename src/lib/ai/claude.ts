@@ -1,6 +1,7 @@
 import 'server-only'
 
 import Anthropic from '@anthropic-ai/sdk'
+import * as Sentry from '@sentry/nextjs'
 
 import { env } from '@/lib/env'
 import { createServiceClient } from '@/lib/supabase/service'
@@ -69,8 +70,9 @@ async function runWithLogging(args: RunArgs): Promise<Anthropic.Message> {
           ...(args.userId ? { p_user_id: args.userId } : {}),
         })
       } catch (logErr) {
-        // TODO: Sentry.captureException(logErr, { tags: { layer: 'ai', helper: 'record_ai_usage' } }) — added in Task 0.5
-        console.error('[ai/claude.runWithLogging] record_ai_usage failed', logErr)
+        Sentry.captureException(logErr, {
+          tags: { layer: 'ai', helper: 'record_ai_usage' },
+        })
       }
       return response
     } catch (err) {

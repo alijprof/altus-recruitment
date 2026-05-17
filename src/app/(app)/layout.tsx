@@ -3,6 +3,7 @@ import { redirect } from 'next/navigation'
 import { TopNav } from '@/components/app/top-nav'
 import { getOrganization } from '@/lib/db/organizations'
 import { getProfile } from '@/lib/db/profiles'
+import { setRequestScope } from '@/lib/observability/sentry'
 import { createClient } from '@/lib/supabase/server'
 
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
@@ -24,7 +25,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
 
   const organization = await getOrganization(supabase, profile.data.organization_id)
 
-  // TODO: setRequestScope(user.id, profile.data.organization_id) — added in Task 0.5
+  setRequestScope(user.id, profile.data.organization_id)
 
   return (
     <div className="flex min-h-svh flex-col">
