@@ -10,14 +10,19 @@
     "typecheck": "tsc --noEmit",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "db:types": "pnpm exec supabase gen types typescript --local --schema public > src/types/database.ts"
+    "db:types": "pnpm exec supabase gen types typescript --local --schema public > src/types/database.ts",
+    "inngest:dev": "pnpm dlx inngest-cli@latest dev -u http://localhost:3000/api/inngest",
+    "dev:all": "concurrently -n next,inngest 'pnpm dev' 'pnpm inngest:dev'"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "~0.96.0",
     "@supabase/ssr": "^0.10.3",
     "@supabase/supabase-js": "^2.105.4",
     "@t3-oss/env-nextjs": "^0.13.11",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
+    "concurrently": "^9.2.1",
+    "inngest": "^4.4.0",
     "lucide-react": "^1.14.0",
     "next": "16.2.6",
     "react": "19.2.4",
