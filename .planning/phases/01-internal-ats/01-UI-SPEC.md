@@ -77,20 +77,40 @@ created: 2026-05-17
 
 ## Typography
 
+Exactly 4 sizes, exactly 2 weights.
+
 | Role | Size | Weight | Line Height | Usage |
 |------|------|--------|-------------|-------|
 | Body | 14px (`text-sm`) | 400 (regular) | 1.5 | Table cells, card body, form labels, activity feed entries |
-| Label | 12px (`text-xs`) | 500 (medium) | 1.4 | Column headers, metadata labels, badge text, confidence indicators |
+| Label | 12px (`text-xs`) | 400 (regular) | 1.4 | Column headers, metadata labels, badge text, confidence indicators — differentiated from Body by size and `text-muted-foreground` color, not weight |
 | Heading | 20px (`text-xl`) | 600 (semibold) | 1.3 | Page title, dialog title, section heading within a detail page |
-| Display | 28px (`text-2xl` / `text-3xl`) | 700 (bold) | 1.2 | Dashboard metric numbers only |
+| Display | 28px (`text-2xl` / `text-3xl`) | 600 (semibold) | 1.2 | Dashboard metric numbers only — size alone provides visual distinction |
 
 **Font stack:** `--font-geist-sans` for all UI text; `--font-mono` for technical strings only (candidate email in detail view, storage path in CV debug info).
 
 **Rules:**
 - Never use more than these four sizes in Phase 1 UI.
-- Bold (700) is reserved exclusively for dashboard metric numbers. All other bold-looking elements use semibold (600).
+- Only two weights exist in this product: 400 (`font-normal`) and 600 (`font-semibold`). Never use `font-medium` (500), `font-bold` (700), or any other weight.
 - Muted text (`text-muted-foreground`) is `text-sm` at weight 400 — used for secondary metadata in table rows and card subtitles.
-- Nav link text: `text-sm` at weight 400, upgrading to weight 500 on active route.
+- Nav link text: `text-sm` at weight 400, upgrading to weight 600 (`font-semibold`) on active route.
+- Label-style elements that need visual distinction (column headers, metadata labels) use `text-xs text-muted-foreground` at weight 400 — do NOT add `font-medium` to achieve this.
+
+---
+
+## Accessibility
+
+### Icon-only interactive elements
+
+**Rule:** All icon-only interactive elements MUST declare an `aria-label` that includes the entity context. No icon-only button may be rendered without an accessible label.
+
+| Component | Required aria-label pattern | Example |
+|-----------|----------------------------|---------|
+| `CandidateRow` row action `DropdownMenuTrigger` | `"Actions for {candidate full name}"` | `aria-label="Actions for Sarah Chen"` |
+| `PipelineCard` "..." `DropdownMenuTrigger` | `"Actions for {candidate full name}"` | `aria-label="Actions for James Okafor"` |
+| `ClientRow` row action `DropdownMenuTrigger` | `"Actions for {client company name}"` | `aria-label="Actions for Meridian Energy"` |
+| Any other icon-only trigger (sort icon buttons, close buttons) | `"[Action] [context]"` | `aria-label="Sort by name ascending"` |
+
+This applies anywhere a `DropdownMenuTrigger`, `Button`, or other interactive element renders only an icon (no visible text). Tooltips (`title` attribute or shadcn `Tooltip`) are encouraged as a complement but do not replace `aria-label`.
 
 ---
 
@@ -142,13 +162,14 @@ All colors expressed via shadcn CSS variables. The neutral palette was chosen be
 
 - Layout: shadcn `Table` with sticky header
 - Columns: Name, Role / Company, Location, Market Status, Last Contacted, Source
+- Column header text: `text-xs text-muted-foreground font-normal` (weight 400 — do NOT use `font-medium` or `font-semibold` on table headers)
 - Sort: clicking any column header triggers URL param update (`?sort=name&dir=asc`); active sort column shows lucide `ChevronUp` / `ChevronDown` icon inline
 - Search bar: above table, full-width on mobile, `w-64` on desktop; placeholder "Search candidates..."; debounce 300ms before updating URL param `?q=`; `pg_trgm` search on server — do NOT call on every keystroke
 - Pagination: below table, shows "1–25 of N candidates"; Previous / Next buttons using shadcn `Button` variant `outline`; page size 25 fixed for Phase 1
 - Empty state: see Copywriting Contract
 - Loading: skeleton rows (5 rows of 6 cells each) — use shadcn `Skeleton`
 - Row click: navigates to `/candidates/[id]`
-- Row actions (dropdown, right-aligned): "Edit" → `/candidates/[id]/edit`
+- Row actions: `DropdownMenuTrigger` icon-only button, right-aligned; MUST include `aria-label="Actions for {candidate full name}"`; options: "Edit" → `/candidates/[id]/edit`
 
 ### 2. Candidate Detail (`/candidates/[id]`)
 
@@ -163,16 +184,16 @@ All colors expressed via shadcn CSS variables. The neutral palette was chosen be
 - Trigger: "Review extracted data" button appears when `parsing_status = 'complete'`; parsing-in-progress shows `Progress` bar with percentage disabled
 - Panel: shadcn `Sheet` (right-aligned) on desktop; bottom sheet on mobile
 - Field rows: extracted field name, extracted value, confidence badge (`high` / `medium` / `low`) aligned right
-- Confidence badge spec: `text-xs font-medium px-2 py-0.5 rounded-full` using semantic status colors above; example: "Skills · medium"
+- Confidence badge spec: `text-xs font-normal px-2 py-0.5 rounded-full` (weight 400) using semantic status colors above; example: "Skills · medium"
 - Actions: "Accept all" fills empty candidate fields in bulk; "Edit field" opens inline edit; "Retry" requeues Inngest job (shown only when `parsing_status = 'failed'`)
 - Failed state: amber `Alert` with "CV parsing failed." heading and "Try again" button that calls the retry server action
 
 ### 4. Pipeline Kanban (`/jobs/[id]/pipeline` and `/pipeline`)
 
 - Layout: horizontal scroll container; each column is `min-w-[240px] max-w-[280px]`; columns: Applied, Screening, Submitted, 1st Interview, 2nd Interview, Offer, Placed
-- Column header: stage name (`text-sm font-semibold`) + count badge (`text-xs bg-muted rounded-full px-2`)
-- Card: shadcn `Card` with `p-3`; contains candidate name (`text-sm font-medium`), current role (`text-xs text-muted-foreground`), days-in-stage chip (`text-xs`); shows stale indicator (amber dot) when >14 days in stage
-- Card actions: "..." `DropdownMenu` with "Move to stage" and "Reject" options; "Reject" is red text
+- Column header: stage name (`text-sm font-semibold`) + count badge (`text-xs font-normal bg-muted rounded-full px-2`)
+- Card: shadcn `Card` with `p-3`; contains candidate name (`text-sm font-semibold`), current role (`text-xs text-muted-foreground font-normal`), days-in-stage chip (`text-xs font-normal`); shows stale indicator (amber dot) when >14 days in stage
+- Card actions: "..." `DropdownMenuTrigger` icon-only button; MUST include `aria-label="Actions for {candidate full name}"`; options: "Move to stage" and "Reject"; "Reject" is red text
 - Drag library: `@dnd-kit/core` + `@dnd-kit/sortable` (confirm not yet installed — add to dependencies)
 - **Pending state contract (D-09):** on drag drop, card immediately moves to target column AND receives `opacity-60` + a `Loader2` lucide icon spinning at 16px in the card footer; the icon and opacity clear on server confirm; on server error the card animates back to source column and a toast fires: "Couldn't move [Name] — please try again."
 - **Decline modal contract (D-10):**
@@ -187,8 +208,9 @@ All colors expressed via shadcn CSS variables. The neutral palette was chosen be
 ### 5. Client Detail (`/clients/[id]`)
 
 - Layout: full-width header (name, industry, status badges), then shadcn `Tabs`: Contacts | Jobs | Activity | Notes
-- Contacts tab: simple table (name, role, email, phone, last contacted); "Add contact" button top-right
+- Contacts tab: simple table (name, role, email, phone, last contacted); "Add contact" button top-right; row action `DropdownMenuTrigger` MUST include `aria-label="Actions for {contact full name}"`
 - Jobs tab: table of jobs (title, type, status, created); "Create job" button links to `/clients/[id]/jobs/new`
+- Client list row action `DropdownMenuTrigger` MUST include `aria-label="Actions for {client company name}"`
 - Activity tab: same timeline component as candidate detail, polymorphic across client + contacts + jobs under this client
 - Notes tab: single `Textarea` with "Save note" button; notes append to activities (type = note, entity_type = company)
 - Dormant flag: if `last_contacted_at` > 60 days ago, show amber `Badge` "Dormant" in the client list and header
@@ -196,17 +218,17 @@ All colors expressed via shadcn CSS variables. The neutral palette was chosen be
 ### 6. Dashboard (`/`)
 
 - Layout: metric cards row (4 cards), then two-column (activity feed left, widgets right) on desktop; stacked on mobile
-- Metric cards: shadcn `Card`; value in Display typography (28px bold); label in Label typography (12px medium muted)
+- Metric cards: shadcn `Card`; value in Display typography (28px, `font-semibold`); label in Label typography (12px, `font-normal`, `text-muted-foreground`)
 - Activity feed: last 20 entries; same timeline component; "View all" link to `/pipeline`
-- Stale applications widget: `Card` with heading "Stale Applications", list of application name + days + job; clicking navigates to `/jobs/[id]/pipeline`
-- Follow-up widget: `Card` with heading "Candidates to Follow Up", sorted `hot → actively_looking → passively_looking`; each row shows name, market_status badge, days since last contact; clicking navigates to `/candidates/[id]`
+- Stale applications widget: `Card` with heading "Stale Applications" (`text-sm font-semibold`), list of application name + days + job; clicking navigates to `/jobs/[id]/pipeline`
+- Follow-up widget: `Card` with heading "Candidates to Follow Up" (`text-sm font-semibold`), sorted `hot → actively_looking → passively_looking`; each row shows name, market_status badge, days since last contact; clicking navigates to `/candidates/[id]`
 
 ### 7. Forms (all create/edit)
 
 - Library: react-hook-form + zod, wrapped in shadcn `Form` for consistent label/error display
 - Error messages: inline below each field using shadcn `FormMessage`; color `text-destructive text-xs`
 - Required fields: no asterisk visible in label; required validation error fires on submit attempt (not on blur)
-- GDPR consent section (candidate create): visually separated by `Separator`; heading "Data & Consent" in `text-sm font-semibold`; consent checkbox using shadcn `Checkbox`; privacy text shown inline as `text-xs text-muted-foreground` below checkbox; form submit disabled until checkbox is checked (D-07 in CONTEXT.md: `consent_basis`, `consent_at`, `consent_text_version` stored on submit)
+- GDPR consent section (candidate create): visually separated by `Separator`; heading "Data & Consent" in `text-sm font-semibold`; consent checkbox using shadcn `Checkbox`; privacy text shown inline as `text-xs text-muted-foreground font-normal` below checkbox; form submit disabled until checkbox is checked (D-07 in CONTEXT.md: `consent_basis`, `consent_at`, `consent_text_version` stored on submit)
 
 ---
 
@@ -345,7 +367,7 @@ Components to build (not from shadcn, project-specific):
 | `ActivityTimeline` | `src/components/app/activity-timeline.tsx` | Shared polymorphic timeline (candidate + client + job) |
 | `CvReviewPanel` | `src/app/(app)/candidates/[id]/CvReviewPanel.tsx` | Sheet with confidence badges + accept/edit |
 | `PipelineBoard` | `src/components/app/pipeline-board.tsx` | Kanban with dnd-kit, pending state, mobile fallback |
-| `PipelineCard` | `src/components/app/pipeline-card.tsx` | Individual draggable card |
+| `PipelineCard` | `src/components/app/pipeline-card.tsx` | Individual draggable card — DropdownMenuTrigger MUST have aria-label |
 | `DeclineModal` | `src/components/app/decline-modal.tsx` | Dialog with required enum + optional notes |
 | `MetricCard` | `src/components/app/metric-card.tsx` | Dashboard stat card (value + label) |
 | `MarketStatusBadge` | `src/components/app/market-status-badge.tsx` | Badge with correct color per status |
@@ -371,4 +393,5 @@ Components to build (not from shadcn, project-specific):
 
 *Phase: 1 — Internal ATS*
 *UI-SPEC generated: 2026-05-17*
+*Revised: 2026-05-17 — fixed typography weights (collapsed to 400/600 only); added accessibility rule for icon-only interactive elements*
 *Sources: 01-CONTEXT.md (12 decisions used), REQUIREMENTS.md (CAND/CV/CLIENT/PIPE/DASH reqs), STACK.md, components.json, globals.css, top-nav.tsx, (app)/layout.tsx*
