@@ -12,7 +12,10 @@
     "format:check": "prettier --check .",
     "db:types": "pnpm exec supabase gen types typescript --local --schema public > src/types/database.ts",
     "inngest:dev": "pnpm dlx inngest-cli@latest dev -u http://localhost:3000/api/inngest",
-    "dev:all": "concurrently -n next,inngest 'pnpm dev' 'pnpm inngest:dev'"
+    "dev:all": "concurrently -n next,inngest 'pnpm dev' 'pnpm inngest:dev'",
+    "test": "vitest",
+    "test:e2e": "playwright test",
+    "test:e2e:reset": "pnpm exec supabase db reset && pnpm exec supabase db seed"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "~0.96.0",
@@ -33,17 +36,25 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
+    "@playwright/test": "~1.60.0",
     "@tailwindcss/postcss": "^4",
+    "@testing-library/jest-dom": "^6.9.1",
+    "@testing-library/react": "^16.3.2",
+    "@testing-library/user-event": "^14.6.1",
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "@vitejs/plugin-react": "^6.0.2",
     "eslint": "^9",
     "eslint-config-next": "16.2.6",
     "eslint-config-prettier": "^9.1.0",
+    "jsdom": "^29.1.1",
     "prettier": "^3.3.3",
     "prettier-plugin-tailwindcss": "^0.6.8",
     "supabase": "^2.98.2",
     "tailwindcss": "^4",
-    "typescript": "^5"
+    "typescript": "^5",
+    "vite-tsconfig-paths": "^6.1.1",
+    "vitest": "^4.1.6"
   }
 }
