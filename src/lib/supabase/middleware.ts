@@ -1,9 +1,17 @@
 import { createServerClient } from '@supabase/ssr'
 import { NextResponse, type NextRequest } from 'next/server'
 
+import { safeNext } from '@/lib/auth/safe-next'
 import type { Database } from '@/types/database'
 
-const PUBLIC_PATHS = ['/sign-in', '/sign-up', '/auth/callback', '/auth/auth-code-error']
+const PUBLIC_PATHS = [
+  '/sign-in',
+  '/sign-up',
+  '/auth/callback',
+  '/auth/auth-code-error',
+  // Inngest webhook — guarded by Inngest signing key, not Supabase auth.
+  '/api/inngest',
+]
 
 export async function updateSession(request: NextRequest) {
   let supabaseResponse = NextResponse.next({ request })
@@ -40,7 +48,9 @@ export async function updateSession(request: NextRequest) {
   if (!user && !isPublic) {
     const url = request.nextUrl.clone()
     url.pathname = '/sign-in'
-    url.searchParams.set('next', pathname)
+    // Defensive symmetry — pathname is server-derived so always safe, but using
+    // safeNext() prevents future drift if the source ever changes.
+    url.searchParams.set('next', safeNext(pathname))
     return NextResponse.redirect(url)
   }
 
