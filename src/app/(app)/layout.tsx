@@ -1,6 +1,8 @@
 import { redirect } from 'next/navigation'
 
 import { TopNav } from '@/components/app/top-nav'
+import { getOrganization } from '@/lib/db/organizations'
+import { getProfile } from '@/lib/db/profiles'
 import { createClient } from '@/lib/supabase/server'
 
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
@@ -15,26 +17,21 @@ export default async function AppLayout({ children }: { children: React.ReactNod
     redirect('/sign-in')
   }
 
-  const { data: profile } = await supabase
-    .from('users')
-    .select('full_name, email, organization_id')
-    .eq('id', user.id)
-    .maybeSingle()
+  const profile = await getProfile(supabase, user.id)
+  if (!profile.ok) {
+    redirect('/sign-in')
+  }
 
-  const { data: organization } = profile
-    ? await supabase
-        .from('organizations')
-        .select('name')
-        .eq('id', profile.organization_id)
-        .maybeSingle()
-    : { data: null }
+  const organization = await getOrganization(supabase, profile.data.organization_id)
+
+  // TODO: setRequestScope(user.id, profile.data.organization_id) — added in Task 0.5
 
   return (
     <div className="flex min-h-svh flex-col">
       <TopNav
-        userEmail={profile?.email ?? user.email ?? ''}
-        userName={profile?.full_name ?? null}
-        organizationName={organization?.name ?? null}
+        userEmail={profile.data.email ?? user.email ?? ''}
+        userName={profile.data.full_name ?? null}
+        organizationName={organization.ok ? organization.data.name : null}
       />
       <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-8 sm:px-6">{children}</main>
     </div>
