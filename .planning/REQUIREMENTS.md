@@ -152,7 +152,7 @@ Explicitly excluded from v1 and v2. Documented to prevent scope creep.
 
 ## Traceability
 
-Phase mappings populated by `/gsd:new-project` roadmap step.
+Phase mappings finalized by `/gsd:new-project` roadmap step — 2026-05-17.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
@@ -162,24 +162,61 @@ Phase mappings populated by `/gsd:new-project` roadmap step.
 | FOUND-04 | Phase 1 | Complete |
 | FOUND-05 | Phase 1 | Complete |
 | FOUND-06 | Phase 1 | Complete |
-| CAND-01..07 | Phase 1 | Pending |
-| CV-01..05 | Phase 1 | Pending |
-| CLIENT-01..05 | Phase 1 | Pending |
-| PIPE-01..06 | Phase 1 | Pending |
-| DASH-01..06 | Phase 1 | Pending |
-| SEARCH-01..04 | Phase 2 | Pending |
-| MATCH-01..03 | Phase 2 | Pending |
-| APPLY-01..02 | Phase 2 | Pending |
+| CAND-01 | Phase 1 | Pending |
+| CAND-02 | Phase 1 | Pending |
+| CAND-03 | Phase 1 | Pending |
+| CAND-04 | Phase 1 | Pending |
+| CAND-05 | Phase 1 | Pending |
+| CAND-06 | Phase 1 | Pending |
+| CAND-07 | Phase 1 | Pending |
+| CV-01 | Phase 1 | Pending |
+| CV-02 | Phase 1 | Pending |
+| CV-03 | Phase 1 | Pending |
+| CV-04 | Phase 1 | Pending |
+| CV-05 | Phase 1 | Pending |
+| CLIENT-01 | Phase 1 | Pending |
+| CLIENT-02 | Phase 1 | Pending |
+| CLIENT-03 | Phase 1 | Pending |
+| CLIENT-04 | Phase 1 | Pending |
+| CLIENT-05 | Phase 1 | Pending |
+| PIPE-01 | Phase 1 | Pending |
+| PIPE-02 | Phase 1 | Pending |
+| PIPE-03 | Phase 1 | Pending |
+| PIPE-04 | Phase 1 | Pending |
+| PIPE-05 | Phase 1 | Pending |
+| PIPE-06 | Phase 1 | Pending |
+| DASH-01 | Phase 1 | Pending |
+| DASH-02 | Phase 1 | Pending |
+| DASH-03 | Phase 1 | Pending |
+| DASH-04 | Phase 1 | Pending |
+| DASH-05 | Phase 1 | Pending |
+| DASH-06 | Phase 1 | Pending |
+| SEARCH-01 | Phase 2 | Pending |
+| SEARCH-02 | Phase 2 | Pending |
+| SEARCH-03 | Phase 2 | Pending |
+| SEARCH-04 | Phase 2 | Pending |
+| MATCH-01 | Phase 2 | Pending |
+| MATCH-02 | Phase 2 | Pending |
+| MATCH-03 | Phase 2 | Pending |
+| APPLY-01 | Phase 2 | Pending |
+| APPLY-02 | Phase 2 | Pending |
 | EMAIL-01 | Phase 2 | Pending |
 | LINKEDIN-01 | Phase 3 | Pending |
-| SPEC-01..02 | Phase 3 | Pending |
+| SPEC-01 | Phase 3 | Pending |
+| SPEC-02 | Phase 3 | Pending |
 | AD-01 | Phase 3 | Pending |
-| SHORT-01..02 | Phase 3 | Pending |
-| REPEAT-01..02 | Phase 3 | Pending |
-| MARKET-01..03 | Phase 4 | Pending |
+| SHORT-01 | Phase 3 | Pending |
+| SHORT-02 | Phase 3 | Pending |
+| REPEAT-01 | Phase 3 | Pending |
+| REPEAT-02 | Phase 3 | Pending |
+| MARKET-01 | Phase 4 | Pending |
+| MARKET-02 | Phase 4 | Pending |
+| MARKET-03 | Phase 4 | Pending |
 | REMIND-01 | Phase 4 | Pending |
-| VOICE-01..02 | Phase 4 | Pending |
-| REPORT-01..02 | Phase 4 | Pending |
+| VOICE-01 | Phase 4 | Pending |
+| VOICE-02 | Phase 4 | Pending |
+| REPORT-01 | Phase 4 | Pending |
+| REPORT-02 | Phase 4 | Pending |
 | SAAS-01 | Phase 5 | Pending |
 | BILL-01 | Phase 5 | Pending |
 | BRAND-01 | Phase 5 | Pending |
@@ -187,10 +224,10 @@ Phase mappings populated by `/gsd:new-project` roadmap step.
 | MARKETING-01 | Phase 5 | Pending |
 
 **Coverage:**
-- v1 requirements: 53 total (6 Validated + 47 Active)
-- Mapped to phases: 53
+- v1 requirements: 53 total (6 Complete + 47 Pending)
+- Mapped to phases: 53/53
 - Unmapped: 0 ✓
 
 ---
 *Requirements defined: 2026-05-17*
-*Last updated: 2026-05-17 after initialization*
+*Last updated: 2026-05-17 — traceability expanded to per-requirement rows by roadmap step*
