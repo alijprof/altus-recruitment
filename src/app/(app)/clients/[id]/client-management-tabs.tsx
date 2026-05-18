@@ -56,12 +56,22 @@ function toActivityEntries(rows: ClientTimelineEntry[]): ActivityEntry[] {
         ? { ...(row.metadata ?? {}), entity_label: row.entity_label }
         : (row.metadata ?? null)
     ) as unknown as Json
+    // Review fix H3: populate actor so ActivityTimeline renders the human
+    // name instead of "System" for every entry. The view's LEFT JOIN on
+    // public.users (migration 20260518211530) exposes actor_full_name and
+    // actor_email. Null actor_user_id (system entries) remains "System"
+    // via the existing actorName() fallback inside ActivityTimeline.
+    const actor =
+      row.actor_user_id !== null
+        ? { full_name: row.actor_full_name, email: row.actor_email }
+        : null
     return {
       id: row.id,
       kind: row.kind,
       body: row.body,
       occurred_at: row.occurred_at,
       actor_user_id: row.actor_user_id,
+      actor,
       metadata,
     }
   })

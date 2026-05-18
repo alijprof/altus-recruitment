@@ -248,6 +248,11 @@ export type ClientTimelineEntry = {
   entity_id: string
   client_id: string
   entity_label: string | null
+  // Review fix H3: surfaced by the LEFT JOIN on public.users added by
+  // migration 20260518211530. Null when actor_user_id is null (system
+  // entries) or when the user row has been deleted.
+  actor_full_name: string | null
+  actor_email: string | null
 }
 
 export async function getClientTimeline(
