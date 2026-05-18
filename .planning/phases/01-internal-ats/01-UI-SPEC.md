@@ -277,18 +277,18 @@ All empty states use the pattern: heading + body + CTA button.
 
 ### Decline Reason Labels (enum → human label)
 
+**Source of truth:** the `decline_reason` enum in `supabase/migrations/20260513152244_phase1_domain_schema.sql` lines 56–66. Verified during plan-check (VERIFICATION R1). The 9 values below match the schema exactly; do NOT introduce additional values without an additive enum migration. The shared helper `formatDeclineReason()` in `src/lib/legal/decline-reasons.ts` (created in Plan 4 Task 4.3 step 5) is the single source of these labels — both the `<DeclineModal>` Select and the `<ActivityTimeline>` render from it.
+
 | Enum value | Display label |
 |------------|--------------|
-| `overqualified` | Overqualified |
-| `underqualified` | Underqualified |
+| `not_qualified` | Not qualified |
 | `salary_mismatch` | Salary mismatch |
 | `location_mismatch` | Location / relocation |
-| `skills_gap` | Skills gap |
-| `culture_fit` | Culture fit |
-| `withdrew` | Candidate withdrew |
-| `position_filled_internally` | Filled internally |
-| `no_response` | No response from candidate |
-| `client_rejected` | Client declined |
+| `candidate_withdrew` | Candidate withdrew |
+| `client_rejected_skills` | Client rejected — skills |
+| `client_rejected_culture` | Client rejected — culture |
+| `client_filled_internally` | Filled internally |
+| `client_filled_other` | Filled (other source) |
 | `other` | Other |
 
 ### Destructive Actions
