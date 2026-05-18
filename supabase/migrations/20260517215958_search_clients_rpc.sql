@@ -78,4 +78,4 @@ as $$
   limit p_limit;
 $$;
 
-grant execute on function public.search_clients(text, real, text, integer, integer, integer) to authenticated;
+grant execute on function public.search_clients(text, real, text, text, integer, integer) to authenticated;
