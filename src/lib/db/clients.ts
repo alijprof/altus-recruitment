@@ -41,7 +41,9 @@ type SearchClientsRow = Tables<'companies'> & {
 }
 
 function isDormant(lastContactedAt: string | null): boolean {
-  if (!lastContactedAt) return true
+  // Never-contacted ≠ dormant. A brand-new client should not render Dormant
+  // on its first save. Dormant means "we had contact but it's gone stale".
+  if (!lastContactedAt) return false
   return Date.now() - new Date(lastContactedAt).getTime() > DORMANT_AFTER_MS
 }
 
