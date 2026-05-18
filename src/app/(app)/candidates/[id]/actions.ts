@@ -1,6 +1,7 @@
 'use server'
 
 import { revalidatePath } from 'next/cache'
+import * as Sentry from '@sentry/nextjs'
 import { z } from 'zod'
 
 import { createActivity } from '@/lib/db/activities'
@@ -190,8 +191,18 @@ export async function uploadCVAction(formData: FormData): Promise<UploadCVResult
     metadata: { candidate_cv_id: candidateCvId, version },
   })
 
-  // Fire-and-forget the Inngest event. If Inngest is down we still have a
-  // pending row — the user can hit Retry from the review panel.
+  // Dispatch the cv/uploaded event. Review fix H1: server actions are NOT
+  // covered by Next's onRequestError instrumentation, and the Sentry
+  // beforeSend filter only scrubs PII — it does not generate events. A
+  // silent catch leaves the candidate_cvs row stuck at parsing_status =
+  // 'pending' with no Retry button (Retry only appears for 'failed'),
+  // so we explicitly:
+  //   1. Capture a PII-safe Error to Sentry (mirrors R4: never the raw
+  //      error — only err.name + a fixed subop label).
+  //   2. Flip the row to 'failed' so the UI shows the Retry button.
+  // We still return { ok: true, candidateCvId } because the upload + row
+  // insert genuinely succeeded — the user's CV is safely in Storage and
+  // the review panel will surface the failure as a retryable parse error.
   try {
     await inngest.send({
       name: 'cv/uploaded',
@@ -204,10 +215,24 @@ export async function uploadCVAction(formData: FormData): Promise<UploadCVResult
         user_id: user.id,
       },
     })
-  } catch {
-    // Sentry capture is handled by the global instrumentation hook. We
-    // intentionally don't surface this to the caller — the upload itself
-    // succeeded; parsing will be retried from the UI.
+  } catch (err) {
+    const errName = err instanceof Error ? err.name : 'UnknownError'
+    Sentry.captureException(new Error(`${errName}: inngest.send failed`), {
+      tags: {
+        layer: 'action',
+        helper: 'uploadCVAction',
+        subop: 'inngest.send',
+        candidate_cv_id: candidateCvId,
+      },
+    })
+    // Surface as 'failed' so the UI shows the Retry button. We intentionally
+    // ignore any error from this update — at worst the row stays 'pending'
+    // and the user re-uploads. Sentry already captured the dispatch failure.
+    await updateCandidateCVParse(supabase, {
+      id: candidateCvId,
+      status: 'failed',
+      parseError: 'Could not queue CV for parsing. Try again.',
+    })
   }
 
   revalidatePath(`/candidates/${candidateId}`)
@@ -255,6 +280,12 @@ export async function retryParseAction(rawInput: unknown): Promise<ActionResult>
     return { ok: false, error: 'Couldn’t reset parsing state. Please try again.' }
   }
 
+  // Review fix H1: same as uploadCVAction — empty catch left the row stuck
+  // at 'pending' with no Retry button after a dispatch failure. Capture a
+  // PII-safe Error to Sentry, then flip the row back to 'failed' so the
+  // user sees the Retry button instead of an indefinite spinner. Surface
+  // the failure to the caller so the toast in the review panel reflects
+  // reality.
   try {
     await inngest.send({
       name: 'cv/uploaded',
@@ -267,9 +298,22 @@ export async function retryParseAction(rawInput: unknown): Promise<ActionResult>
         user_id: user.id,
       },
     })
-  } catch {
-    // Same logic as upload — global Sentry will capture; the row is
-    // already back to pending so the user can hit Retry again.
+  } catch (err) {
+    const errName = err instanceof Error ? err.name : 'UnknownError'
+    Sentry.captureException(new Error(`${errName}: inngest.send failed`), {
+      tags: {
+        layer: 'action',
+        helper: 'retryParseAction',
+        subop: 'inngest.send',
+        candidate_cv_id: cv.id,
+      },
+    })
+    await updateCandidateCVParse(supabase, {
+      id: cv.id,
+      status: 'failed',
+      parseError: 'Could not queue CV for parsing. Try again.',
+    })
+    return { ok: false, error: 'Couldn’t queue the CV for parsing. Please try again.' }
   }
 
   revalidatePath(`/candidates/${cv.candidate_id}`)
