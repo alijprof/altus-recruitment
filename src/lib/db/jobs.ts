@@ -168,6 +168,29 @@ export async function getJob(
  * default sort by created_at DESC. Plan 4 takes over this helper from the
  * inline implementation that lived in client detail page during Plan 3.
  */
+/**
+ * Lightweight options helper for filter dropdowns (e.g., the global
+ * /pipeline filter Popover). Returns open jobs only — closed ones
+ * shouldn't pollute the filter UI.
+ */
+export type JobOption = { id: string; title: string }
+
+export async function listOpenJobOptions(
+  supabase: SupabaseClient<Database>,
+): Promise<DbResult<JobOption[]>> {
+  const { data, error } = await supabase
+    .from('jobs')
+    .select('id, title')
+    .eq('status', 'open')
+    .order('title', { ascending: true })
+
+  if (error) {
+    Sentry.captureException(error, { tags: { layer: 'db', helper: 'listOpenJobOptions' } })
+    return { ok: false, code: 'internal' }
+  }
+  return { ok: true, data: data ?? [] }
+}
+
 export type JobForCompanyRow = Pick<
   Tables<'jobs'>,
   'id' | 'title' | 'status' | 'job_type' | 'hiring_context' | 'created_at'

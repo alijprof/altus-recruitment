@@ -5,45 +5,25 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 
 import type { Database, Enums, Tables, TablesInsert } from '@/types/database'
 
+import {
+  PIPELINE_STAGES,
+  type ApplicationStage,
+  type GroupedByStage,
+  type PipelineCardData,
+  type PipelineStage,
+} from './pipeline-stages'
 import type { DbResult } from './types'
 
-// ---------------------------------------------------------------------------
-// Stage list — the SEVEN visual columns on the kanban. Terminal stages
-// `rejected` and `withdrawn` are NOT columns; they're triggered by the
-// Reject action on a card and produce a card that disappears from the
-// board. Verified against the application_stage enum in
-// supabase/migrations/20260513152244_phase1_domain_schema.sql line 42.
-// ---------------------------------------------------------------------------
-
-export const PIPELINE_STAGES = [
-  'applied',
-  'screening',
-  'cv_submitted',
-  'first_interview',
-  'second_interview',
-  'offer',
-  'placed',
-] as const
-export type PipelineStage = (typeof PIPELINE_STAGES)[number]
-export type ApplicationStage = Enums<'application_stage'>
-
-// ---------------------------------------------------------------------------
-// Card shape consumed by PipelineBoard / PipelineMobileList. Hand-shaped on
-// the server and handed to the client component — avoids leaking row-level
-// columns the UI doesn't use.
-// ---------------------------------------------------------------------------
-
-export type PipelineCardData = {
-  id: string
-  candidate_id: string
-  candidate_name: string
-  current_role_title: string | null
-  current_company: string | null
-  stage: ApplicationStage
-  stage_changed_at: string
-  days_in_stage: number
-  job_id: string
-  job_title: string | null
+// Re-export so existing server-side callers (server actions, RSC pages) can
+// keep importing from '@/lib/db/applications'. Client components MUST import
+// from '@/lib/db/pipeline-stages' directly to avoid pulling the 'server-only'
+// boundary into the client bundle.
+export {
+  PIPELINE_STAGES,
+  type ApplicationStage,
+  type GroupedByStage,
+  type PipelineCardData,
+  type PipelineStage,
 }
 
 // Shape returned by the join — typed locally because PostgREST nested
@@ -123,8 +103,6 @@ export async function listApplicationsForJob(
   )
   return { ok: true, data: rows }
 }
-
-export type GroupedByStage = Record<PipelineStage, PipelineCardData[]>
 
 function emptyGrouping(): GroupedByStage {
   const out = {} as GroupedByStage

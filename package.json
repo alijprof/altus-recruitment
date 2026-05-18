@@ -21,6 +21,7 @@
     "@anthropic-ai/sdk": "~0.96.0",
     "@dnd-kit/core": "^6.3.1",
     "@dnd-kit/sortable": "^10.0.0",
+    "@dnd-kit/utilities": "^3.2.2",
     "@hookform/resolvers": "^5.2.2",
     "@sentry/nextjs": "^10.53.1",
     "@supabase/ssr": "^0.10.3",
