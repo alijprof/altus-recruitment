@@ -323,7 +323,11 @@ export function CandidateForm() {
           >
             Cancel
           </Button>
-          <Button type="submit" disabled={isPending || !consentChecked}>
+          <Button
+            type="submit"
+            className="h-11 md:h-10"
+            disabled={isPending || !consentChecked}
+          >
             {isPending ? 'Adding…' : 'Add candidate'}
           </Button>
         </div>

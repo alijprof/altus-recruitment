@@ -57,7 +57,7 @@ export function CvUpload({ candidateId }: CvUploadProps) {
           type="submit"
           size="sm"
           disabled={!file || isPending}
-          className="shrink-0"
+          className="h-11 shrink-0 md:h-9"
         >
           <Upload className="size-4" aria-hidden />
           {isPending ? 'Uploading…' : 'Upload CV'}

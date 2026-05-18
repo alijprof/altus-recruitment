@@ -60,3 +60,44 @@ pnpm dev:all                      # Next on :3000, Inngest UI on :8288
 | `pnpm test:e2e`        | Playwright (run `pnpm exec playwright install` once)    |
 | `pnpm test:e2e:reset`  | Reset local Supabase before E2E run                     |
 | `pnpm db:types`        | Regenerate `src/types/database.ts` from local Supabase  |
+
+## Running E2E tests
+
+Plan 5 ships a Playwright golden-path spec at `tests/e2e/golden-path.spec.ts` that walks
+the Phase 1 happy path: sign in → create candidate → create client → create job → add
+candidate to job → drag the pipeline card. The CV-upload + Inngest parsing step is
+skipped intentionally (per VERIFICATION R10) so the spec stays deterministic without
+running Inngest in the Playwright `webServer` config.
+
+**Prerequisites** (one-time):
+
+```sh
+pnpm exec playwright install --with-deps        # install Playwright browsers
+pnpm exec supabase start                        # local Supabase up on :54321
+pnpm exec supabase db reset                     # apply migrations + seed
+```
+
+The seed in `supabase/seed.sql` creates a deterministic owner at
+`owner@acme-recruitment.test`. The Playwright `global-setup.ts` signs that user in via
+the Supabase admin API and persists the session to `tests/e2e/.auth/owner.json`. No
+magic-link interception needed.
+
+**Run the suite:**
+
+```sh
+# Terminal 1 — app + Inngest
+pnpm dev:all
+
+# Terminal 2 — Playwright
+pnpm test:e2e                                   # run the suite
+pnpm exec playwright test --list                # list specs (sanity-check)
+pnpm test:e2e:reset && pnpm test:e2e            # reset DB then run
+```
+
+**Notes:**
+
+- The suite is intentionally serial (`fullyParallel: false`) because the seed data is
+  shared. Add `pnpm test:e2e:reset` between runs to start from a clean slate.
+- CI integration is **not** part of Phase 1. Treat E2E as a local pre-merge smoke test.
+- A 1-page fictional CV lives at `tests/fixtures/sample-cv.pdf`. Never replace it with a
+  real candidate CV.

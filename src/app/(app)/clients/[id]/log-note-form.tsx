@@ -63,7 +63,11 @@ export function LogNoteForm({ companyId }: { companyId: string }) {
         </p>
       )}
       <div className="flex justify-end">
-        <Button type="submit" disabled={isPending || body.trim().length === 0}>
+        <Button
+          type="submit"
+          className="h-11 md:h-10"
+          disabled={isPending || body.trim().length === 0}
+        >
           {isPending ? 'Saving…' : 'Save note'}
         </Button>
       </div>

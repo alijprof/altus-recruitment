@@ -1,4 +1,5 @@
 import Link from 'next/link'
+import { Suspense } from 'react'
 
 import { SignInForm } from './sign-in-form'
 
@@ -11,7 +12,12 @@ export default function SignInPage() {
           We&apos;ll email you a magic link to sign you in.
         </p>
       </div>
-      <SignInForm />
+      {/* SignInForm reads useSearchParams() to opt into a dev-only password
+          fallback at /sign-in?password=1 — wrap in Suspense so static export
+          doesn't bail out. */}
+      <Suspense fallback={null}>
+        <SignInForm />
+      </Suspense>
       <p className="text-muted-foreground text-sm">
         No account yet?{' '}
         <Link

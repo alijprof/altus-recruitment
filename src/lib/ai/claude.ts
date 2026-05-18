@@ -20,13 +20,19 @@ export const claudeClient = new Anthropic({
   maxRetries: 0,
 })
 
-// Pricing in pence per million tokens. Sanity-check against
-// https://www.anthropic.com/pricing#api before launch. Numbers are placeholders
-// in the right order of magnitude — Plan 5 polish verifies them.
+// Pricing in pence per million tokens, derived from Anthropic's live pricing
+// page (USD per MTok) and converted at a steady-state GBP rate of ~78p / $1.
+//
+// verified 2026-05-18 against https://www.anthropic.com/pricing (Plan 5):
+//   Haiku 4.5:   $1 input  / $5 output  -> 78p / 390p (round to 80 / 400)
+//   Sonnet 4.6:  $3 input  / $15 output -> 234p / 1170p (round to 240 / 1200)
+//   Opus 4.7:    $5 input  / $25 output -> 390p / 1950p
+// (Opus dropped from the historical $15/$75 — old constants here were 3x too
+// high. Re-verify before next major launch.)
 const PRICING_PENCE_PER_MTOK: Record<ApprovedModel, { input: number; output: number }> = {
   'claude-haiku-4-5-20251001': { input: 80, output: 400 },
   'claude-sonnet-4-6': { input: 240, output: 1200 },
-  'claude-opus-4-7': { input: 1200, output: 6000 },
+  'claude-opus-4-7': { input: 390, output: 1950 },
 }
 
 function calcCostPence(model: ApprovedModel, inputTokens: number, outputTokens: number): number {

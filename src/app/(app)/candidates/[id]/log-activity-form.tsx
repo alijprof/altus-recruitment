@@ -91,7 +91,12 @@ export function LogActivityForm({ candidateId }: LogActivityFormProps) {
         disabled={isPending}
       />
       <div className="flex items-center justify-end">
-        <Button type="submit" size="sm" disabled={isPending || body.trim().length === 0}>
+        <Button
+          type="submit"
+          size="sm"
+          className="h-11 md:h-9"
+          disabled={isPending || body.trim().length === 0}
+        >
           {isPending ? 'Saving…' : 'Save'}
         </Button>
       </div>

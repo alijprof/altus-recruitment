@@ -140,6 +140,7 @@ export function DeclineModal({
             variant="outline"
             onClick={() => onOpenChange(false)}
             disabled={isPending}
+            className="h-11 md:h-10"
           >
             Cancel
           </Button>
@@ -147,6 +148,7 @@ export function DeclineModal({
             variant="destructive"
             onClick={handleConfirm}
             disabled={!reason || isPending}
+            className="h-11 md:h-10"
           >
             {isPending ? 'Declining…' : 'Decline candidate'}
           </Button>

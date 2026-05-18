@@ -6,14 +6,24 @@
 --
 -- Sign in to either of these locally by sending a magic link to the email
 -- via the sign-in form, or by using `supabase auth ...` admin commands.
+--
+-- Plan 5 Task 5.3 E2E note: the owner@acme-recruitment.test user below has a
+-- deterministic password (`AltusTestPassword!1`) so Playwright global-setup
+-- can sign in via auth.admin.generateLink / signInWithPassword without
+-- intercepting magic-link email. Password is dev-local only.
 
 -- ---------------------------------------------------------------------------
 -- Org A: Acme Recruitment — the rich dataset
 -- ---------------------------------------------------------------------------
-insert into auth.users (id, instance_id, aud, role, email, raw_user_meta_data, created_at, updated_at, confirmation_sent_at, email_confirmed_at)
+insert into auth.users (id, instance_id, aud, role, email, encrypted_password,
+  raw_user_meta_data, created_at, updated_at, confirmation_sent_at, email_confirmed_at)
 values
   ('00000000-0000-0000-0000-00000000a001', '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated',
-   'owner@acme-recruitment.test', '{"full_name":"Alex Owner","organization_name":"Acme Recruitment"}'::jsonb,
+   'owner@acme-recruitment.test',
+   -- crypt(...) hashes the Playwright E2E password ("AltusTestPassword!1") at
+   -- seed time so signInWithPassword works without a magic-link round-trip.
+   crypt('AltusTestPassword!1', gen_salt('bf')),
+   '{"full_name":"Alex Owner","organization_name":"Acme Recruitment"}'::jsonb,
    now(), now(), now(), now())
 on conflict (id) do nothing;
 

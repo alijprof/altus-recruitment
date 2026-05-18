@@ -105,7 +105,7 @@ export function AddCandidateForm({ jobId }: AddCandidateFormProps) {
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
-        <Button disabled={isPending}>
+        <Button className="h-11 md:h-10" disabled={isPending}>
           <Plus className="mr-1 size-4" />
           Add candidate to job
         </Button>

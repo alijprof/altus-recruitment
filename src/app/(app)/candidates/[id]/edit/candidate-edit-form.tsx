@@ -218,7 +218,7 @@ export function CandidateEditForm({ candidateId, defaultValues }: CandidateEditF
           >
             Cancel
           </Button>
-          <Button type="submit" disabled={isPending}>
+          <Button type="submit" className="h-11 md:h-10" disabled={isPending}>
             {isPending ? 'Saving…' : 'Save changes'}
           </Button>
         </div>
