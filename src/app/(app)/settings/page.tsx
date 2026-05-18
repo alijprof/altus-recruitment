@@ -1,10 +1,99 @@
-export default function SettingsPage() {
+import { redirect } from 'next/navigation'
+
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Separator } from '@/components/ui/separator'
+import { getOrganization } from '@/lib/db/organizations'
+import { getProfile } from '@/lib/db/profiles'
+import { createClient } from '@/lib/supabase/server'
+
+import { InvitationsList } from './invitations-list'
+import { InviteForm } from './invite-form'
+import { OrganizationForm } from './organization-form'
+import { ProfileForm } from './profile-form'
+
+// Plan 5 Task 5.2 — Settings shell. Single-column max-w-2xl per UI-SPEC
+// Layout Patterns for settings; Card per section with Separator between.
+
+export default async function SettingsPage() {
+  const supabase = await createClient()
+  const {
+    data: { user },
+  } = await supabase.auth.getUser()
+  if (!user) {
+    // Layout guard already redirects, but belt-and-braces for direct hits.
+    redirect('/sign-in')
+  }
+
+  const profile = await getProfile(supabase, user.id)
+  if (!profile.ok) {
+    redirect('/sign-in')
+  }
+
+  const organization = await getOrganization(supabase, profile.data.organization_id)
+  const isOwner = profile.data.role === 'owner'
+
   return (
-    <div className="space-y-2">
-      <h1 className="text-2xl font-semibold tracking-tight">Settings</h1>
-      <p className="text-muted-foreground text-sm">
-        Profile, organisation and team settings land in Task 7.
-      </p>
+    <div className="mx-auto w-full max-w-2xl space-y-8">
+      <header className="space-y-1">
+        <h1 className="text-2xl font-semibold tracking-tight">Settings</h1>
+        <p className="text-muted-foreground text-sm font-normal">
+          Profile, organisation, and team.
+        </p>
+      </header>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base font-semibold">Profile</CardTitle>
+          <CardDescription>Your name and contact details.</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <ProfileForm
+            initialFullName={profile.data.full_name}
+            initialEmail={profile.data.email ?? user.email ?? ''}
+          />
+        </CardContent>
+      </Card>
+
+      <Separator />
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base font-semibold">Organisation</CardTitle>
+          <CardDescription>
+            {isOwner
+              ? 'Edit your organisation name and logo URL.'
+              : 'Organisation settings are managed by your owner.'}
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <OrganizationForm
+            initialName={organization.ok ? organization.data.name : ''}
+            initialLogoUrl={organization.ok ? organization.data.logo_url : null}
+            isOwner={isOwner}
+          />
+        </CardContent>
+      </Card>
+
+      <Separator />
+
+      {isOwner ? (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base font-semibold">Team</CardTitle>
+            <CardDescription>
+              Invite teammates by email. They&apos;ll join with the recruiter role.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-6">
+            <InviteForm />
+            <Separator />
+            <div className="space-y-3">
+              <h3 className="text-sm font-semibold">Current team</h3>
+              <InvitationsList />
+            </div>
+          </CardContent>
+        </Card>
+      ) : null}
     </div>
   )
 }
