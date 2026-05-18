@@ -42,11 +42,15 @@ type JoinedApplicationRow = Tables<'applications'> & {
   } | null
 }
 
+// Review fix H2: include decline_reason so ApplicationsList can render the
+// reason chip beside terminal-stage badges. Previously selected nowhere,
+// so the conditional in applications-list.tsx was always false and the
+// reason never displayed.
 const APP_WITH_CANDIDATE_SELECT =
-  'id, candidate_id, job_id, stage, stage_changed_at, organization_id, candidates(id, full_name, current_role_title, current_company)'
+  'id, candidate_id, job_id, stage, stage_changed_at, decline_reason, organization_id, candidates(id, full_name, current_role_title, current_company)'
 
 const APP_WITH_CANDIDATE_AND_JOB_SELECT =
-  'id, candidate_id, job_id, stage, stage_changed_at, organization_id, candidates(id, full_name, current_role_title, current_company), jobs(id, title)'
+  'id, candidate_id, job_id, stage, stage_changed_at, decline_reason, organization_id, candidates(id, full_name, current_role_title, current_company), jobs(id, title)'
 
 const MS_PER_DAY = 86_400_000
 
@@ -68,6 +72,9 @@ function shapeCard(row: JoinedApplicationRow, now: number): PipelineCardData {
     days_in_stage: daysSince(row.stage_changed_at, now),
     job_id: row.job_id,
     job_title: row.jobs?.title ?? null,
+    // Review fix H2: surface decline_reason so the per-job ApplicationsList
+    // can render "(Withdrew)" / "(Position filled)" beside terminal rows.
+    decline_reason: row.decline_reason,
   }
 }
 

@@ -38,6 +38,11 @@ export type PipelineCardData = {
   days_in_stage: number
   job_id: string
   job_title: string | null
+  // Review fix H2: only meaningful when stage is 'rejected' or 'withdrawn'.
+  // Consumed by ApplicationsList on /jobs/[id] to display "(reason)" beside
+  // a terminal stage badge. Always selected by listApplicationsForJob /
+  // listAllApplicationsByStage so the chip renders consistently.
+  decline_reason: Enums<'decline_reason'> | null
 }
 
 export type GroupedByStage = Record<PipelineStage, PipelineCardData[]>

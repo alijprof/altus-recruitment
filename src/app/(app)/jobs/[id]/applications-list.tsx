@@ -22,9 +22,11 @@ function stageLabel(stage: string): string {
 }
 
 export type ApplicationsListProps = {
-  rows: (PipelineCardData & {
-    decline_reason?: string | null
-  })[]
+  // Review fix H2: PipelineCardData now includes decline_reason as a first-
+  // class field (populated by shapeCard in src/lib/db/applications.ts) — no
+  // need for the inline type widening that previously masked the missing
+  // SELECT column.
+  rows: PipelineCardData[]
 }
 
 export function ApplicationsList({ rows }: ApplicationsListProps) {
