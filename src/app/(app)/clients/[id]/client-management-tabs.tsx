@@ -29,6 +29,7 @@ type JobRow = {
   title: string
   status: string
   job_type: string
+  hiring_context?: string
   created_at: string
 }
 
@@ -106,47 +107,64 @@ export function ClientManagementTabs(props: ClientManagementTabsProps) {
             <p className="text-muted-foreground mt-1 text-sm">
               Create a job against a client to start building your pipeline.
             </p>
-            <Button asChild className="mt-4" variant="outline" disabled>
-              <span aria-disabled="true">Create job (Plan 4)</span>
+            <Button asChild className="mt-4">
+              <Link href={`/clients/${props.clientId}/jobs/new`}>
+                <Plus className="mr-1 size-4" />
+                Create job
+              </Link>
             </Button>
           </div>
         ) : (
-          <div className="rounded-md border">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b">
-                  <th className="text-muted-foreground p-3 text-left text-xs font-normal">
-                    Title
-                  </th>
-                  <th className="text-muted-foreground p-3 text-left text-xs font-normal">
-                    Type
-                  </th>
-                  <th className="text-muted-foreground p-3 text-left text-xs font-normal">
-                    Status
-                  </th>
-                  <th className="text-muted-foreground p-3 text-left text-xs font-normal">
-                    Created
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                {props.jobs.map((job) => (
-                  <tr key={job.id} className="border-b last:border-b-0">
-                    <td className="p-3 font-medium">{job.title}</td>
-                    <td className="text-muted-foreground p-3">{job.job_type}</td>
-                    <td className="text-muted-foreground p-3">{job.status}</td>
-                    <td className="text-muted-foreground p-3">
-                      {new Date(job.created_at).toLocaleDateString('en-GB', {
-                        day: 'numeric',
-                        month: 'short',
-                        year: 'numeric',
-                      })}
-                    </td>
+          <>
+            <div className="flex justify-end">
+              <Button asChild>
+                <Link href={`/clients/${props.clientId}/jobs/new`}>
+                  <Plus className="mr-1 size-4" />
+                  Create job
+                </Link>
+              </Button>
+            </div>
+            <div className="rounded-md border">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b">
+                    <th className="text-muted-foreground p-3 text-left text-xs font-normal">
+                      Title
+                    </th>
+                    <th className="text-muted-foreground p-3 text-left text-xs font-normal">
+                      Type
+                    </th>
+                    <th className="text-muted-foreground p-3 text-left text-xs font-normal">
+                      Status
+                    </th>
+                    <th className="text-muted-foreground p-3 text-left text-xs font-normal">
+                      Created
+                    </th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                </thead>
+                <tbody>
+                  {props.jobs.map((job) => (
+                    <tr key={job.id} className="border-b last:border-b-0">
+                      <td className="p-3 font-medium">
+                        <Link href={`/jobs/${job.id}`} className="hover:underline">
+                          {job.title}
+                        </Link>
+                      </td>
+                      <td className="text-muted-foreground p-3">{job.job_type}</td>
+                      <td className="text-muted-foreground p-3">{job.status}</td>
+                      <td className="text-muted-foreground p-3">
+                        {new Date(job.created_at).toLocaleDateString('en-GB', {
+                          day: 'numeric',
+                          month: 'short',
+                          year: 'numeric',
+                        })}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </>
         )}
       </TabsContent>
 

@@ -5,26 +5,10 @@ import { ChevronLeft, ExternalLink } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { getClient, getClientTimeline } from '@/lib/db/clients'
 import { listContactsForCompany } from '@/lib/db/contacts'
+import { listJobsForCompany } from '@/lib/db/jobs'
 import { createClient as createSupabaseClient } from '@/lib/supabase/server'
-import type { Database, Tables } from '@/types/database'
-import type { SupabaseClient } from '@supabase/supabase-js'
 
 import { ClientManagementTabs } from './client-management-tabs'
-
-type JobRow = Pick<Tables<'jobs'>, 'id' | 'title' | 'status' | 'job_type' | 'created_at'>
-
-async function listJobsForCompany(
-  supabase: SupabaseClient<Database>,
-  companyId: string,
-): Promise<JobRow[]> {
-  const { data, error } = await supabase
-    .from('jobs')
-    .select('id, title, status, job_type, created_at')
-    .eq('company_id', companyId)
-    .order('created_at', { ascending: false })
-  if (error) return []
-  return data ?? []
-}
 
 export default async function ClientDetailPage({
   params,
@@ -45,7 +29,7 @@ export default async function ClientDetailPage({
 
   // Pre-fetch all four tabs' data so the client component receives them as
   // props (Plan 3 chooses props-down over Suspense for simplicity).
-  const [contactsResult, timelineResult, jobs] = await Promise.all([
+  const [contactsResult, timelineResult, jobsResult] = await Promise.all([
     listContactsForCompany(supabase, id),
     getClientTimeline(supabase, id, 100),
     listJobsForCompany(supabase, id),
@@ -53,6 +37,8 @@ export default async function ClientDetailPage({
 
   const contacts = contactsResult.ok ? contactsResult.data : []
   const timeline = timelineResult.ok ? timelineResult.data : []
+  // Plan 4 owns the Jobs tab content — see client-management-tabs.tsx.
+  const jobs = jobsResult.ok ? jobsResult.data : []
 
   return (
     <div className="space-y-6">
