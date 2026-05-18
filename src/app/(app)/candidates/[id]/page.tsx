@@ -9,6 +9,7 @@ import { getCandidate, listCandidateActivities } from '@/lib/db/candidates'
 import { createClient } from '@/lib/supabase/server'
 
 import { CandidateDetailHeader } from './candidate-detail-header'
+import { CvUpload } from './cv-upload'
 import { LogActivityForm } from './log-activity-form'
 
 // Lookup tables for read-only display — labels match the create form schema
@@ -172,15 +173,12 @@ export default async function CandidateDetailPage({
           </section>
         </div>
 
-        {/* Side panel — CV history reserved for Plan 2. Renders a quiet
-            placeholder so the column doesn't collapse and the layout stays
-            stable when Plan 2 lands. */}
+        {/* Side panel — CV upload + history. Plan 2 Task 2.3 adds the
+            review panel below the upload form. */}
         <aside className="space-y-4">
-          <section className="bg-card rounded-md border p-4">
-            <h2 className="text-sm font-semibold">CV history</h2>
-            <p className="text-muted-foreground mt-2 text-xs font-normal">
-              CV upload and parsing arrives in the next plan.
-            </p>
+          <section className="bg-card space-y-3 rounded-md border p-4">
+            <h2 className="text-sm font-semibold">Upload CV</h2>
+            <CvUpload candidateId={candidate.id} />
           </section>
         </aside>
       </div>
