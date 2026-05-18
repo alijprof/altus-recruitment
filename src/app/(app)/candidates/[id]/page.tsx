@@ -2,13 +2,16 @@ import Link from 'next/link'
 import { notFound } from 'next/navigation'
 
 import { ActivityTimeline, type ActivityEntry } from '@/components/app/activity-timeline'
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Separator } from '@/components/ui/separator'
 import { formatDateLong, formatTimeAgo } from '@/lib/date'
+import { listCandidateCVs } from '@/lib/db/candidate-cvs'
 import { getCandidate, listCandidateActivities } from '@/lib/db/candidates'
 import { createClient } from '@/lib/supabase/server'
 
 import { CandidateDetailHeader } from './candidate-detail-header'
+import { CvReviewPanel } from './cv-review-panel'
 import { CvUpload } from './cv-upload'
 import { LogActivityForm } from './log-activity-form'
 
@@ -75,6 +78,12 @@ export default async function CandidateDetailPage({
     )
   }
   const candidate = candidateResult.data
+
+  // CV rows — newest first. Best-effort; an error doesn't block the page.
+  const cvsResult = await listCandidateCVs(supabase, id)
+  const cvRows = cvsResult.ok ? cvsResult.data : []
+  const latestCv = cvRows[0] ?? null
+  const olderCvs = cvRows.slice(1)
 
   // Activities — best-effort. If this errors we still render the page so the
   // user can fix things rather than facing a 500.
@@ -173,13 +182,57 @@ export default async function CandidateDetailPage({
           </section>
         </div>
 
-        {/* Side panel — CV upload + history. Plan 2 Task 2.3 adds the
-            review panel below the upload form. */}
+        {/* Side panel — CV upload + parse review + history. */}
         <aside className="space-y-4">
           <section className="bg-card space-y-3 rounded-md border p-4">
             <h2 className="text-sm font-semibold">Upload CV</h2>
             <CvUpload candidateId={candidate.id} />
           </section>
+
+          {latestCv ? (
+            <CvReviewPanel
+              candidateCv={latestCv}
+              candidateFullName={candidate.full_name}
+            />
+          ) : null}
+
+          {olderCvs.length > 0 ? (
+            <section className="bg-card space-y-2 rounded-md border p-4">
+              <h2 className="text-sm font-semibold">Previous CVs</h2>
+              <ul className="space-y-2">
+                {olderCvs.map((cv) => {
+                  // Derive a human filename from the storage path. Path
+                  // shape is `{org}/{candidate}/{uuid}-{slug}.{ext}` —
+                  // strip up to the uuid prefix for readability.
+                  const filename =
+                    cv.storage_path.split('/').pop()?.replace(/^[0-9a-f-]{36}-/, '') ??
+                    'CV'
+                  const statusLabel =
+                    cv.parsing_status === 'complete'
+                      ? 'Parsed'
+                      : cv.parsing_status === 'failed'
+                        ? 'Failed'
+                        : 'Pending'
+                  return (
+                    <li
+                      key={cv.id}
+                      className="flex items-center justify-between gap-3"
+                    >
+                      <span
+                        className="text-muted-foreground truncate text-xs font-normal"
+                        title={filename}
+                      >
+                        v{cv.version} · {filename}
+                      </span>
+                      <Badge variant="outline" className="text-xs font-normal">
+                        {statusLabel}
+                      </Badge>
+                    </li>
+                  )
+                })}
+              </ul>
+            </section>
+          ) : null}
         </aside>
       </div>
     </div>

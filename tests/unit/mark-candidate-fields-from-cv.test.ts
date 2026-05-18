@@ -1,0 +1,248 @@
+/**
+ * @vitest-environment node
+ *
+ * Unit tests for the D-08 enforcement helper. The helper is the single
+ * point where parsed CV data is merged onto the candidate row — a
+ * regression here silently overwrites manually-entered values.
+ *
+ * We mock the entire Supabase chainable query builder so the test stays
+ * pure: no database, no fetch, no env. The shape of `current` controls
+ * what counts as "empty", and we assert the exact patch passed to
+ * `update()`.
+ */
+
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+
+// Stub `server-only` so the helper can be imported in a Node test env.
+vi.mock('server-only', () => ({}))
+
+// Stub Sentry — we don't care about capture calls here.
+vi.mock('@sentry/nextjs', () => ({
+  captureException: vi.fn(),
+}))
+
+import { markCandidateFieldsFromCV } from '@/lib/db/candidate-cvs'
+
+type CandidateRow = {
+  email: string | null
+  phone: string | null
+  location: string | null
+  current_role_title: string | null
+  current_company: string | null
+  seniority_level: string | null
+  salary_current_estimate: number | null
+  salary_expectation: number | null
+  currency: string | null
+  years_experience: number | null
+  skills: string[]
+  sector_tags: string[]
+}
+
+type Patch = Partial<CandidateRow>
+
+function makeSupabase(current: CandidateRow) {
+  const updateSpy = vi.fn().mockReturnThis()
+  const eqUpdateSpy = vi.fn().mockResolvedValue({ error: null })
+  let capturedPatch: Patch | null = null
+
+  return {
+    spy: () => capturedPatch,
+    updateSpy,
+    client: {
+      from: () => {
+        const builder = {
+          select: vi.fn().mockReturnThis(),
+          eq: vi.fn().mockReturnThis(),
+          maybeSingle: vi.fn().mockResolvedValue({ data: current, error: null }),
+          update: (patch: Patch) => {
+            capturedPatch = patch
+            updateSpy(patch)
+            return { eq: eqUpdateSpy }
+          },
+        }
+        return builder
+      },
+    } as never,
+  }
+}
+
+const emptyCandidate: CandidateRow = {
+  email: null,
+  phone: null,
+  location: null,
+  current_role_title: null,
+  current_company: null,
+  seniority_level: null,
+  salary_current_estimate: null,
+  salary_expectation: null,
+  currency: null,
+  years_experience: null,
+  skills: [],
+  sector_tags: [],
+}
+
+const parsedFull = {
+  email: 'parsed@example.com',
+  phone: '+44 7000 000000',
+  location: 'London',
+  current_role: 'Senior Engineer',
+  current_company: 'NewCo',
+  seniority_level: 'senior',
+  salary_current_estimate: 80000,
+  salary_expectation: 95000,
+  currency: 'GBP',
+  years_experience_total: 8,
+  skills: ['python', 'sql'],
+  sector_tags: ['fintech'],
+}
+
+describe('markCandidateFieldsFromCV (D-08 empty-only enforcement)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  it('populates every column when the candidate is fully empty', async () => {
+    const sb = makeSupabase(emptyCandidate)
+    const result = await markCandidateFieldsFromCV(sb.client, {
+      candidateId: 'cand-1',
+      parsed: parsedFull,
+    })
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(sb.spy()).toEqual({
+      email: 'parsed@example.com',
+      phone: '+44 7000 000000',
+      location: 'London',
+      current_role_title: 'Senior Engineer',
+      current_company: 'NewCo',
+      seniority_level: 'senior',
+      salary_current_estimate: 80000,
+      salary_expectation: 95000,
+      currency: 'GBP',
+      years_experience: 8,
+      skills: ['python', 'sql'],
+      sector_tags: ['fintech'],
+    })
+    expect(result.data.fieldsPopulated.sort()).toEqual(
+      [
+        'currency',
+        'current_company',
+        'current_role_title',
+        'email',
+        'location',
+        'phone',
+        'salary_current_estimate',
+        'salary_expectation',
+        'sector_tags',
+        'seniority_level',
+        'skills',
+        'years_experience',
+      ].sort(),
+    )
+  })
+
+  it('NEVER overwrites a manually-entered scalar field (D-08)', async () => {
+    // The crucial test: user typed "Old Co" before upload. After parse,
+    // the CV says "New Co" — D-08 demands we keep "Old Co".
+    const sb = makeSupabase({
+      ...emptyCandidate,
+      current_company: 'Old Co',
+      email: 'manual@example.com',
+    })
+    const result = await markCandidateFieldsFromCV(sb.client, {
+      candidateId: 'cand-1',
+      parsed: parsedFull,
+    })
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    const patch = sb.spy()
+    expect(patch?.current_company).toBeUndefined()
+    expect(patch?.email).toBeUndefined()
+    // Other empties still get filled.
+    expect(patch?.phone).toBe('+44 7000 000000')
+    expect(result.data.fieldsPopulated).not.toContain('current_company')
+    expect(result.data.fieldsPopulated).not.toContain('email')
+  })
+
+  it('treats empty string as empty (legacy form-quirk safety)', async () => {
+    const sb = makeSupabase({
+      ...emptyCandidate,
+      email: '',
+    })
+    const result = await markCandidateFieldsFromCV(sb.client, {
+      candidateId: 'cand-1',
+      parsed: parsedFull,
+    })
+    expect(result.ok).toBe(true)
+    expect(sb.spy()?.email).toBe('parsed@example.com')
+  })
+
+  it('treats EMPTY ARRAY as empty for skills + sector_tags', async () => {
+    // candidates.skills/sector_tags are text[] not null default '{}'.
+    // The trigger fills them with [] — the helper must treat that as
+    // "empty" and populate from the CV, not as "already set".
+    const sb = makeSupabase({ ...emptyCandidate, skills: [], sector_tags: [] })
+    const result = await markCandidateFieldsFromCV(sb.client, {
+      candidateId: 'cand-1',
+      parsed: parsedFull,
+    })
+    expect(result.ok).toBe(true)
+    expect(sb.spy()?.skills).toEqual(['python', 'sql'])
+    expect(sb.spy()?.sector_tags).toEqual(['fintech'])
+  })
+
+  it('NEVER overwrites a populated array (D-08)', async () => {
+    const sb = makeSupabase({
+      ...emptyCandidate,
+      skills: ['java'],
+    })
+    const result = await markCandidateFieldsFromCV(sb.client, {
+      candidateId: 'cand-1',
+      parsed: parsedFull,
+    })
+    expect(result.ok).toBe(true)
+    expect(sb.spy()?.skills).toBeUndefined()
+  })
+
+  it('skips the UPDATE entirely when there is nothing to fill', async () => {
+    // Candidate already populated; parsed values get rejected. No
+    // database write should fire (an empty UPDATE is wasteful and would
+    // trigger updated_at unnecessarily).
+    const sb = makeSupabase({
+      email: 'a@a.com',
+      phone: '+1',
+      location: 'X',
+      current_role_title: 'X',
+      current_company: 'X',
+      seniority_level: 'X',
+      salary_current_estimate: 1,
+      salary_expectation: 1,
+      currency: 'GBP',
+      years_experience: 1,
+      skills: ['x'],
+      sector_tags: ['x'],
+    })
+    const result = await markCandidateFieldsFromCV(sb.client, {
+      candidateId: 'cand-1',
+      parsed: parsedFull,
+    })
+    expect(result.ok).toBe(true)
+    expect(sb.updateSpy).not.toHaveBeenCalled()
+    if (result.ok) expect(result.data.fieldsPopulated).toEqual([])
+  })
+
+  it('ignores null/undefined values in the parsed payload', async () => {
+    const sb = makeSupabase(emptyCandidate)
+    const result = await markCandidateFieldsFromCV(sb.client, {
+      candidateId: 'cand-1',
+      parsed: {
+        email: null,
+        phone: undefined,
+        location: '',
+      },
+    })
+    expect(result.ok).toBe(true)
+    // All parsed values are empty — no write should occur.
+    expect(sb.updateSpy).not.toHaveBeenCalled()
+  })
+})
