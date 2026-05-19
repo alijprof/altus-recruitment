@@ -842,6 +842,8 @@ export type Database = {
           delta_link: string | null
           encryption_key_version: number
           id: string
+          last_renewal_attempt_at: string | null
+          last_renewal_error: string | null
           last_synced_at: string | null
           microsoft_email: string
           microsoft_tenant_id: string
@@ -864,6 +866,8 @@ export type Database = {
           delta_link?: string | null
           encryption_key_version?: number
           id?: string
+          last_renewal_attempt_at?: string | null
+          last_renewal_error?: string | null
           last_synced_at?: string | null
           microsoft_email: string
           microsoft_tenant_id: string
@@ -886,6 +890,8 @@ export type Database = {
           delta_link?: string | null
           encryption_key_version?: number
           id?: string
+          last_renewal_attempt_at?: string | null
+          last_renewal_error?: string | null
           last_synced_at?: string | null
           microsoft_email?: string
           microsoft_tenant_id?: string
