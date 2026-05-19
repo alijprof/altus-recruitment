@@ -41,9 +41,14 @@ export default async function JobDetailPage({
           <ChevronLeft className="mr-1 size-4" />
           Jobs
         </Link>
-        <Button asChild variant="outline">
-          <Link href={`/jobs/${id}/pipeline`}>View pipeline</Link>
-        </Button>
+        <div className="flex gap-2">
+          <Button asChild variant="outline">
+            <Link href={`/jobs/${id}/matches`}>Top matches</Link>
+          </Button>
+          <Button asChild variant="outline">
+            <Link href={`/jobs/${id}/pipeline`}>View pipeline</Link>
+          </Button>
+        </div>
       </div>
 
       <JobDetailHeader job={job} />

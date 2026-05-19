@@ -169,3 +169,34 @@ export async function getTopCandidatesByVector(
     minCosineSimilarity: 0,
   })
 }
+
+/**
+ * Plan 1 Task 1.3 — top candidates for a job by vector similarity, reading
+ * the job's embedding server-side via the `match_candidates_for_job` RPC.
+ *
+ * Returns an empty array when the job has no embedding yet (caller should
+ * surface a "not yet indexed" banner and wait for the embed sweep).
+ *
+ * reason: match_candidates_for_job is added by migration 20260519111500
+ * which is not in the generated types yet (the user must run
+ * `pnpm db:types` after pushing). The cast at the .rpc() boundary follows
+ * the same pattern as hybridSearchCandidates above and disappears once the
+ * generated types catch up.
+ */
+export async function getTopCandidatesForJob(
+  supabase: SupabaseClient<Database>,
+  args: { jobId: string; limit?: number },
+): Promise<DbResult<HybridCandidateRow[]>> {
+  const client = supabase as RpcClient
+  const { data, error } = await client.rpc('match_candidates_for_job', {
+    p_job_id: args.jobId,
+    p_match_count: args.limit ?? 10,
+  })
+  if (error) {
+    Sentry.captureException(error, {
+      tags: { layer: 'db', helper: 'getTopCandidatesForJob' },
+    })
+    return { ok: false, code: 'internal' }
+  }
+  return { ok: true, data: (data as HybridCandidateRow[] | null) ?? [] }
+}
