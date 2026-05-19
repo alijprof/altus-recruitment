@@ -196,9 +196,15 @@ export const parseCVOnUpload = inngest.createFunction(
             throw new NonRetriableError(err.message)
           }
           // Corrupt PDF/DOCX. unpdf and mammoth throw plain Errors with
-          // useful names. Don't retry — corruption won't fix itself.
+          // useful names + messages. Don't retry — corruption won't fix
+          // itself. Include err.message (truncated) so the Inngest run
+          // details surface what actually broke. Library parsing errors
+          // don't contain candidate PII — they're library internals.
           const name = err instanceof Error ? err.name : 'UnknownError'
-          throw new NonRetriableError(`extract-text failed: ${name}`)
+          const message = err instanceof Error ? err.message.slice(0, 500) : ''
+          throw new NonRetriableError(
+            `extract-text failed: ${name}: ${message}`,
+          )
         }
       })
 
