@@ -83,6 +83,35 @@ function shapeCard(row: JoinedApplicationRow, now: number): PipelineCardData {
 // ---------------------------------------------------------------------------
 
 /**
+ * Flat list of applications for a single candidate — used by the candidate
+ * detail page's applications section. Includes terminal stages so the
+ * recruiter sees the full history. Joined with jobs (title + client).
+ */
+export async function listApplicationsForCandidate(
+  supabase: SupabaseClient<Database>,
+  candidateId: string,
+): Promise<DbResult<PipelineCardData[]>> {
+  const { data, error } = await supabase
+    .from('applications')
+    .select(APP_WITH_CANDIDATE_AND_JOB_SELECT)
+    .eq('candidate_id', candidateId)
+    .order('stage_changed_at', { ascending: false })
+
+  if (error) {
+    Sentry.captureException(error, {
+      tags: { layer: 'db', helper: 'listApplicationsForCandidate' },
+    })
+    return { ok: false, code: 'internal' }
+  }
+
+  const now = Date.now()
+  const rows = ((data ?? []) as unknown as JoinedApplicationRow[]).map((r) =>
+    shapeCard(r, now),
+  )
+  return { ok: true, data: rows }
+}
+
+/**
  * Flat list of applications for a single job — used by /jobs/[id]/page.tsx
  * applications table. Includes terminal stages (rejected/withdrawn) so the
  * recruiter can see the history.

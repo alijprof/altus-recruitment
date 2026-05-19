@@ -161,11 +161,14 @@ export function CandidateTable({
               </TableRow>
             ) : (
               rows.map((row) => (
-                <TableRow key={row.id} className="group">
+                <TableRow
+                  key={row.id}
+                  className="group hover:bg-accent/30 transition-colors"
+                >
                   <TableCell className="font-normal">
                     <Link
                       href={`/candidates/${row.id}`}
-                      className="hover:underline focus:outline-none focus-visible:underline"
+                      className="group-hover:text-foreground hover:underline focus:outline-none focus-visible:underline"
                     >
                       {row.full_name}
                     </Link>

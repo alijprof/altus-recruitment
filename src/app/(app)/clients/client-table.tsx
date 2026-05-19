@@ -47,9 +47,15 @@ export function ClientTable({ rows }: { rows: ClientRow[] }) {
         </TableHeader>
         <TableBody>
           {rows.map((row) => (
-            <TableRow key={row.id}>
+            <TableRow
+              key={row.id}
+              className="group hover:bg-accent/30 transition-colors"
+            >
               <TableCell className="font-medium">
-                <Link href={`/clients/${row.id}`} className="hover:underline">
+                <Link
+                  href={`/clients/${row.id}`}
+                  className="group-hover:text-foreground hover:underline"
+                >
                   {row.name}
                 </Link>
               </TableCell>

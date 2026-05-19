@@ -164,6 +164,10 @@ const moveSchema = z.object({
     .nullable(),
   declineNotes: z.string().trim().max(5_000, 'Too long').optional().nullable(),
   jobId: idSchema.optional().nullable(),
+  // Optional — the candidate detail page passes its id so the page revalidates
+  // immediately after an inline stage change. Pipeline + per-job callers
+  // leave it null.
+  candidateId: idSchema.optional().nullable(),
 })
 
 export type MoveApplicationResult =
@@ -177,7 +181,8 @@ export async function moveApplicationAction(
   if (!parsed.success) {
     return { ok: false, error: 'Invalid move payload.' }
   }
-  const { applicationId, toStage, declineReason, declineNotes, jobId } = parsed.data
+  const { applicationId, toStage, declineReason, declineNotes, jobId, candidateId } =
+    parsed.data
 
   // UI-SPEC error state: terminal stages require a decline reason. The
   // server function will reject this too, but failing fast here gives the
@@ -209,6 +214,9 @@ export async function moveApplicationAction(
   if (jobId) {
     revalidatePath(`/jobs/${jobId}`)
     revalidatePath(`/jobs/${jobId}/pipeline`)
+  }
+  if (candidateId) {
+    revalidatePath(`/candidates/${candidateId}`)
   }
   return { ok: true }
 }

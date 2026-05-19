@@ -40,6 +40,9 @@ export type DeclineModalProps = {
   applicationId: string
   candidateName: string
   jobId?: string | null
+  /** Set when opened from the candidate detail page — drives a revalidate
+   *  on /candidates/[id] so the row re-renders post-decline. */
+  candidateId?: string | null
   open: boolean
   onOpenChange: (open: boolean) => void
   onDeclined?: (applicationId: string) => void
@@ -50,6 +53,7 @@ export function DeclineModal({
   applicationId,
   candidateName,
   jobId,
+  candidateId,
   open,
   onOpenChange,
   onDeclined,
@@ -73,6 +77,7 @@ export function DeclineModal({
         declineReason: reason,
         declineNotes: notes.trim() ? notes.trim() : null,
         jobId: jobId ?? null,
+        candidateId: candidateId ?? null,
       })
       if (!res.ok) {
         toast.error(res.error)

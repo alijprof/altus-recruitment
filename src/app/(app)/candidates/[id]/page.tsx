@@ -6,10 +6,12 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Separator } from '@/components/ui/separator'
 import { formatDateLong, formatTimeAgo } from '@/lib/date'
+import { listApplicationsForCandidate } from '@/lib/db/applications'
 import { listCandidateCVs } from '@/lib/db/candidate-cvs'
 import { getCandidate, listCandidateActivities } from '@/lib/db/candidates'
 import { createClient } from '@/lib/supabase/server'
 
+import { CandidateApplications } from './candidate-applications'
 import { CandidateDetailHeader } from './candidate-detail-header'
 import { CvReviewPanel } from './cv-review-panel'
 import { CvUpload } from './cv-upload'
@@ -85,6 +87,11 @@ export default async function CandidateDetailPage({
   const latestCv = cvRows[0] ?? null
   const olderCvs = cvRows.slice(1)
 
+  // Applications across all jobs — best-effort. Drives the inline stage-
+  // change section. If this errors we just hide the section.
+  const applicationsResult = await listApplicationsForCandidate(supabase, id)
+  const applications = applicationsResult.ok ? applicationsResult.data : []
+
   // Activities — best-effort. If this errors we still render the page so the
   // user can fix things rather than facing a 500.
   const activitiesResult = await listCandidateActivities(supabase, id)
@@ -118,6 +125,11 @@ export default async function CandidateDetailPage({
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
         <div className="space-y-6 lg:col-span-2">
           <LogActivityForm candidateId={candidate.id} />
+
+          <CandidateApplications
+            candidateId={candidate.id}
+            applications={applications}
+          />
 
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <FieldGroup heading="Contact">
