@@ -12,6 +12,8 @@ import { parseCVOnUpload } from '@/lib/inngest/functions/parse-cv'
 import { precomputeMatchesForJob } from '@/lib/inngest/functions/precompute-matches-for-job'
 import { probeFfmpeg } from '@/lib/inngest/functions/probe-ffmpeg'
 import { refreshOutlookSubscription } from '@/lib/inngest/functions/refresh-outlook-subscription'
+import { specAudioRetentionSweep } from '@/lib/inngest/functions/spec-audio-retention-sweep'
+import { specDraftCleanupSweep } from '@/lib/inngest/functions/spec-draft-cleanup-sweep'
 import { syncOutlookHistory } from '@/lib/inngest/functions/sync-outlook-history'
 import { transcribeAndStructureSpec } from '@/lib/inngest/functions/transcribe-and-structure-spec'
 
@@ -32,8 +34,10 @@ export const { GET, POST, PUT } = serve({
     createOutlookSubscription,
     syncOutlookHistory,
     refreshOutlookSubscription,
-    // Phase 3 — spec workflow (Plan 03-02). Retention sweeps land in Task B.4.
+    // Phase 3 — spec workflow (Plan 03-02).
     transcribeAndStructureSpec,
     createJobFromSpec,
+    specAudioRetentionSweep,
+    specDraftCleanupSweep,
   ],
 })
