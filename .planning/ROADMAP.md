@@ -71,7 +71,23 @@
 4. Recruiter can build a per-job shortlist (working set separate from formal applications), float a candidate speculatively without a specific job, and see which clients have gone silent with a one-click outreach hook
 5. Source attribution report shows placements per source so the recruiter can see which channels produce the best ROI
 
-**Plans:** TBD
+**Plans:** 7 plans
+
+Plans:
+- [ ] 03-00-hardening-PLAN.md — env wiring (OPENAI_API_KEY), ffmpeg probe, Sentry tag conventions, Vitest scaffolds
+- [ ] 03-01-linkedin-ingest-PLAN.md — Chrome extension (MV3) + `/api/linkedin/ingest` + Voyage embed (LINKEDIN-01)
+- [ ] 03-02-spec-audio-jd-PLAN.md — spec audio upload → Whisper → Sonnet JD draft → review/approve → jobs row (SPEC-01, SPEC-02)
+- [ ] 03-03-shortlists-floats-PLAN.md — `shortlist` enum + nullable `job_id` + per-job shortlist tab + candidate floats (SHORT-01, SHORT-02)
+- [ ] 03-04-job-ads-inclusivity-PLAN.md — `job_ads` table + Sonnet ad generation + inclusivity rubric (AD-01)
+- [ ] 03-05-dormant-clients-outreach-PLAN.md — dormant clients widget + Sonnet outreach draft + Mail.Send incremental consent (REPEAT-01)
+- [ ] 03-06-source-attribution-PLAN.md — `source_attribution_summary` RPC + `/reports/source-attribution` page (REPEAT-02)
+
+**Wave structure:**
+- Wave 0: 03-00 (hardening)
+- Wave 1 (parallel): 03-01 (LinkedIn), 03-02 (spec→JD), 03-03 (shortlists/floats)
+- Wave 2 (parallel): 03-04 (job ads), 03-05 (dormant outreach)
+- Wave 3: 03-06 (source attribution)
+
 **UI hint:** yes
 
 ---
@@ -120,11 +136,11 @@
 |-------|----------------|--------|-----------|
 | 1. Internal ATS | 0/7 | In progress | - |
 | 2. Search, Match & Intake | 0/0 | Not started | - |
-| 3. LinkedIn, Spec Workflow & Shortlists | 0/0 | Not started | - |
+| 3. LinkedIn, Spec Workflow & Shortlists | 0/7 | Planned | - |
 | 4. Voice, Marketing & Reporting | 0/0 | Not started | - |
 | 5. SaaS Shell | 0/0 | Not started | - |
 
 ---
 
 *Roadmap created: 2026-05-17*
-*Last updated: 2026-05-17 after initialization*
+*Last updated: 2026-05-19 — Phase 3 plans drafted*
