@@ -8,6 +8,7 @@ import { getOrganization } from '@/lib/db/organizations'
 import { getProfile } from '@/lib/db/profiles'
 import { createClient } from '@/lib/supabase/server'
 
+import { ApplyFormToggle } from './apply-form-toggle'
 import { InvitationsList } from './invitations-list'
 import { InviteForm } from './invite-form'
 import { OrganizationForm } from './organization-form'
@@ -93,6 +94,28 @@ export default async function SettingsPage() {
               <h3 className="text-sm font-semibold">Current team</h3>
               <InvitationsList />
             </div>
+          </CardContent>
+        </Card>
+      ) : null}
+
+      <Separator />
+
+      {/* Plan 3 Task 3.3 — public apply form discoverability + owner toggle. */}
+      {organization.ok ? (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base font-semibold">Public apply form</CardTitle>
+            <CardDescription>
+              The shareable URL that lets candidates apply directly to your
+              organisation.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <ApplyFormToggle
+              slug={organization.data.slug}
+              initialEnabled={organization.data.apply_form_enabled}
+              isOwner={isOwner}
+            />
           </CardContent>
         </Card>
       ) : null}
