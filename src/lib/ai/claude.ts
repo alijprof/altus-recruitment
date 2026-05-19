@@ -48,7 +48,10 @@ type RunArgs = {
   request: Omit<Anthropic.MessageCreateParamsNonStreaming, 'model' | 'stream'>
 }
 
-async function runWithLogging(args: RunArgs): Promise<Anthropic.Message> {
+// Exported so wrappers in sibling files (src/lib/ai/match.ts, etc.) can run
+// the same retry + cost-logging path WITHOUT instantiating Anthropic. This
+// preserves the `grep -rn "new Anthropic" src/` = ONE line invariant.
+export async function runWithLogging(args: RunArgs): Promise<Anthropic.Message> {
   const started = Date.now()
   let attempt = 0
   let lastError: unknown
