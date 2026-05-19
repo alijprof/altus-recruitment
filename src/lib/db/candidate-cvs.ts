@@ -65,12 +65,20 @@ export type CreateCandidateCVInput = {
   fileSizeBytes: number
   version: number
   uploadedBy: string | null
+  // Optional: pass when calling from a service-role + no-session path (e.g.
+  // the public apply form). The candidate_cvs_set_org trigger uses
+  // current_organization_id() which returns NULL under service-role and
+  // raises 'organization_id is required and could not be resolved from auth
+  // context'. Authenticated callers leave this undefined and let the trigger
+  // resolve from the session.
+  organizationId?: string
 }
 
 /**
  * Insert a candidate_cvs row with parsing_status='pending'. organization_id
  * is filled by the candidate_cvs_set_org BEFORE INSERT trigger from the
- * session's current_organization_id() — do NOT pass it from caller code.
+ * session's current_organization_id() — except for service-role callers
+ * with no session, which MUST pass `organizationId` explicitly.
  */
 export async function createCandidateCV(
   supabase: SupabaseClient<Database>,
@@ -78,8 +86,8 @@ export async function createCandidateCV(
 ): Promise<DbResult<Pick<CandidateCvRow, 'id' | 'organization_id'>>> {
   // reason: TablesInsert<'candidate_cvs'> requires organization_id at the
   // type level but the BEFORE INSERT trigger resolves it from the auth
-  // context. Cast through unknown narrows the payload to what we actually
-  // send (matches the pattern in createCandidate).
+  // context for authenticated callers. Cast through unknown narrows the
+  // payload to what we actually send (matches the pattern in createCandidate).
   const payload = {
     candidate_id: input.candidateId,
     storage_path: input.storagePath,
@@ -88,6 +96,7 @@ export async function createCandidateCV(
     version: input.version,
     parsing_status: 'pending' as ParsingStatus,
     uploaded_by: input.uploadedBy,
+    ...(input.organizationId ? { organization_id: input.organizationId } : {}),
   } as unknown as TablesInsert<'candidate_cvs'>
 
   const { data, error } = await supabase

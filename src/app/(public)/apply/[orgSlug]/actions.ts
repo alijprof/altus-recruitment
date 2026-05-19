@@ -250,6 +250,9 @@ export async function submitApplyAction(
           slug,
           marketing_consent: parsed.data.marketing_consent === true,
         },
+        // Service-role + no session — the activities_set_org trigger has no
+        // current_organization_id() to read; pass org.id explicitly.
+        organization_id: org.id,
       })
       if (!activityRes.ok) {
         // Activity write failure is non-fatal — the candidate exists, the
@@ -278,6 +281,14 @@ export async function submitApplyAction(
         consent_text_version: CURRENT_CONSENT_VERSION,
       })
       if (!insertRes.ok) {
+        Sentry.captureException(new Error('apply: createCandidate failed'), {
+          tags: {
+            layer: 'server-action',
+            action: 'submitApplyAction',
+            subop: 'createCandidate',
+            org_slug: slug,
+          },
+        })
         return {
           ok: false,
           formError: 'Something went wrong. Please try again.',
@@ -297,6 +308,9 @@ export async function submitApplyAction(
           slug,
           marketing_consent: parsed.data.marketing_consent === true,
         },
+        // Service-role + no session — pass org.id explicitly so the
+        // activities_set_org trigger doesn't reject the row.
+        organization_id: org.id,
       })
     }
 
@@ -349,6 +363,14 @@ export async function submitApplyAction(
     //     candidate_id (Phase 1 commit 0966875).
     const versionRes = await nextCVVersion(supabase, candidateId)
     if (!versionRes.ok) {
+      Sentry.captureException(new Error('apply: nextCVVersion failed'), {
+        tags: {
+          layer: 'server-action',
+          action: 'submitApplyAction',
+          subop: 'nextCVVersion',
+          org_slug: slug,
+        },
+      })
       return { ok: false, formError: 'Something went wrong. Please try again.' }
     }
     const cvRes = await createCandidateCV(supabase, {
@@ -358,10 +380,21 @@ export async function submitApplyAction(
       fileSizeBytes: fileMeta.size,
       version: versionRes.data,
       uploadedBy: null,
+      // Service-role + no session — pass org.id explicitly so the
+      // candidate_cvs_set_org trigger doesn't reject the row.
+      organizationId: org.id,
     })
     if (!cvRes.ok) {
       // Roll back the soon-to-be-orphaned signed URL? The Storage object
       // hasn't been written yet — no cleanup needed. Just bail.
+      Sentry.captureException(new Error('apply: createCandidateCV failed'), {
+        tags: {
+          layer: 'server-action',
+          action: 'submitApplyAction',
+          subop: 'createCandidateCV',
+          org_slug: slug,
+        },
+      })
       return { ok: false, formError: 'Something went wrong. Please try again.' }
     }
     const candidateCvId = cvRes.data.id

@@ -23,6 +23,11 @@ export type CreateActivityInput = {
   occurred_at?: string
   metadata?: ActivityMetadata
   actor_user_id?: string | null
+  // Optional: pass when calling from a service-role + no-session path (e.g.
+  // the public apply form). The activities_set_org trigger uses
+  // current_organization_id() which returns NULL under service-role and
+  // raises. Authenticated callers leave this undefined.
+  organization_id?: string
 }
 
 export type ListActivitiesArgs = {
@@ -161,6 +166,7 @@ export async function createActivity(
     actor_user_id: input.actor_user_id ?? null,
     occurred_at: input.occurred_at ?? new Date().toISOString(),
     metadata: input.metadata ?? {},
+    ...(input.organization_id ? { organization_id: input.organization_id } : {}),
   } as unknown as TablesInsert<'activities'>
 
   const { data, error } = await supabase
