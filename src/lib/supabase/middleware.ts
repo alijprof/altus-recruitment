@@ -12,6 +12,16 @@ const PUBLIC_PATHS = [
   '/auth/auth-code-error',
   // Inngest webhook — guarded by Inngest signing key, not Supabase auth.
   '/api/inngest',
+  // Public apply form (Plan 3) — `/apply/[orgSlug]` and any nested success
+  // page. The startsWith branch in `isPublic` below matches `/apply/...`.
+  '/apply',
+  // Outlook OAuth callback (Plan 4) — the user is mid-flight; we have no
+  // Supabase session yet, only an `oauth_state` cookie + Microsoft auth
+  // code. Route handler validates state + completes the token exchange.
+  '/api/outlook/callback',
+  // Microsoft Graph change-notification webhook (Plan 4) — guarded by the
+  // `clientState` echoed in every notification, NOT by Supabase auth.
+  '/api/outlook/webhook',
 ]
 
 export async function updateSession(request: NextRequest) {
