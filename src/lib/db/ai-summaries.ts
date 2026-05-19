@@ -174,3 +174,238 @@ export async function listMatchSummariesForJob(
   }
   return { ok: true, data: data ?? [] }
 }
+
+// ---------------------------------------------------------------------------
+// Plan 2 Task 2.1 — cost-ceiling helper + Task 2.3 — sweep helper.
+//
+// `getOrgMatchSpendThisMonth` reads month-to-date `ai_usage.cost_pence`
+// for `purpose='match_score'` in the caller-supplied org. The precompute
+// Inngest function calls it BEFORE scoring; if the result exceeds
+// `MAX_MONTHLY_MATCH_SPEND_PENCE` (env-or-default) it bails with a
+// Sentry warning.
+//
+// `deleteStaleMatchSummaries` is called by the weekly
+// `cleanup-stale-summaries` Inngest function. The SQL uses two correlated
+// `EXISTS` subqueries against `candidates` / `jobs` so a row is removed
+// the moment either embedding version drifts past it. RLS is enforced at
+// the underlying tables — the service-role client is the canonical caller
+// (Inngest sweep), and the `using` clauses on the EXISTS subqueries are
+// implicit (service-role bypasses RLS by design here).
+// ---------------------------------------------------------------------------
+
+type AiUsageSpendClient = {
+  from: (table: 'ai_usage') => {
+    select: (cols: string) => {
+      eq: (col: string, val: unknown) => {
+        eq: (col: string, val: unknown) => {
+          gte: (col: string, val: unknown) => Promise<{
+            data: Array<{ cost_pence: number | null }> | null
+            error: unknown
+          }>
+        }
+      }
+    }
+  }
+}
+
+function asAiUsageClient(supabase: SupabaseClient<Database>): AiUsageSpendClient {
+  return supabase as unknown as AiUsageSpendClient
+}
+
+/**
+ * Sum of `cost_pence` from `ai_usage` rows in the given org with
+ * `purpose='match_score'`, for the current calendar month (UTC, derived
+ * from `date_trunc('month', now())`). Returns pence as a plain number.
+ *
+ * Implementation: PostgREST doesn't expose `sum()` aggregates without an
+ * RPC, so we select cost_pence for the matching rows and sum client-side.
+ * At anchor scale (~5k rows/month worst case) the round-trip is fine; at
+ * SaaS scale this should become an RPC.
+ */
+export async function getOrgMatchSpendThisMonth(
+  supabase: SupabaseClient<Database>,
+  orgId: string,
+): Promise<DbResult<number>> {
+  // ISO timestamp at the first of the current month, UTC.
+  const now = new Date()
+  const monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1))
+    .toISOString()
+
+  const { data, error } = await asAiUsageClient(supabase)
+    .from('ai_usage')
+    .select('cost_pence')
+    .eq('organization_id', orgId)
+    .eq('purpose', 'match_score')
+    .gte('created_at', monthStart)
+
+  if (error) {
+    Sentry.captureException(error, {
+      tags: { layer: 'db', helper: 'getOrgMatchSpendThisMonth' },
+    })
+    return { ok: false, code: 'internal' }
+  }
+  const sum = (data ?? []).reduce((acc, row) => acc + (row.cost_pence ?? 0), 0)
+  return { ok: true, data: sum }
+}
+
+type StaleSweepClient = {
+  from: (table: 'ai_summaries' | 'candidates' | 'jobs') => {
+    select: (
+      cols: string,
+    ) => {
+      eq: (col: string, val: unknown) => Promise<{
+        data: Array<{ id: string; embedding_version: number | null }> | null
+        error: unknown
+      }>
+    } & Promise<{
+      data: Array<{
+        id: string
+        candidate_id: string | null
+        job_id: string | null
+        candidate_embedding_version: number | null
+        job_embedding_version: number | null
+      }> | null
+      error: unknown
+    }>
+    delete: () => {
+      in: (col: string, vals: string[]) => Promise<{
+        data: unknown
+        error: unknown
+      }>
+    }
+  }
+}
+
+/**
+ * Sweep stale `match_score` rows in `ai_summaries`. A row is stale when
+ * either (a) the referenced candidate has a higher current
+ * `embedding_version` than the cached `candidate_embedding_version`, OR
+ * (b) the referenced job has a higher current `embedding_version` than
+ * the cached `job_embedding_version`.
+ *
+ * Implemented entirely in JS (no new migration) per Plan 2's "no new
+ * migrations" rule. The Inngest function is weekly so the round-trip cost
+ * is acceptable at anchor scale (<1k summaries).
+ *
+ * Caller MUST be the service-role client (the weekly cleanup function);
+ * authenticated callers would be RLS-bounded and produce per-tenant
+ * sweeps which is not what we want for the global cron.
+ */
+export async function deleteStaleMatchSummaries(
+  supabase: SupabaseClient<Database>,
+): Promise<DbResult<{ deleted: number }>> {
+  const client = supabase as unknown as StaleSweepClient
+
+  // 1) Fetch all match_score rows with their version columns. Tiny payload
+  //    per row (5 cols * ~UUID size). At anchor scale this is <1MB.
+  const summariesRes = await client
+    .from('ai_summaries')
+    .select(
+      'id, candidate_id, job_id, candidate_embedding_version, job_embedding_version',
+    )
+  // The first overload of select() returns a Promise directly when no .eq()
+  // is chained. The cast layers above accept either shape.
+  // reason: supabase-js builder shape is too dynamic to model precisely; the
+  // shape we use here is well-tested at runtime.
+  const summaries = (
+    summariesRes as unknown as {
+      data: Array<{
+        id: string
+        candidate_id: string | null
+        job_id: string | null
+        candidate_embedding_version: number | null
+        job_embedding_version: number | null
+      }> | null
+      error: unknown
+    }
+  )
+  if (summaries.error) {
+    Sentry.captureException(summaries.error, {
+      tags: { layer: 'db', helper: 'deleteStaleMatchSummaries', subop: 'read-summaries' },
+    })
+    return { ok: false, code: 'internal' }
+  }
+  const rows = summaries.data ?? []
+  if (rows.length === 0) return { ok: true, data: { deleted: 0 } }
+
+  // 2) Bulk fetch current embedding_version for every referenced candidate/job.
+  const candidateIds = Array.from(
+    new Set(rows.map((r) => r.candidate_id).filter((v): v is string => Boolean(v))),
+  )
+  const jobIds = Array.from(
+    new Set(rows.map((r) => r.job_id).filter((v): v is string => Boolean(v))),
+  )
+
+  const versionsClient = supabase as unknown as {
+    from: (table: 'candidates' | 'jobs') => {
+      select: (cols: string) => {
+        in: (col: string, vals: string[]) => Promise<{
+          data: Array<{ id: string; embedding_version: number | null }> | null
+          error: unknown
+        }>
+      }
+    }
+  }
+
+  const candidateVersions = new Map<string, number>()
+  if (candidateIds.length > 0) {
+    const { data, error } = await versionsClient
+      .from('candidates')
+      .select('id, embedding_version')
+      .in('id', candidateIds)
+    if (error) {
+      Sentry.captureException(error, {
+        tags: { layer: 'db', helper: 'deleteStaleMatchSummaries', subop: 'read-candidates' },
+      })
+      return { ok: false, code: 'internal' }
+    }
+    for (const row of data ?? []) {
+      candidateVersions.set(row.id, row.embedding_version ?? 0)
+    }
+  }
+
+  const jobVersions = new Map<string, number>()
+  if (jobIds.length > 0) {
+    const { data, error } = await versionsClient
+      .from('jobs')
+      .select('id, embedding_version')
+      .in('id', jobIds)
+    if (error) {
+      Sentry.captureException(error, {
+        tags: { layer: 'db', helper: 'deleteStaleMatchSummaries', subop: 'read-jobs' },
+      })
+      return { ok: false, code: 'internal' }
+    }
+    for (const row of data ?? []) {
+      jobVersions.set(row.id, row.embedding_version ?? 0)
+    }
+  }
+
+  // 3) Decide which summary rows are stale.
+  const staleIds: string[] = []
+  for (const row of rows) {
+    const candStale =
+      row.candidate_id != null &&
+      (candidateVersions.get(row.candidate_id) ?? 0) > (row.candidate_embedding_version ?? 0)
+    const jobStale =
+      row.job_id != null &&
+      (jobVersions.get(row.job_id) ?? 0) > (row.job_embedding_version ?? 0)
+    if (candStale || jobStale) staleIds.push(row.id)
+  }
+
+  if (staleIds.length === 0) return { ok: true, data: { deleted: 0 } }
+
+  // 4) Bulk delete by primary key.
+  const { error: deleteError } = await client
+    .from('ai_summaries')
+    .delete()
+    .in('id', staleIds)
+  if (deleteError) {
+    Sentry.captureException(deleteError, {
+      tags: { layer: 'db', helper: 'deleteStaleMatchSummaries', subop: 'delete' },
+    })
+    return { ok: false, code: 'internal' }
+  }
+
+  return { ok: true, data: { deleted: staleIds.length } }
+}

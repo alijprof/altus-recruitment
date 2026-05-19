@@ -82,6 +82,38 @@ export async function createJobAction(
     })
   }
 
+  // Plan 2 Task 2.1: fire `job/score-top-candidates` so precompute is
+  // queued from the moment the job is created. The embed-job-on-jd-change
+  // function ALSO chains this event after a successful embed (via
+  // step.sendEvent) so two invocations may fire — the first usually no-ops
+  // because the embed isn't ready yet (top-N vector lookup returns empty
+  // and the function exits cleanly). The redundancy keeps the matches
+  // pipeline observable from the action layer without depending on the
+  // embed chain firing. Failure is non-fatal (same fallback as job/embed).
+  try {
+    await inngest.send({
+      name: 'job/score-top-candidates',
+      data: {
+        organization_id: result.data.organization_id,
+        job_id: result.data.id,
+        user_id: ownerUserId,
+      },
+    })
+  } catch (err) {
+    const errName = err instanceof Error ? err.name : 'UnknownError'
+    Sentry.captureException(
+      new Error(`${errName}: inngest.send job/score-top-candidates failed`),
+      {
+        tags: {
+          layer: 'action',
+          helper: 'createJobAction',
+          subop: 'inngest.send-score',
+          job_id: result.data.id,
+        },
+      },
+    )
+  }
+
   revalidatePath(`/clients/${idResult.data}`)
   revalidatePath('/jobs')
   redirect(`/jobs/${result.data.id}`)

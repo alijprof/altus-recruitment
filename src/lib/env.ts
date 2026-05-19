@@ -60,6 +60,18 @@ export const env = createEnv({
     // fails-closed at call time when missing via the verifyTurnstileToken
     // helper.
     TURNSTILE_SECRET_KEY: z.string().min(1).optional(),
+
+    // --- Phase 2: Sonnet match-scoring spend ceiling (Plan 2 Task 2.1) ---
+    // Per-org month-to-date spend cap on `purpose='match_score'` rows in
+    // ai_usage. When the org's current-month spend crosses this value the
+    // precompute Inngest function bails with a Sentry warning and the
+    // recruiter still sees vector-only results.
+    //
+    // Default 10000 pence = £100/month per RESEARCH §B.8 (anchor scale is
+    // £20-50/month so this leaves headroom; product can override per
+    // environment). z.coerce.number keeps the env var string-typed in
+    // `process.env` while exposing a number at the call site.
+    MAX_MONTHLY_MATCH_SPEND_PENCE: z.coerce.number().int().positive().default(10_000),
   },
   client: {
     NEXT_PUBLIC_SUPABASE_URL: z.string().url(),

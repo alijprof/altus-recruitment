@@ -170,6 +170,64 @@ export async function getTopCandidatesByVector(
   })
 }
 
+// ---------------------------------------------------------------------------
+// Plan 2 Task 2.1 — embedding-version readers used by the match cache key.
+//
+// The cached `ai_summaries.candidate_embedding_version` and
+// `job_embedding_version` columns are part of the unique key. To do a cache
+// lookup, both the precompute Inngest function and the on-demand explain
+// action need the CURRENT version from the source rows. These helpers
+// return `0` when the column is NULL (a candidate / job that has never
+// been embedded) so callers don't have to handle the nullable themselves.
+// ---------------------------------------------------------------------------
+
+/**
+ * Read `candidates.embedding_version` for a single id. Returns `0` if the
+ * candidate has never been embedded (the NULL case). `not_found` when the
+ * row doesn't exist — caller should treat as "candidate gone, skip".
+ */
+export async function getCandidateEmbeddingVersion(
+  supabase: SupabaseClient<Database>,
+  candidateId: string,
+): Promise<DbResult<number>> {
+  const { data, error } = await supabase
+    .from('candidates')
+    .select('embedding_version')
+    .eq('id', candidateId)
+    .maybeSingle()
+  if (error) {
+    Sentry.captureException(error, {
+      tags: { layer: 'db', helper: 'getCandidateEmbeddingVersion' },
+    })
+    return { ok: false, code: 'internal' }
+  }
+  if (!data) return { ok: false, code: 'not_found' }
+  return { ok: true, data: data.embedding_version ?? 0 }
+}
+
+/**
+ * Read `jobs.embedding_version` for a single id. Same semantics as
+ * `getCandidateEmbeddingVersion`.
+ */
+export async function getJobEmbeddingVersion(
+  supabase: SupabaseClient<Database>,
+  jobId: string,
+): Promise<DbResult<number>> {
+  const { data, error } = await supabase
+    .from('jobs')
+    .select('embedding_version')
+    .eq('id', jobId)
+    .maybeSingle()
+  if (error) {
+    Sentry.captureException(error, {
+      tags: { layer: 'db', helper: 'getJobEmbeddingVersion' },
+    })
+    return { ok: false, code: 'internal' }
+  }
+  if (!data) return { ok: false, code: 'not_found' }
+  return { ok: true, data: data.embedding_version ?? 0 }
+}
+
 /**
  * Plan 1 Task 1.3 — top candidates for a job by vector similarity, reading
  * the job's embedding server-side via the `match_candidates_for_job` RPC.

@@ -1,8 +1,13 @@
 import 'server-only'
 
 import type Anthropic from '@anthropic-ai/sdk'
+import type { SupabaseClient } from '@supabase/supabase-js'
 
 import { runWithLogging } from '@/lib/ai/claude'
+import { candidateEmbeddingText, jobEmbeddingText } from '@/lib/ai/embed-text'
+import { getCandidateForEmbedding } from '@/lib/db/candidates'
+import { getJobForEmbedding } from '@/lib/db/jobs'
+import type { Database } from '@/types/database'
 
 // ---------------------------------------------------------------------------
 // Sonnet match-score wrapper. Lives in a sibling file (NOT inside claude.ts)
@@ -119,4 +124,60 @@ export async function scoreCandidateForJob(args: {
     throw new Error('Claude did not return tool_use for match_score')
   }
   return toolUse.input as MatchScore
+}
+
+// ---------------------------------------------------------------------------
+// Plan 2 Task 2.1 — shared input builders for the precompute Inngest
+// function AND the on-demand explainCandidateMatchAction. Both paths must
+// see the SAME summary strings so cache hits behave consistently regardless
+// of who populated the entry.
+//
+// D2-08 cap: structured candidate summary plus a short CV-text snippet
+// (2 000 chars) and structured job summary plus a JD-body snippet
+// (4 000 chars). Per RESEARCH §B.7 this keeps Sonnet cost ~0.7p/call.
+// ---------------------------------------------------------------------------
+
+const MATCH_CV_TEXT_CHAR_CAP = 2_000
+const MATCH_JD_BODY_CHAR_CAP = 4_000
+
+export type MatchInputs = {
+  candidateSummary: string
+  jobSummary: string
+}
+
+/**
+ * Build the two prompt strings for `scoreCandidateForJob`. Returns
+ * `{ ok: false }` when either lookup fails — callers should skip the
+ * candidate-job pair (no Sonnet call, no cache write).
+ *
+ * The supabase client should be the service-role client when called from
+ * an Inngest function and the recruiter's server client when called from
+ * the on-demand action — both work because we use the same helpers.
+ */
+export async function buildMatchInputs(
+  supabase: SupabaseClient<Database>,
+  args: { candidateId: string; jobId: string },
+): Promise<{ ok: true; data: MatchInputs } | { ok: false; reason: string }> {
+  const candidateResult = await getCandidateForEmbedding(supabase, args.candidateId)
+  if (!candidateResult.ok) {
+    return { ok: false, reason: `candidate: ${candidateResult.code}` }
+  }
+  const jobResult = await getJobForEmbedding(supabase, args.jobId)
+  if (!jobResult.ok) {
+    return { ok: false, reason: `job: ${jobResult.code}` }
+  }
+
+  // Structured summary first (always present). CV body is intentionally
+  // capped tighter than embed-time (2k vs 30k) — Sonnet scoring needs
+  // signal density, not the full CV.
+  const candidateSummary = candidateEmbeddingText(candidateResult.data, null).slice(
+    0,
+    MATCH_CV_TEXT_CHAR_CAP * 4,
+  )
+  const jobSummary = jobEmbeddingText(jobResult.data).slice(0, MATCH_JD_BODY_CHAR_CAP * 2)
+
+  return {
+    ok: true,
+    data: { candidateSummary, jobSummary },
+  }
 }

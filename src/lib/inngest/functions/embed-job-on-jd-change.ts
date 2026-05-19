@@ -105,6 +105,21 @@ export const embedJobOnJDChange = inngest.createFunction(
           embeddingVersion: (job.embedding_version ?? 0) + 1,
         })
       })
+
+      // Plan 2 Task 2.1 — chain the precompute-matches event AFTER the
+      // embed has persisted. Using step.sendEvent (not raw inngest.send)
+      // makes the chain idempotent across retries — Inngest dedupes by
+      // step id within a function attempt. Per Plan 2's "embed must
+      // complete first" requirement, this MUST sit after the persist
+      // step and never run as a parallel chain.
+      await step.sendEvent('rescore-after-embed', {
+        name: 'job/score-top-candidates',
+        data: {
+          organization_id,
+          job_id,
+          user_id,
+        },
+      })
     } catch (err) {
       // VERIFICATION R4: wrap name + status only — never pass the raw
       // error to Sentry (Voyage SDK error.message can include input
