@@ -50,10 +50,28 @@ export default async function JobMatchesPage({
   }
   const job = jobResult.data
 
+  // Phase 2 review C1 fix — `match_candidates_for_job` now requires an
+  // explicit organization_id to defend against service-role RLS bypass.
+  // Read from the session via the SECURITY DEFINER RPC.
+  const orgRpc = await supabase.rpc('current_organization_id')
+  const organizationId =
+    typeof orgRpc.data === 'string' ? orgRpc.data : null
+  if (!organizationId) {
+    return (
+      <div className="text-destructive p-8">
+        Couldn&apos;t resolve your organisation. Please refresh.
+      </div>
+    )
+  }
+
   // Run vector top-N and the cache fetch in parallel — they don't depend
   // on each other.
   const [topResult, summariesResult, jobVersionResult] = await Promise.all([
-    getTopCandidatesForJob(supabase, { jobId: id, limit: MATCH_LIMIT }),
+    getTopCandidatesForJob(supabase, {
+      jobId: id,
+      organizationId,
+      limit: MATCH_LIMIT,
+    }),
     listMatchSummariesForJob(supabase, { jobId: id, limit: MATCH_LIMIT * 4 }),
     getJobEmbeddingVersion(supabase, id),
   ])

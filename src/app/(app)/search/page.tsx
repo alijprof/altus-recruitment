@@ -158,6 +158,7 @@ export default async function SearchPage({
     rows = await hybridSearchCandidates(supabase, {
       queryText: q,
       queryEmbedding,
+      organizationId,
       matchCount: RESULT_LIMIT,
       minCosineSimilarity: MIN_COSINE,
     })

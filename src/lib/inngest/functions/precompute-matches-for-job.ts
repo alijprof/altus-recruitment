@@ -7,6 +7,7 @@ import {
   getMatchSummary,
   upsertMatchSummary,
 } from '@/lib/db/ai-summaries'
+import { getCandidateForEmbedding } from '@/lib/db/candidates'
 import {
   getCandidateEmbeddingVersion,
   getTopCandidatesForJob,
@@ -168,10 +169,17 @@ export const precomputeMatchesForJob = inngest.createFunction(
       // Step 2: select top-N candidates by vector similarity. Empty result
       // is a valid outcome — job hasn't been embedded yet OR no candidates
       // have embeddings yet.
+      //
+      // Phase 2 review C1 fix: pass `organization_id` explicitly so the
+      // RPC filters by org. Service-role bypasses RLS, so this is the
+      // load-bearing tenant guard. The RPC also asserts the job lives in
+      // this org and raises if not — defence in depth against forged
+      // event payloads.
       const topCandidates = await step.run('select-top-candidates', async () => {
         const supabase = createServiceClient()
         const result = await getTopCandidatesForJob(supabase, {
           jobId: job_id,
+          organizationId: organization_id,
           limit: TOP_N_PER_JOB,
         })
         if (!result.ok) {
@@ -199,6 +207,37 @@ export const precomputeMatchesForJob = inngest.createFunction(
       for (const candidate of topCandidates) {
         await step.run(`score-${candidate.id}`, async () => {
           const supabase = createServiceClient()
+
+          // Phase 2 review C1 — belt-and-braces post-RPC check. The
+          // RPC's `where c.organization_id = p_organization_id` filter
+          // (migration 20260519130000) should make this impossible to
+          // fail, but service-role bypasses RLS so a defence-in-depth
+          // re-check before the Sonnet call costs one extra read and
+          // closes the leak if the RPC ever regresses. Fail closed:
+          // log + skip the candidate (no Sonnet call, no ai_usage row).
+          const candForVerifyResult = await getCandidateForEmbedding(
+            supabase,
+            candidate.id,
+          )
+          if (!candForVerifyResult.ok) {
+            return
+          }
+          if (
+            candForVerifyResult.data.organization_id !== organization_id
+          ) {
+            Sentry.captureException(
+              new Error('precompute-matches: cross-tenant candidate in top-N'),
+              {
+                tags: {
+                  layer: 'inngest',
+                  function: 'precompute-matches-for-job',
+                  subop: 'cross-tenant-guard',
+                  organization_id,
+                },
+              },
+            )
+            return
+          }
 
           const candVersionResult = await getCandidateEmbeddingVersion(supabase, candidate.id)
           if (!candVersionResult.ok) {

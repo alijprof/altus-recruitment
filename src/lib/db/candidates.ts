@@ -140,9 +140,22 @@ export async function listCandidates(
       return listCandidates(supabase, { ...args, mode: 'trigram' })
     }
 
+    // Phase 2 review C1 fix: hybridSearchCandidates now requires
+    // organizationId. We re-resolve from the session here because the
+    // `organizationId` variable is scoped inside the embed try-block
+    // above. Reading the RPC twice is harmless (it's a SECURITY DEFINER
+    // session-context read).
+    const orgRpcAgain = await supabase.rpc('current_organization_id')
+    const organizationIdForSearch =
+      typeof orgRpcAgain.data === 'string' ? orgRpcAgain.data : null
+    if (!organizationIdForSearch) {
+      return listCandidates(supabase, { ...args, mode: 'trigram' })
+    }
+
     const hybridResult = await hybridSearchCandidates(supabase, {
       queryText: q.trim(),
       queryEmbedding,
+      organizationId: organizationIdForSearch,
       matchCount: limit,
       minCosineSimilarity: 0.3,
     })

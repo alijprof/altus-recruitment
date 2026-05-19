@@ -65,6 +65,14 @@ const HYBRID_DEFAULT_MIN_COSINE = 0.5
 export type HybridSearchArgs = {
   queryText: string
   queryEmbedding: number[]
+  /**
+   * Tenant scope — REQUIRED. Phase 2 review C1 fix: the RPC filters by
+   * organization_id explicitly so service-role callers cannot scan across
+   * orgs. Authenticated callers should pass the result of
+   * `current_organization_id()` (RLS still gates, but the RPC defends
+   * either way).
+   */
+  organizationId: string
   matchCount?: number
   minCosineSimilarity?: number
 }
@@ -74,6 +82,9 @@ export type HybridSearchArgs = {
  * `rrf_score` desc. Empty result is a valid outcome (no candidates above
  * the cosine threshold AND no trigram matches > 0.3) — caller distinguishes
  * empty from error via `result.ok && result.data.length === 0`.
+ *
+ * Tenant scope is enforced inside the RPC via `p_organization_id` (Phase 2
+ * review C1) — safe to call from service-role.
  */
 export async function hybridSearchCandidates(
   supabase: SupabaseClient<Database>,
@@ -83,6 +94,7 @@ export async function hybridSearchCandidates(
   const { data, error } = await client.rpc('match_candidates', {
     p_query_text: args.queryText,
     p_query_embedding: args.queryEmbedding,
+    p_organization_id: args.organizationId,
     p_match_count: args.matchCount ?? HYBRID_DEFAULT_MATCH_COUNT,
     p_min_cosine_similarity: args.minCosineSimilarity ?? HYBRID_DEFAULT_MIN_COSINE,
   })
@@ -96,13 +108,26 @@ export async function hybridSearchCandidates(
 }
 
 /**
+ * Args shape for `hybridSearchJobs`. NOTE: `match_jobs` RPC does not yet
+ * take an explicit org filter — today it has no service-role callers, so
+ * RLS gates tenant scope. If a service-role caller is added, mirror the
+ * Phase 2 C1 fix: add p_organization_id to the RPC and require it here.
+ */
+export type HybridSearchJobsArgs = {
+  queryText: string
+  queryEmbedding: number[]
+  matchCount?: number
+  minCosineSimilarity?: number
+}
+
+/**
  * RRF-blended job search. Same shape as hybridSearchCandidates but against
  * the jobs table; trigram path is `jobs.title` only (D2-04 + RESEARCH
  * §A.4).
  */
 export async function hybridSearchJobs(
   supabase: SupabaseClient<Database>,
-  args: HybridSearchArgs,
+  args: HybridSearchJobsArgs,
 ): Promise<DbResult<HybridJobRow[]>> {
   const client = supabase as RpcClient
   const { data, error } = await client.rpc('match_jobs', {
@@ -156,7 +181,7 @@ export async function countCandidatesWithoutEmbedding(
  */
 export async function getTopCandidatesByVector(
   supabase: SupabaseClient<Database>,
-  args: { jobEmbedding: number[]; limit?: number },
+  args: { jobEmbedding: number[]; organizationId: string; limit?: number },
 ): Promise<DbResult<HybridCandidateRow[]>> {
   // Empty job embedding (job hasn't been embedded yet) → no work to do.
   if (args.jobEmbedding.length === 0) {
@@ -165,6 +190,7 @@ export async function getTopCandidatesByVector(
   return hybridSearchCandidates(supabase, {
     queryText: '',
     queryEmbedding: args.jobEmbedding,
+    organizationId: args.organizationId,
     matchCount: args.limit ?? 10,
     minCosineSimilarity: 0,
   })
@@ -271,11 +297,12 @@ export async function getJobEmbeddingVersion(
  */
 export async function getTopCandidatesForJob(
   supabase: SupabaseClient<Database>,
-  args: { jobId: string; limit?: number },
+  args: { jobId: string; organizationId: string; limit?: number },
 ): Promise<DbResult<HybridCandidateRow[]>> {
   const client = supabase as RpcClient
   const { data, error } = await client.rpc('match_candidates_for_job', {
     p_job_id: args.jobId,
+    p_organization_id: args.organizationId,
     p_match_count: args.limit ?? 10,
   })
   if (error) {
