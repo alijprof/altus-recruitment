@@ -99,7 +99,16 @@ export default async function CandidatesPage({
         <>
           <div className="flex flex-wrap items-center justify-between gap-3">
             <SearchInput initialQuery={q ?? ''} />
-            <ViewToggle current={view} />
+            <ViewToggle
+              basePath="/candidates"
+              current={view}
+              params={{
+                q: q,
+                sort: sort !== DEFAULT_SORT ? sort : undefined,
+                dir: dir !== DEFAULT_DIR ? dir : undefined,
+                page: page > 1 ? String(page) : undefined,
+              }}
+            />
           </div>
           {view === 'cards' ? (
             <CandidateCards

@@ -111,7 +111,16 @@ export default async function ClientsPage({
               ? 'No matches'
               : `${pageStart}–${pageEnd} of ${total} client${total === 1 ? '' : 's'}`}
           </p>
-          <ViewToggle current={view} />
+          <ViewToggle
+            basePath="/clients"
+            current={view}
+            params={{
+              q: q || undefined,
+              sort: sort !== 'last_contacted_at' ? sort : undefined,
+              dir: dir !== 'desc' ? dir : undefined,
+              page: page > 1 ? String(page) : undefined,
+            }}
+          />
         </div>
       </div>
 

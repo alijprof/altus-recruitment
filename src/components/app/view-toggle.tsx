@@ -1,8 +1,5 @@
-'use client'
-
 import { LayoutGrid, List } from 'lucide-react'
 import Link from 'next/link'
-import { usePathname, useSearchParams } from 'next/navigation'
 
 import { cn } from '@/lib/utils'
 
@@ -13,27 +10,31 @@ export function isListView(value: string | undefined): ListView {
 }
 
 type ViewToggleProps = {
+  /** Path to the list page, e.g. '/candidates' or '/clients'. */
+  basePath: string
   current: ListView
+  /** Other URL search params to preserve across the toggle. */
+  params?: Record<string, string | undefined>
   className?: string
 }
 
-// Toggle between list (table) and cards (grid) on candidate/client list
-// pages. Preserves every other URL search param so search/sort/page state
-// survives the swap. Server-side parsing lives in isListView() — call it
-// in the page to read params.view.
-export function ViewToggle({ current, className }: ViewToggleProps) {
-  const pathname = usePathname()
-  const searchParams = useSearchParams()
-
+// Server-rendered toggle between list (table) and cards (grid). Pages pass
+// in basePath + the other search params; we build the hrefs server-side so
+// no client-side useSearchParams is required (Next.js 16 enforces Suspense
+// around it, which was breaking /candidates and /clients).
+export function ViewToggle({ basePath, current, params, className }: ViewToggleProps) {
   function hrefFor(view: ListView): string {
-    const params = new URLSearchParams(searchParams.toString())
-    if (view === 'list') {
-      params.delete('view') // list is the implicit default
-    } else {
-      params.set('view', view)
+    const usp = new URLSearchParams()
+    for (const [k, v] of Object.entries(params ?? {})) {
+      if (v !== undefined && v !== null && v !== '') usp.set(k, v)
     }
-    const qs = params.toString()
-    return qs ? `${pathname}?${qs}` : pathname
+    if (view === 'cards') {
+      usp.set('view', 'cards')
+    } else {
+      usp.delete('view')
+    }
+    const qs = usp.toString()
+    return qs ? `${basePath}?${qs}` : basePath
   }
 
   return (
