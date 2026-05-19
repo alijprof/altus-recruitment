@@ -39,9 +39,14 @@ export const applyFormSchema = z.object({
     .trim()
     .min(2, 'Please enter your full name.')
     .max(255, 'Too long'),
+  // Phase 2 review M2 fix — lowercase at the schema boundary so the
+  // duplicate-detection path (getCandidateByEmailForOrg uses .eq) and the
+  // candidate insert agree on case. Without this, `Alice@example.com`
+  // and `alice@example.com` were treated as different candidates.
   email: z
     .string()
     .trim()
+    .toLowerCase()
     .max(255, 'Too long')
     .refine(
       (v) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v),

@@ -407,11 +407,16 @@ export async function getCandidateByEmailForOrg(
   supabase: SupabaseClient<Database>,
   args: { organizationId: string; email: string },
 ): Promise<DbResult<{ id: string; market_status: Enums<'market_status'> } | null>> {
+  // Phase 2 review M2 — belt-and-braces lowercase. The apply-form schema
+  // already lowercases at the boundary, but a future caller might not.
+  // Trimming + lowercasing here means duplicate-detection always
+  // compares apples to apples even if the caller passes mixed-case.
+  const normalisedEmail = args.email.toLowerCase().trim()
   const { data, error } = await supabase
     .from('candidates')
     .select('id, market_status')
     .eq('organization_id', args.organizationId)
-    .eq('email', args.email)
+    .eq('email', normalisedEmail)
     .limit(1)
     .maybeSingle()
 

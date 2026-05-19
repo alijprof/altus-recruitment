@@ -97,4 +97,28 @@ describe('applyFormSchema', () => {
     })
     expect(result.success).toBe(false)
   })
+
+  // Phase 2 review M2 — schema lowercases email so case variants don't
+  // create duplicate candidate rows.
+  it('lowercases mixed-case email to prevent duplicate candidate rows', () => {
+    const result = applyFormSchema.safeParse({
+      ...baseInput,
+      email: 'Alice@Example.COM',
+    })
+    expect(result.success).toBe(true)
+    if (result.success) {
+      expect(result.data.email).toBe('alice@example.com')
+    }
+  })
+
+  it('trims surrounding whitespace then lowercases the email', () => {
+    const result = applyFormSchema.safeParse({
+      ...baseInput,
+      email: '  Bob@EXAMPLE.com  ',
+    })
+    expect(result.success).toBe(true)
+    if (result.success) {
+      expect(result.data.email).toBe('bob@example.com')
+    }
+  })
 })
