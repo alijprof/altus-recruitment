@@ -197,3 +197,55 @@ Tracked here so Phase 3 / Phase 5 don't lose them:
 - Service-role usage only in Inngest + invite paths — Phase 2 added `submitApplyAction` as a third legitimate caller; the pattern's intent (explicit tenant boundary check) still holds.
 - Sentry wizard's Next.js 16 quirks — no new findings.
 - `pnpm db:types` regen path fragility — same problem, not resolved.
+
+### Post-rotation debug saga (2026-05-19, added after extraction)
+
+Compounded failure surfaced during secret rotation. Worth recording — the
+root cause was non-obvious and the debug path was circular.
+
+1. **Inngest signing key was a red herring.** Webhook "Unauthorized" persisted
+   for ~30 min despite the env var being correct in Vercel with all three
+   scopes ticked. Real cause: Inngest had registered against an OLD
+   deployment-specific URL (`https://altus-recruitment-<hash>-...vercel.app/api/inngest`)
+   from before the rotation. New deployments get new URL hashes; the old
+   one's warm lambda held stale env values. **Fix:** re-register against
+   the production alias via `curl -X PUT https://altus-recruitment.vercel.app/api/inngest`.
+   **Phase 3 prevention:** when registering Inngest apps, ALWAYS use the
+   production alias (`<project>.vercel.app/api/inngest`), NEVER a deployment-
+   hash URL (`<project>-<hash>-...vercel.app`). The alias auto-resolves to
+   the current Production deployment forever.
+
+2. **unpdf 1.6.x rejects `Buffer` even though `Buffer` subclasses `Uint8Array`.**
+   Surfaced ONLY after the post-rotation redeploy pulled a fresh unpdf 1.6.x
+   patch with `Buffer.isBuffer` rejection. Our extract code:
+   `const bytes = buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer)`
+   returned the Buffer unchanged because `Buffer instanceof Uint8Array === true`.
+   Fix: construct a plain Uint8Array view over the same ArrayBuffer slice
+   (commit `edc789c`, `src/lib/ai/cv-extract.ts`).
+   **Phase 3 prevention:** when a working feature breaks immediately after a
+   redeploy with NO code change, suspect a transitive dep update first.
+   Loose version pins (`~`, `^`) can pull stricter patches. For new
+   Phase 3 libraries (`openai`, `fluent-ffmpeg`, `@ffmpeg-installer/ffmpeg`,
+   `@crxjs/vite-plugin`) — consider exact-pin in production.
+
+3. **Error handlers must surface `err.message`, not just `err.name`.** parse-cv
+   wrapped the unpdf error as `NonRetriableError(\`extract-text failed: ${err.name}\`)`,
+   which gave us `"extract-text failed: Error"` — useless. Adding the
+   truncated `err.message` (commit `c1f2037`) revealed the real cause in
+   one redeploy.
+   **Phase 3 prevention:** every wrap-and-rethrow site in Inngest functions
+   must include `err.message.slice(0, 500)`. Library errors are library
+   internals, not PII. The R4 PII rule applies to RAW error objects sent to
+   Sentry, not to controlled message text in NonRetriableError thrown for
+   our own visibility.
+
+4. **Email encryption key + Outlook webhook clientState are STATEFUL secrets.**
+   Rotating naively breaks: the encryption key was used to encrypt existing
+   refresh tokens in `outlook_credentials`; the webhook clientState was
+   baked into the existing Microsoft Graph subscription. Mass-rotation
+   walkthrough needed explicit per-secret cleanup steps (re-OAuth /
+   subscription recreation).
+   **Phase 3 prevention:** label every new secret in `.env.example` as
+   either "stateless" (rotate freely) or "stateful" (rotation requires
+   cleanup) with a one-line note on the cleanup path. Add to
+   `.planning/SECURITY-ROTATION-LOG.md` template.
