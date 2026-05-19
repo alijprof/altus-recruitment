@@ -3,6 +3,7 @@ import { serve } from 'inngest/next'
 import { inngest } from '@/lib/inngest/client'
 import { bootstrapVectorIndex } from '@/lib/inngest/functions/bootstrap-vector-index'
 import { cleanupStaleSummaries } from '@/lib/inngest/functions/cleanup-stale-summaries'
+import { createJobFromSpec } from '@/lib/inngest/functions/create-job-from-spec'
 import { createOutlookSubscription } from '@/lib/inngest/functions/create-outlook-subscription'
 import { embedBatch } from '@/lib/inngest/functions/embed-batch'
 import { embedCandidateFromLinkedIn } from '@/lib/inngest/functions/embed-candidate-from-linkedin'
@@ -31,8 +32,8 @@ export const { GET, POST, PUT } = serve({
     createOutlookSubscription,
     syncOutlookHistory,
     refreshOutlookSubscription,
-    // Phase 3 — spec workflow (Plan 03-02). create-job-from-spec and the
-    // retention sweeps are added in Tasks B.3 / B.4 of this plan.
+    // Phase 3 — spec workflow (Plan 03-02). Retention sweeps land in Task B.4.
     transcribeAndStructureSpec,
+    createJobFromSpec,
   ],
 })
