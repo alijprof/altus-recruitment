@@ -65,3 +65,46 @@ export async function updateOrganization(
   }
   return { ok: true, data: data as unknown as OrganizationRow }
 }
+
+// Plan 3 / D2-10: Public apply-form lookup. Called from
+// (public)/apply/[orgSlug]/page.tsx AND the apply-form server action, both
+// using createServiceClient — there is no authenticated session for an
+// anonymous applicant. Service-role bypasses RLS; the slug regex CHECK
+// (migration 20260519092943) gates the input shape; the lookup itself
+// returns no secrets (slug + name are non-sensitive).
+//
+// Returns `not_found` both for unknown slugs AND for orgs where
+// apply_form_enabled = false. Callers should treat both as 404 to avoid
+// leaking org existence to enumerators (anti-enumeration). NEVER pass an
+// applicant email or name to Sentry — slug-only context (PII discipline; M-4).
+export type OrganizationApplyRow = {
+  id: string
+  name: string
+  slug: string
+  apply_form_enabled: boolean
+}
+
+export async function getOrganizationBySlug(
+  supabase: SupabaseClient<Database>,
+  slug: string,
+): Promise<DbResult<OrganizationApplyRow>> {
+  const { data, error } = await supabase
+    .from('organizations')
+    .select('id, name, slug, apply_form_enabled')
+    .eq('slug', slug)
+    .maybeSingle()
+
+  if (error) {
+    // Slug is non-secret (it's in the URL). No PII passes through here.
+    Sentry.captureException(error, {
+      tags: { layer: 'db', helper: 'getOrganizationBySlug', org_slug: slug },
+    })
+    return { ok: false, code: 'internal' }
+  }
+  if (!data) return { ok: false, code: 'not_found' }
+  // reason: apply_form_enabled was added by migration
+  // 20260519092943_phase2_organizations_extensions.sql; the generated
+  // database.ts predates it. Cast at the boundary; the select string above
+  // is the source of truth.
+  return { ok: true, data: data as unknown as OrganizationApplyRow }
+}
