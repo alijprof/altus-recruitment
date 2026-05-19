@@ -133,17 +133,18 @@ Source: `02-RESEARCH.md` §A.4 + Phase 1 `supabase/migrations/20260517215939_sea
 - `grant execute on function ... to authenticated;` — matches the existing `search_candidates` grant.
 - Return columns mirror the trigram RPC plus `cosine_similarity`, `trigram_similarity`, `rrf_score` for UI display.
 
-#### Gmail integration tokens (NEW)
+#### Outlook integration tokens (NEW — pivoted from Gmail 2026-05-19)
 
-- Separate table `gmail_credentials` (NOT a column on `users` — D2-16, RESEARCH §D.20 Option B).
-- Encrypted columns `bytea` (RESEARCH §D.20) — encrypted application-side via `src/lib/encryption.ts`, NOT pgcrypto.
+- Separate table `outlook_credentials` (NOT a column on `users` — D2-16). Schema in `02-00-hardening-PLAN.md` Task 0.3 step 4.
+- Encrypted columns are `text` (base64-packed iv:authTag:ciphertext from `src/lib/encryption.ts`, NOT pgcrypto, NOT `bytea`).
 - RLS: `using (user_id = auth.uid())` plus `with check (user_id = auth.uid() and organization_id = public.current_organization_id())`.
-- Decrypt only inside `src/lib/integrations/gmail.ts` server-side helpers; never returned to client.
-- Trigger pair: `gmail_credentials_set_org` (before insert) + `gmail_credentials_set_updated_at` (before update). No `verify_same_org_check` needed because there's no FK to another tenant-scoped table beyond `users` (which is auth-tied).
+- Decrypt only inside `src/lib/integrations/outlook.ts` server-side helpers; never returned to client.
+- Trigger pair: `outlook_credentials_set_org` (before insert) + `outlook_credentials_set_updated_at` (before update). No `verify_same_org_check` needed because the only FK is to `users` (auth-tied; RLS by `user_id = auth.uid()` is sufficient).
+- **Sliding refresh-token invariant**: on every token refresh, persist BOTH the new access token AND the new refresh token. MSAL rotates RTs; failing to persist = the cached RT expires after 90 days of disuse.
 
-#### Pub/Sub webhook route (NEW)
+#### Microsoft Graph webhook route (NEW — pivoted from Pub/Sub 2026-05-19)
 
-Source: `02-RESEARCH.md` §D.22.
+Source: `02-RESEARCH-OUTLOOK.md` §D.17 + §D.24.
 
 - Path: `src/app/api/gmail/push/route.ts`.
 - POST handler only. Returns 200 IMMEDIATELY after JWT verification — actual processing is offloaded to an Inngest function. Pub/Sub retries on non-2xx; long handlers cause duplicate deliveries.

@@ -161,7 +161,7 @@ After this plan, every candidate and job carries a Voyage `voyage-3` embedding i
 - create `src/app/(app)/jobs/[id]/matches/page.tsx` (vector-only ranked list — Plan 2 layers Sonnet explanations)
 - create `src/app/(app)/jobs/[id]/matches/match-row.tsx` (presentation — kept minimal so Plan 2 can swap in `<MatchCard>`)
 - modify `src/app/(app)/jobs/[id]/page.tsx` (add a "Matches" link/tab linking to `/jobs/[id]/matches`)
-- create `src/app/(app)/settings/integrations/page.tsx` (initial scaffold; Plan 4 fleshes out Gmail UI)
+- create `src/app/(app)/settings/integrations/page.tsx` (initial scaffold; Plan 4 fleshes out Outlook UI)
 - create `src/app/(app)/settings/integrations/actions.ts` (`triggerCandidateBackfillAction` — fires Inngest event; recruiter-callable)
 - create `src/lib/inngest/functions/bootstrap-vector-index.ts` (HNSW build per D2-05)
 - modify `src/app/api/inngest/route.ts` (register `bootstrap-vector-index`)
@@ -179,7 +179,7 @@ After this plan, every candidate and job carries a Voyage `voyage-3` embedding i
 
 3. **`/settings/integrations/page.tsx`** — async RSC. `await createClient()` + `auth.getUser()` (the `(app)/layout.tsx` guard already protects this). Render:
    - A "Backfill embeddings" section. Call `countCandidatesWithoutEmbedding(supabase)`. If > 0, render `<BackfillButton count={n} />` (Client Component triggering `triggerCandidateBackfillAction()`); else render "All candidates have embeddings. ✓"
-   - A "HNSW index" section. Read `hnsw_build_state` for both `candidates` and `jobs`. Show built-or-pending status. If `count(candidate_embedding is not null) >= 100` AND `hnsw_build_state.candidates.built_at is null`, surface a `<BuildIndexButton table="candidates">` that fires `inngest.send('admin/build-vector-index', { data: { table_name: 'candidates' } })`. (Plan 4 will extend this page with the Gmail Connect UI — for now this page is the integration hub.)
+   - A "HNSW index" section. Read `hnsw_build_state` for both `candidates` and `jobs`. Show built-or-pending status. If `count(candidate_embedding is not null) >= 100` AND `hnsw_build_state.candidates.built_at is null`, surface a `<BuildIndexButton table="candidates">` that fires `inngest.send('admin/build-vector-index', { data: { table_name: 'candidates' } })`. (Plan 4 will extend this page with the Outlook Connect UI — for now this page is the integration hub.)
    - Auth note: this page is recruiter-only. No special role check; the org-scoped RLS handles it.
 
 4. **`triggerCandidateBackfillAction`** in `src/app/(app)/settings/integrations/actions.ts`:
@@ -235,7 +235,7 @@ After this plan, every candidate and job carries a Voyage `voyage-3` embedding i
 - Recruiter-facing "explain this match" on-demand action — Plan 2
 - Cost-ceiling guard rails per org — Plan 2 (where Sonnet costs start to matter)
 - The Apply form's contribution to embedding pipeline — Plan 3 fires the same `cv/uploaded` event used in Phase 1, which already chains into the new Step 5 embed; no Plan 1 change needed
-- Gmail Connect button on `/settings/integrations` — Plan 4
+- Outlook Connect button on `/settings/integrations` — Plan 4
 - HNSW BUILD against the cloud DB at scale — manual; this plan ships the trigger function
 - Reverse-search (candidate → similar jobs) UI surface (SEARCH-03's reverse direction) — out of scope for this MVP slice; helper `hybridSearchJobs` exists from Plan 0 so a recruiter-facing surface can be added in Plan 3 without backend changes
 - Anthropic / Voyage pricing reverification — periodic; not phase-gated

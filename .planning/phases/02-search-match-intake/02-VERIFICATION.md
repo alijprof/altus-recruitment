@@ -1,8 +1,18 @@
 # Phase 2 Plan Verification
 
 **Date:** 2026-05-19
-**Plans verified:** 02-00-hardening, 02-01-semantic-search, 02-02-ai-match-scoring, 02-03-public-apply-form, 02-04-gmail-integration
+**Plans verified:** 02-00-hardening, 02-01-semantic-search, 02-02-ai-match-scoring, 02-03-public-apply-form, 02-04-outlook-integration
 **Verdict:** PASS WITH REVISIONS
+
+> **OUTLOOK PIVOT 2026-05-19 (post-verification):** Plan 4 was pivoted from Gmail to Microsoft 365 / Outlook after this verification ran. Gmail-specific findings (M-3 Pub/Sub fail-closed, M-6 GMAIL_TOKEN_ENCRYPTION_KEY rotation, M-7 Gmail-watch-refresh heartbeat, W-4 `/api/gmail/callback` middleware exact-match) were translated to their Outlook equivalents inside the rewritten `02-04-outlook-integration-PLAN.md`:
+> - M-3 Pub/Sub → Microsoft Graph webhook clientState + missing-env-503 fail-closed (POST handler step 1)
+> - M-6 GMAIL_TOKEN_ENCRYPTION_KEY → generalised `EMAIL_TOKEN_ENCRYPTION_KEY`; rotation deferred to Phase 5, documented in `docs/outlook-integration-setup.md`
+> - M-7 daily renewal → 6-hourly renewal + 404-recreate fallback + Sentry Crons heartbeat (Plan 4 Task 4.4)
+> - W-4 middleware exact-match → confirmed for `/api/outlook/callback` and `/api/outlook/webhook` (Plan 0 Task 0.4 step 7)
+>
+> All other findings (M-1 HNSW manual DDL, M-2 storage-path tenant assertion, W-1 sync-Sonnet exception, M-4 db-helper PII grep, M-8 failed-Inngest-send fallback) are provider-agnostic and remain applied unchanged.
+>
+> The Gmail-named items in this document below (file path "02-04-gmail-integration", `gmail_credentials`, `googleapis`, `Pub/Sub`, etc.) reflect the verification at the time it was generated. Read alongside `02-RESEARCH-OUTLOOK.md` and the rewritten Plan 4 for the actual implementation contract.
 
 ## Verdict summary
 
