@@ -4,3 +4,5 @@ allowBuilds:
   unrs-resolver: false
   protobufjs: false
   '@sentry/cli': false
+  '@ffmpeg-installer/darwin-arm64': false
+  '@ffmpeg-installer/linux-x64': false
