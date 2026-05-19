@@ -22,10 +22,12 @@ import type { Database } from '@/types/database'
 // invariants enforced here and asserted by plan-level grep:
 //   1. `new ConfidentialClientApplication` appears exactly once in src/
 //      — module-scoped singleton in `getMsal()`.
-//   2. `new Client(` (Graph SDK) appears exactly once — singleton in
-//      `getGraph(accessToken)` (rebuilt per access token because the
-//      auth provider closes over the token; the constructor call itself
-//      is the one source).
+//   2. The Microsoft Graph SDK is constructed exclusively via
+//      `GraphClient.init()` in `getGraph(accessToken)`. Imports of
+//      `@azure/msal-node` and `@microsoft/microsoft-graph-client` are
+//      confined to this file — grep test:
+//        grep -rn "@azure/msal-node\|@microsoft/microsoft-graph-client" src/
+//      should return only the imports below.
 //
 // PII discipline: every public function wraps Microsoft errors in a
 // scrubbed Error before handing to Sentry (`error.name + statusCode` —

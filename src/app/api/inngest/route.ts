@@ -8,6 +8,7 @@ import { embedBatch } from '@/lib/inngest/functions/embed-batch'
 import { embedJobOnJDChange } from '@/lib/inngest/functions/embed-job-on-jd-change'
 import { parseCVOnUpload } from '@/lib/inngest/functions/parse-cv'
 import { precomputeMatchesForJob } from '@/lib/inngest/functions/precompute-matches-for-job'
+import { refreshOutlookSubscription } from '@/lib/inngest/functions/refresh-outlook-subscription'
 import { syncOutlookHistory } from '@/lib/inngest/functions/sync-outlook-history'
 
 // Inngest's `serve` adapter exposes GET (for function discovery), POST (for
@@ -24,5 +25,6 @@ export const { GET, POST, PUT } = serve({
     cleanupStaleSummaries,
     createOutlookSubscription,
     syncOutlookHistory,
+    refreshOutlookSubscription,
   ],
 })
