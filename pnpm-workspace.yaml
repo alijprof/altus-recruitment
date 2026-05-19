@@ -1,3 +1,7 @@
+packages:
+  - '.'
+  - 'chrome-extension'
+
 allowBuilds:
   sharp: false
   supabase: true

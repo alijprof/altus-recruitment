@@ -9,6 +9,15 @@ export default defineConfig({
     globals: true,
     setupFiles: ['./tests/setup.ts'],
     // Exclude Playwright E2E specs — they run via `pnpm test:e2e`.
-    exclude: ['node_modules', 'tests/e2e/**', '.next/**', 'dist/**'],
+    // `**/node_modules/**` also excludes the workspace package's nested
+    // node_modules (e.g. chrome-extension/node_modules/**) so dependency
+    // test fixtures don't get accidentally discovered.
+    exclude: [
+      '**/node_modules/**',
+      'tests/e2e/**',
+      '.next/**',
+      'dist/**',
+      'chrome-extension/dist/**',
+    ],
   },
 })
