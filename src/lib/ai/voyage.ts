@@ -41,9 +41,14 @@ const { VoyageAIClient } = voyageRequire('voyageai') as VoyageModule
 export type ApprovedEmbeddingModel = 'voyage-3'
 
 const PRICING_PENCE_PER_MTOK_INPUT: Record<ApprovedEmbeddingModel, number> = {
-  // verified 2026-05-18 against docs.voyageai.com/docs/pricing
+  // verified 2026-05-19 against docs.voyageai.com/docs/pricing (Plan 2)
   // $0.06 / MTok input → 4.7p / MTok at ~78p/$. Round up to 5.
   // Embeddings have no output token cost.
+  //
+  // Pricing-drift note (Plan 2 reverification): no change vs Plan 0's
+  // 2026-05-18 capture — date stamp bumped to match the reverification
+  // cadence. ai_usage backfill is OUT OF SCOPE if a future reverification
+  // finds a delta.
   'voyage-3': 5,
 }
 

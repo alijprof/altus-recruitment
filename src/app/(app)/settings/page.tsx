@@ -1,4 +1,6 @@
+import Link from 'next/link'
 import { redirect } from 'next/navigation'
+import { ChevronRight } from 'lucide-react'
 
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Separator } from '@/components/ui/separator'
@@ -94,6 +96,26 @@ export default async function SettingsPage() {
           </CardContent>
         </Card>
       ) : null}
+
+      <Separator />
+
+      {/* Plan 2 Task 2.3 — per-org AI spend dashboard, linked from settings. */}
+      <Link href="/settings/usage" className="block">
+        <Card className="transition-colors hover:bg-accent/40">
+          <CardHeader>
+            <div className="flex items-center justify-between">
+              <div className="space-y-1">
+                <CardTitle className="text-base font-semibold">Usage</CardTitle>
+                <CardDescription>
+                  Month-to-date AI spend, per-feature breakdown, and the match-scoring
+                  ceiling indicator.
+                </CardDescription>
+              </div>
+              <ChevronRight className="text-muted-foreground size-5" aria-hidden="true" />
+            </div>
+          </CardHeader>
+        </Card>
+      </Link>
     </div>
   )
 }
