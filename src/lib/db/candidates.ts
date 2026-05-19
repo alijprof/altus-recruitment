@@ -669,10 +669,12 @@ export async function listCandidateActivities(
  * Service-role-friendly: pass `organizationId` explicitly because the
  * caller has no session for RLS to read.
  *
- * Email is normalised to lowercase before the lookup. Phase 1's
- * `candidates_email_idx` on (organization_id, email) plus the
- * lowercase normalisation at apply-form / candidate-create time means
- * an `ilike` on the indexed column is satisfied.
+ * Email is normalised to lowercase before the lookup. Phase 2 review M1
+ * fix: use `.eq` instead of `.ilike` — `.ilike` interprets `_` and `%`
+ * in the pattern as wildcards, and email local-parts can legally
+ * contain `_` (e.g. `john_doe@x.com`). Apply-form + Outlook-sync paths
+ * lowercase emails at write time (Phase 2 review M2), so `.eq` against
+ * the lowercased input matches exactly.
  */
 export async function findCandidateByEmail(
   supabase: SupabaseClient<Database>,
@@ -685,7 +687,7 @@ export async function findCandidateByEmail(
     .from('candidates')
     .select('id')
     .eq('organization_id', organizationId)
-    .ilike('email', normalised)
+    .eq('email', normalised)
     .limit(1)
     .maybeSingle()
   if (error) {

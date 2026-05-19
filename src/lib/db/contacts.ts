@@ -120,8 +120,12 @@ export async function deleteContact(
  * Service-role-friendly: pass `organizationId` explicitly because the
  * caller has no session for RLS to read.
  *
- * Backed by the contacts_email_idx (organization_id, lower(email))
- * index added in the same plan.
+ * Phase 2 review M1 fix: use `.eq` instead of `.ilike` — `.ilike`
+ * interprets `_` and `%` in the pattern as wildcards, so a contact email
+ * containing `_` (legal per RFC 5321) would false-match other contacts
+ * (e.g. `john_doe@x.com` matched `john1doe@x.com`). Inputs are lowercased
+ * at write-time (candidates from apply form / Outlook sync; contacts
+ * follow the same convention) so exact `.eq` is correct.
  */
 export async function findContactByEmail(
   supabase: SupabaseClient<Database>,
@@ -134,7 +138,7 @@ export async function findContactByEmail(
     .from('contacts')
     .select('id')
     .eq('organization_id', organizationId)
-    .ilike('email', normalised)
+    .eq('email', normalised)
     .limit(1)
     .maybeSingle()
   if (error) {
