@@ -38,8 +38,15 @@ export async function extractTextFromBuffer(
   mimeType: string,
 ): Promise<string> {
   if (mimeType === PDF_MIME) {
-    // unpdf wants a Uint8Array view into the buffer.
-    const bytes = buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer)
+    // unpdf 1.6.x rejects Node `Buffer` even though it subclasses
+    // `Uint8Array` — it does an explicit Buffer.isBuffer check and throws
+    // "Please provide binary data as Uint8Array, rather than Buffer.".
+    // Construct a plain Uint8Array view over the same ArrayBuffer so the
+    // prototype chain matches what unpdf expects. No copy.
+    const bytes =
+      buffer instanceof ArrayBuffer
+        ? new Uint8Array(buffer)
+        : new Uint8Array(buffer.buffer, buffer.byteOffset, buffer.byteLength)
     const pdf = await getDocumentProxy(bytes)
     const { text } = await extractText(pdf, { mergePages: true })
     // `text` is typed as `string | string[]` (`string[]` when mergePages is
