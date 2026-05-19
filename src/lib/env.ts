@@ -17,11 +17,56 @@ export const env = createEnv({
     SENTRY_DSN: z.string().url().optional(),
     SENTRY_AUTH_TOKEN: z.string().optional(),
     NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
+
+    // --- Phase 2: Voyage embeddings --------------------------------------
+    // Embedding API key. Used by src/lib/ai/voyage.ts. Cost ~5p / MTok input
+    // tokens; ~0.0035p per CV at voyage-3.
+    //
+    // Optional in Plan 0 so the app boots before the user generates a key;
+    // Plan 1 (CV-embed Inngest function + semantic-search server action)
+    // dereferences `env.VOYAGE_API_KEY` directly — if absent, the SDK
+    // constructor throws at the call site and the failure surfaces in
+    // Sentry rather than as a boot crash that blocks unrelated dev work.
+    VOYAGE_API_KEY: z.string().min(1).optional(),
+
+    // --- Phase 2: token encryption ---------------------------------------
+    // 32 random bytes hex-encoded (64 hex chars). Generate once via
+    //   openssl rand -hex 32
+    // Used by src/lib/encryption.ts for aes-256-gcm encryption of OAuth
+    // tokens (Outlook today; any future Gmail adapter in Phase 5 shares the
+    // same key, hence the generalised name).
+    //
+    // Optional in the Zod schema so the app boots in dev before the user
+    // generates the key. src/lib/encryption.ts fails-closed at call time
+    // (encrypt/decrypt throw a clear error when the key is absent OR
+    // malformed). Length+charset is validated by the helper, not here, so
+    // we get a single failure surface and a clean error message.
+    EMAIL_TOKEN_ENCRYPTION_KEY: z.string().min(1).optional(),
+
+    // --- Phase 2: Outlook (Microsoft Graph) — all optional ---------------
+    // Optional in Phase 2 Plan 0 so the app boots in dev before Plan 4
+    // lands the Connect-Outlook UI + webhook. Plan 4's route handlers
+    // enforce presence at call time and surface a clean error when any of
+    // these are missing.
+    OUTLOOK_TENANT_ID: z.string().uuid().optional(),
+    OUTLOOK_CLIENT_ID: z.string().uuid().optional(),
+    OUTLOOK_CLIENT_SECRET: z.string().min(1).optional(),
+    OUTLOOK_REDIRECT_URI: z.string().url().optional(),
+    OUTLOOK_WEBHOOK_NOTIFICATION_URL: z.string().url().optional(),
+    OUTLOOK_WEBHOOK_CLIENT_STATE_SECRET: z.string().min(32).optional(),
+
+    // --- Phase 2: Cloudflare Turnstile (apply-form anti-spam) -----------
+    // Optional in Plan 0 so dev boots without it. Plan 3's submitApplyAction
+    // fails-closed at call time when missing via the verifyTurnstileToken
+    // helper.
+    TURNSTILE_SECRET_KEY: z.string().min(1).optional(),
   },
   client: {
     NEXT_PUBLIC_SUPABASE_URL: z.string().url(),
     NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: z.string().min(1),
     NEXT_PUBLIC_SENTRY_DSN: z.string().url().optional(),
+    // Public Turnstile widget site-key. Optional in Plan 0.
+    NEXT_PUBLIC_TURNSTILE_SITE_KEY: z.string().min(1).optional(),
   },
   // Next.js does not expose all NEXT_PUBLIC_* vars on the client automatically;
   // each must be referenced statically here so it ships with the client bundle.
@@ -29,6 +74,7 @@ export const env = createEnv({
     NEXT_PUBLIC_SUPABASE_URL: process.env.NEXT_PUBLIC_SUPABASE_URL,
     NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY,
     NEXT_PUBLIC_SENTRY_DSN: process.env.NEXT_PUBLIC_SENTRY_DSN,
+    NEXT_PUBLIC_TURNSTILE_SITE_KEY: process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY,
   },
   emptyStringAsUndefined: true,
 })
