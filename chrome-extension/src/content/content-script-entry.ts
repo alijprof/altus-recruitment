@@ -13,7 +13,6 @@
 import { scrapeLinkedInProfile } from './scrape-profile'
 
 declare global {
-  // eslint-disable-next-line no-var
   var __altusScrape: typeof scrapeLinkedInProfile | undefined
 }
 

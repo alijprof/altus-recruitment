@@ -72,6 +72,21 @@ export const env = createEnv({
     // environment). z.coerce.number keeps the env var string-typed in
     // `process.env` while exposing a number at the call site.
     MAX_MONTHLY_MATCH_SPEND_PENCE: z.coerce.number().int().positive().default(10_000),
+
+    // --- Phase 3: LinkedIn capture (Plan 03-01) -------------------------
+    // Pinned chrome-extension ID. The extension's manifest.json "key" field
+    // ensures the ID is stable across reloads + side-loads on every
+    // recruiter's machine. /api/linkedin/ingest's CORS allowlist echoes
+    // Allow-Origin only when the request origin matches
+    // `chrome-extension://<LINKEDIN_EXTENSION_ID>`. Optional in dev — when
+    // unset the route falls back to the chrome-extension://[a-p]{32}
+    // pattern allowlist for developer side-loads.
+    LINKEDIN_EXTENSION_ID: z.string().min(32).max(64).optional(),
+
+    // Minimum extension version accepted by /api/linkedin/ingest. Stale
+    // extensions get a 426 Upgrade Required with a link to update. Defaults
+    // to '0.1.0' (the initial Plan 03-01 release).
+    LINKEDIN_EXTENSION_MIN_VERSION: z.string().regex(/^\d+(\.\d+){0,2}$/).default('0.1.0'),
   },
   client: {
     NEXT_PUBLIC_SUPABASE_URL: z.string().url(),
