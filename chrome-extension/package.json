@@ -1,0 +1,23 @@
+{
+  "name": "@altus/chrome-extension",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Altus — LinkedIn capture Chrome extension (Manifest V3).",
+  "type": "module",
+  "scripts": {
+    "build": "vite build",
+    "dev": "vite build --watch",
+    "test": "vitest --run --dir tests"
+  },
+  "dependencies": {
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@crxjs/vite-plugin": "^2.4.0",
+    "@types/chrome": "^0.0.270",
+    "@types/node": "^20",
+    "typescript": "^5",
+    "vite": "^8",
+    "vitest": "^4.1.6"
+  }
+}
