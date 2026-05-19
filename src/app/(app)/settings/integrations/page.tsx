@@ -9,9 +9,15 @@ import {
 } from '@/components/ui/card'
 import { Separator } from '@/components/ui/separator'
 import { countCandidatesWithoutEmbedding } from '@/lib/db/embeddings'
+import { getOutlookCredentials } from '@/lib/db/outlook-credentials'
+import { env } from '@/lib/env'
 import { createClient } from '@/lib/supabase/server'
 import { createServiceClient } from '@/lib/supabase/service'
 
+import {
+  ConnectOutlookCard,
+  type OutlookCardStatus,
+} from './connect-outlook-card'
 import { BackfillButton, BuildIndexButton } from './integration-buttons'
 
 // Plan 1 Task 1.3 — /settings/integrations.
@@ -75,16 +81,30 @@ export default async function IntegrationsPage() {
   const unembeddedResult = await countCandidatesWithoutEmbedding(supabase)
   const unembeddedCount = unembeddedResult.ok ? unembeddedResult.data : 0
 
-  const [hnswStates, candidatesEmbedded, jobsEmbedded] = await Promise.all([
-    readHnswState(),
-    countEmbeddedRows('candidates'),
-    countEmbeddedRows('jobs'),
-  ])
+  const [hnswStates, candidatesEmbedded, jobsEmbedded, outlookResult] =
+    await Promise.all([
+      readHnswState(),
+      countEmbeddedRows('candidates'),
+      countEmbeddedRows('jobs'),
+      getOutlookCredentials(supabase, user.id),
+    ])
 
   const hnswByTable = new Map<'candidates' | 'jobs', HnswStateRow>()
   for (const row of hnswStates) {
     hnswByTable.set(row.table_name, row)
   }
+
+  // Outlook card props — derived purely from the row state. Status:
+  // disconnected (no row) | revoked (revoked_at set) | connected.
+  const outlookRow = outlookResult.ok ? outlookResult.data : null
+  let outlookStatus: OutlookCardStatus = 'disconnected'
+  if (outlookRow) {
+    outlookStatus = outlookRow.revoked_at ? 'revoked' : 'connected'
+  }
+  const adminConsentUrl =
+    env.OUTLOOK_TENANT_ID && env.OUTLOOK_CLIENT_ID
+      ? `https://login.microsoftonline.com/${env.OUTLOOK_TENANT_ID}/adminconsent?client_id=${env.OUTLOOK_CLIENT_ID}`
+      : null
 
   return (
     <div className="mx-auto w-full max-w-2xl space-y-8">
@@ -122,6 +142,15 @@ export default async function IntegrationsPage() {
           )}
         </CardContent>
       </Card>
+
+      <Separator />
+
+      <ConnectOutlookCard
+        status={outlookStatus}
+        microsoftEmail={outlookRow?.microsoft_email ?? null}
+        connectedAt={outlookRow?.created_at ?? null}
+        adminConsentUrl={adminConsentUrl}
+      />
 
       <Separator />
 
