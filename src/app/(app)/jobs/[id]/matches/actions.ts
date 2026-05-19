@@ -6,6 +6,7 @@ import { z } from 'zod'
 
 import { buildMatchInputs, scoreCandidateForJob } from '@/lib/ai/match'
 import {
+  getOrgMatchSpendThisMonth,
   getMatchSummary,
   upsertMatchSummary,
 } from '@/lib/db/ai-summaries'
@@ -13,6 +14,7 @@ import {
   getCandidateEmbeddingVersion,
   getJobEmbeddingVersion,
 } from '@/lib/db/embeddings'
+import { env } from '@/lib/env'
 import { createClient as createSupabaseClient } from '@/lib/supabase/server'
 
 // ---------------------------------------------------------------------------
@@ -120,6 +122,35 @@ export async function explainCandidateMatchAction(
       typeof orgResult.data === 'string' ? orgResult.data : null
     if (!organizationId) {
       return { ok: false, error: 'Could not resolve your organisation.' }
+    }
+
+    // Phase 2 review H2 fix — apply the same month-to-date spend ceiling
+    // that protects the precompute Inngest path. A recruiter clicking
+    // "Explain" repeatedly could otherwise burn through the £100/month
+    // budget faster than the precompute batch loop's guard runs.
+    const spendResult = await getOrgMatchSpendThisMonth(supabase, organizationId)
+    if (spendResult.ok && spendResult.data >= env.MAX_MONTHLY_MATCH_SPEND_PENCE) {
+      Sentry.captureMessage(
+        `explainCandidateMatchAction: spend ceiling reached for org ${organizationId}`,
+        {
+          level: 'warning',
+          tags: {
+            layer: 'action',
+            action: 'explainCandidateMatchAction',
+            subop: 'cost-ceiling',
+            organization_id: organizationId,
+          },
+          extra: {
+            month_to_date_pence: spendResult.data,
+            ceiling_pence: env.MAX_MONTHLY_MATCH_SPEND_PENCE,
+          },
+        },
+      )
+      return {
+        ok: false,
+        error:
+          'Match scoring is paused this month — monthly spend limit reached. Contact the org owner to lift the limit.',
+      }
     }
 
     // SYNCHRONOUS Sonnet — see JSDoc above for the documented exception.
