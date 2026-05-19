@@ -5,6 +5,7 @@ import { bootstrapVectorIndex } from '@/lib/inngest/functions/bootstrap-vector-i
 import { cleanupStaleSummaries } from '@/lib/inngest/functions/cleanup-stale-summaries'
 import { createOutlookSubscription } from '@/lib/inngest/functions/create-outlook-subscription'
 import { embedBatch } from '@/lib/inngest/functions/embed-batch'
+import { embedCandidateFromLinkedIn } from '@/lib/inngest/functions/embed-candidate-from-linkedin'
 import { embedJobOnJDChange } from '@/lib/inngest/functions/embed-job-on-jd-change'
 import { parseCVOnUpload } from '@/lib/inngest/functions/parse-cv'
 import { precomputeMatchesForJob } from '@/lib/inngest/functions/precompute-matches-for-job'
@@ -19,6 +20,7 @@ export const { GET, POST, PUT } = serve({
   functions: [
     parseCVOnUpload,
     embedBatch,
+    embedCandidateFromLinkedIn,
     embedJobOnJDChange,
     bootstrapVectorIndex,
     precomputeMatchesForJob,
