@@ -9,7 +9,13 @@ const nextConfig: NextConfig = {
   // runtime (via the CJS entry in the exports map), bypassing the bundler.
   // The package is server-only (`import 'server-only'` in voyage.ts) so
   // there's no client-bundle implication.
-  serverExternalPackages: ['voyageai'],
+  //
+  // Plan 03-02: fluent-ffmpeg + @ffmpeg-installer ship Node-native binaries
+  // (a static ffmpeg executable in @ffmpeg-installer/<platform>-<arch>) that
+  // cannot be bundled by webpack. Marked server-external so Next resolves
+  // them at runtime via Node's CJS resolver. The wrappers are server-only
+  // (`import 'server-only'` in src/lib/ai/{ffmpeg,whisper}.ts).
+  serverExternalPackages: ['voyageai', 'fluent-ffmpeg', '@ffmpeg-installer/ffmpeg'],
 }
 
 // Source-map upload only runs when SENTRY_AUTH_TOKEN is set (CI / deploy);

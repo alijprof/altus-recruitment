@@ -924,6 +924,104 @@ export type Database = {
           },
         ]
       }
+      spec_drafts: {
+        Row: {
+          approved_at: string | null
+          audio_duration_seconds: number | null
+          audio_mime_type: string | null
+          audio_storage_path: string | null
+          company_id: string | null
+          created_at: string
+          created_by: string
+          created_job_id: string | null
+          deleted_at: string | null
+          id: string
+          organization_id: string
+          parse_error: string | null
+          rejected_at: string | null
+          sonnet_cost_pence: number | null
+          status: Database["public"]["Enums"]["spec_draft_status"]
+          status_changed_at: string
+          structured_data: Json
+          transcript: string | null
+          updated_at: string
+          whisper_cost_pence: number | null
+        }
+        Insert: {
+          approved_at?: string | null
+          audio_duration_seconds?: number | null
+          audio_mime_type?: string | null
+          audio_storage_path?: string | null
+          company_id?: string | null
+          created_at?: string
+          created_by: string
+          created_job_id?: string | null
+          deleted_at?: string | null
+          id?: string
+          organization_id?: string
+          parse_error?: string | null
+          rejected_at?: string | null
+          sonnet_cost_pence?: number | null
+          status?: Database["public"]["Enums"]["spec_draft_status"]
+          status_changed_at?: string
+          structured_data?: Json
+          transcript?: string | null
+          updated_at?: string
+          whisper_cost_pence?: number | null
+        }
+        Update: {
+          approved_at?: string | null
+          audio_duration_seconds?: number | null
+          audio_mime_type?: string | null
+          audio_storage_path?: string | null
+          company_id?: string | null
+          created_at?: string
+          created_by?: string
+          created_job_id?: string | null
+          deleted_at?: string | null
+          id?: string
+          organization_id?: string
+          parse_error?: string | null
+          rejected_at?: string | null
+          sonnet_cost_pence?: number | null
+          status?: Database["public"]["Enums"]["spec_draft_status"]
+          status_changed_at?: string
+          structured_data?: Json
+          transcript?: string | null
+          updated_at?: string
+          whisper_cost_pence?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "spec_drafts_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "spec_drafts_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "spec_drafts_created_job_id_fkey"
+            columns: ["created_job_id"]
+            isOneToOne: false
+            referencedRelation: "jobs"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "spec_drafts_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       users: {
         Row: {
           created_at: string
@@ -1205,6 +1303,13 @@ export type Database = {
         | "hot"
         | "placed"
         | "cold"
+      spec_draft_status:
+        | "pending"
+        | "transcribing"
+        | "ready_for_review"
+        | "approved"
+        | "rejected"
+        | "failed"
       user_role: "owner" | "admin" | "recruiter"
     }
     CompositeTypes: {

@@ -18,6 +18,15 @@ export const env = createEnv({
     SENTRY_AUTH_TOKEN: z.string().optional(),
     NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
 
+    // --- Phase 3: OpenAI Whisper (spec-call transcription) ---------------
+    // Used by src/lib/ai/whisper.ts. Whisper-1 is priced ~$0.006 / audio
+    // minute (~0.48p / min at ~78p/$). A 10-min spec call costs ~5p.
+    //
+    // Optional in the Zod schema so dev boots without it; src/lib/ai/whisper.ts
+    // surfaces an SDK auth error at the first transcribe call (captured to
+    // Sentry by the caller). Production deployments MUST set this.
+    OPENAI_API_KEY: z.string().min(1).optional(),
+
     // --- Phase 2: Voyage embeddings --------------------------------------
     // Embedding API key. Used by src/lib/ai/voyage.ts. Cost ~5p / MTok input
     // tokens; ~0.0035p per CV at voyage-3.

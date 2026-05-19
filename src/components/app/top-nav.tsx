@@ -7,6 +7,7 @@ const NAV_ITEMS = [
   { href: '/candidates', label: 'Candidates' },
   { href: '/search', label: 'Search' },
   { href: '/clients', label: 'Clients' },
+  { href: '/spec', label: 'Spec calls' },
   { href: '/jobs', label: 'Jobs' },
   { href: '/pipeline', label: 'Pipeline' },
   { href: '/settings', label: 'Settings' },
