@@ -19,9 +19,15 @@
 --
 --   -- 2) Cross-tenant insert fails:
 --   insert into public.spec_drafts
---     (organization_id, created_by, client_id)
---     values ('<org-A>', '<user-in-A>', '<client-in-org-B>');
---   -- expect: ERROR 'cross-tenant FK guard: public.clients belongs to org <B>'
+--     (organization_id, created_by, company_id)
+--     values ('<org-A>', '<user-in-A>', '<company-in-org-B>');
+--   -- expect: ERROR 'cross-tenant FK guard: public.companies belongs to org <B>'
+--
+-- NOTE on terminology: the CONTEXT D3-09 doc and the recruitment glossary
+-- call the hiring side a "client" (the company that pays placement fees),
+-- but the Phase 1 schema stores them in `public.companies`. We use the
+-- schema name `company_id` here for consistency with applications.company_id
+-- + contacts.company_id. UI copy still says "client".
 --
 --   -- 3) Trigger ordering check:
 --   select trigger_name from information_schema.triggers
@@ -50,7 +56,7 @@ create table public.spec_drafts (
   id uuid primary key default gen_random_uuid(),
   organization_id uuid not null references public.organizations(id) on delete cascade,
   created_by uuid not null references public.users(id) on delete restrict,
-  client_id uuid references public.clients(id) on delete set null,
+  company_id uuid references public.companies(id) on delete set null,
   audio_storage_path text,
   audio_mime_type text,
   audio_duration_seconds integer,
@@ -125,7 +131,7 @@ create trigger spec_drafts_bump_status_changed_at
   before update of status on public.spec_drafts
   for each row execute function public.bump_status_changed_at();
 
--- Cross-tenant FK guard. Each FK is conditionally checked because client_id
+-- Cross-tenant FK guard. Each FK is conditionally checked because company_id
 -- and created_job_id are nullable. Trigger name MUST sort after `_set_org`
 -- (v > s alphabetical) so it reads the auto-filled organization_id.
 create or replace function public.spec_drafts_same_org_guard()
@@ -135,9 +141,9 @@ begin
   perform public.assert_same_org(
     'public.users'::regclass, new.created_by, new.organization_id
   );
-  if new.client_id is not null then
+  if new.company_id is not null then
     perform public.assert_same_org(
-      'public.clients'::regclass, new.client_id, new.organization_id
+      'public.companies'::regclass, new.company_id, new.organization_id
     );
   end if;
   if new.created_job_id is not null then
@@ -150,6 +156,6 @@ end;
 $$;
 
 create trigger spec_drafts_verify_same_org_check
-  before insert or update of client_id, created_job_id, organization_id, created_by
+  before insert or update of company_id, created_job_id, organization_id, created_by
   on public.spec_drafts
   for each row execute function public.spec_drafts_same_org_guard();

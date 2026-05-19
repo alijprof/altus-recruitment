@@ -12,6 +12,7 @@ import { precomputeMatchesForJob } from '@/lib/inngest/functions/precompute-matc
 import { probeFfmpeg } from '@/lib/inngest/functions/probe-ffmpeg'
 import { refreshOutlookSubscription } from '@/lib/inngest/functions/refresh-outlook-subscription'
 import { syncOutlookHistory } from '@/lib/inngest/functions/sync-outlook-history'
+import { transcribeAndStructureSpec } from '@/lib/inngest/functions/transcribe-and-structure-spec'
 
 // Inngest's `serve` adapter exposes GET (for function discovery), POST (for
 // invocation), and PUT. Whitelisted in middleware PUBLIC_PATHS — Inngest
@@ -30,5 +31,8 @@ export const { GET, POST, PUT } = serve({
     createOutlookSubscription,
     syncOutlookHistory,
     refreshOutlookSubscription,
+    // Phase 3 — spec workflow (Plan 03-02). create-job-from-spec and the
+    // retention sweeps are added in Tasks B.3 / B.4 of this plan.
+    transcribeAndStructureSpec,
   ],
 })
