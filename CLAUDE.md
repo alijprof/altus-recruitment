@@ -298,7 +298,7 @@ A multi-tenant SaaS recruitment CRM for UK recruitment agencies, replacing tools
 - pnpm (workspace)
 - Docker (for `pnpm exec supabase start` local Supabase stack)
 - Supabase CLI (`supabase` devDependency)
-- Environment variables: `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`, `SUPABASE_SERVICE_ROLE_KEY`
+- Environment variables: `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY` (Phase 3 Whisper transcription)
 - Vercel (Next.js hosting)
 - Supabase Cloud (Postgres, Auth, Storage, Realtime)
 - Additional services planned: Inngest, Resend, Sentry, PostHog, Stripe
