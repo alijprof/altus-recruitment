@@ -51,6 +51,96 @@ export async function listActivities(
   return { ok: true, data: data ?? [] }
 }
 
+// ---------------------------------------------------------------------------
+// Plan 4 Task 4.3 — Outlook email activity helpers (service-role caller).
+// D2-18: subject -> body, snippet (<=200 chars) -> metadata.snippet.
+// D2-19: orphan emails (no candidate / contact match) are NOT written.
+// ---------------------------------------------------------------------------
+
+export type CreateEmailActivityInput = {
+  organizationId: string
+  entityType: 'candidate' | 'contact'
+  entityId: string
+  subject: string
+  snippet: string
+  graphMessageId: string
+  conversationId: string | null
+  internetMessageId: string | null
+  fromEmail: string
+  toEmails: string[]
+  direction: 'inbound' | 'outbound'
+  occurredAt: string
+  actorUserId: string | null
+}
+
+export async function createEmailActivity(
+  supabase: SupabaseClient<Database>,
+  input: CreateEmailActivityInput,
+): Promise<DbResult<{ id: string }>> {
+  const metadata: ActivityMetadata = {
+    snippet: input.snippet.slice(0, 200),
+    graph_message_id: input.graphMessageId,
+    conversation_id: input.conversationId,
+    internet_message_id: input.internetMessageId,
+    from: input.fromEmail,
+    to: input.toEmails,
+    direction: input.direction,
+  }
+  // reason: service-role caller has no session, so the set_organization_id
+  // trigger has no current_organization_id() to read. We pass org explicitly.
+  // Json is a recursive type that doesn't structurally match
+  // Record<string, unknown>; cast at the boundary.
+  const insertPayload = {
+    kind: 'email' as const,
+    entity_type: input.entityType,
+    entity_id: input.entityId,
+    body: input.subject,
+    actor_user_id: input.actorUserId,
+    occurred_at: input.occurredAt,
+    metadata,
+    organization_id: input.organizationId,
+  } as unknown as TablesInsert<'activities'>
+
+  const { data, error } = await supabase
+    .from('activities')
+    .insert(insertPayload)
+    .select('id')
+    .single()
+
+  if (error) {
+    Sentry.captureException(error, { tags: { layer: 'db', helper: 'createEmailActivity' } })
+    return { ok: false, code: 'internal' }
+  }
+  return { ok: true, data }
+}
+
+/**
+ * Idempotency check — returns true when an activity row exists in the org
+ * with `metadata->>internet_message_id = $internetMessageId`. We use the
+ * RFC-5322 message id (stable across forwards/copies) rather than Graph's
+ * per-mailbox `id` which changes across mailboxes for the same email.
+ */
+export async function emailActivityExists(
+  supabase: SupabaseClient<Database>,
+  args: { organizationId: string; internetMessageId: string },
+): Promise<DbResult<boolean>> {
+  const { data, error } = await supabase
+    .from('activities')
+    .select('id')
+    .eq('organization_id', args.organizationId)
+    .eq('kind', 'email')
+    .filter('metadata->>internet_message_id', 'eq', args.internetMessageId)
+    .limit(1)
+    .maybeSingle()
+  if (error) {
+    Sentry.captureException(error, {
+      tags: { layer: 'db', helper: 'emailActivityExists' },
+    })
+    return { ok: false, code: 'internal' }
+  }
+  return { ok: true, data: Boolean(data) }
+}
+
 export async function createActivity(
   supabase: SupabaseClient<Database>,
   input: CreateActivityInput,

@@ -2,10 +2,13 @@ import { serve } from 'inngest/next'
 
 import { inngest } from '@/lib/inngest/client'
 import { bootstrapVectorIndex } from '@/lib/inngest/functions/bootstrap-vector-index'
+import { cleanupStaleSummaries } from '@/lib/inngest/functions/cleanup-stale-summaries'
+import { createOutlookSubscription } from '@/lib/inngest/functions/create-outlook-subscription'
 import { embedBatch } from '@/lib/inngest/functions/embed-batch'
 import { embedJobOnJDChange } from '@/lib/inngest/functions/embed-job-on-jd-change'
 import { parseCVOnUpload } from '@/lib/inngest/functions/parse-cv'
 import { precomputeMatchesForJob } from '@/lib/inngest/functions/precompute-matches-for-job'
+import { syncOutlookHistory } from '@/lib/inngest/functions/sync-outlook-history'
 
 // Inngest's `serve` adapter exposes GET (for function discovery), POST (for
 // invocation), and PUT. Whitelisted in middleware PUBLIC_PATHS — Inngest
@@ -18,5 +21,8 @@ export const { GET, POST, PUT } = serve({
     embedJobOnJDChange,
     bootstrapVectorIndex,
     precomputeMatchesForJob,
+    cleanupStaleSummaries,
+    createOutlookSubscription,
+    syncOutlookHistory,
   ],
 })

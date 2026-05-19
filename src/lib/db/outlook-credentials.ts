@@ -261,6 +261,145 @@ export async function updateOutlookDeltaLink(
 }
 
 /**
+ * Plan 4 Task 4.3 — sync function calls this AFTER each successful delta
+ * page to persist the new cursor. `deltaLink: null` is the "force full
+ * resync on next run" sentinel (used after subscription recreate).
+ */
+export async function setOutlookDeltaLink(
+  supabase: SupabaseClient<Database>,
+  args: { userId: string; deltaLink: string | null; lastSyncedAt: string },
+): Promise<DbResult<{ id: string }>> {
+  const { data, error } = await asOutlookCredsClient(supabase)
+    .from('outlook_credentials')
+    .update({
+      delta_link: args.deltaLink,
+      last_synced_at: args.lastSyncedAt,
+    })
+    .eq('user_id', args.userId)
+    .select('id')
+    .single()
+  if (error || !data) {
+    Sentry.captureException(error, {
+      tags: { layer: 'db', helper: 'setOutlookDeltaLink' },
+    })
+    return { ok: false, code: 'internal' }
+  }
+  return { ok: true, data }
+}
+
+/**
+ * Plan 4 Task 4.4 — return every non-revoked row whose subscription is
+ * about to expire (or already has). The 6-hourly cron sweeps anything
+ * inside `withinHours` of `now()` so a missed cron tick still has at
+ * least one chance to renew before the 4230-min cap kicks in.
+ */
+export async function listExpiringSubscriptions(
+  supabase: SupabaseClient<Database>,
+  withinHours: number,
+): Promise<DbResult<OutlookCredentialsRow[]>> {
+  const cutoff = new Date(Date.now() + withinHours * 3600_000).toISOString()
+  // reason: outlook_credentials shape extended at runtime via additive
+  // migration in Task 4.4 — cast at the boundary.
+  const untyped = supabase as unknown as {
+    from: (table: 'outlook_credentials') => {
+      select: (cols: string) => {
+        is: (col: string, val: null) => {
+          lt: (col: string, val: string) => Promise<{
+            data: OutlookCredentialsRow[] | null
+            error: unknown
+          }>
+        }
+      }
+    }
+  }
+  const { data, error } = await untyped
+    .from('outlook_credentials')
+    .select('*')
+    .is('revoked_at', null)
+    .lt('subscription_expires_at', cutoff)
+  if (error) {
+    Sentry.captureException(error, {
+      tags: { layer: 'db', helper: 'listExpiringSubscriptions' },
+    })
+    return { ok: false, code: 'internal' }
+  }
+  return { ok: true, data: data ?? [] }
+}
+
+/**
+ * Plan 4 Task 4.4 — record a renewal attempt outcome on
+ * outlook_credentials. The two new columns (last_renewal_error,
+ * last_renewal_attempt_at) come from a Task-4.4 additive migration.
+ *
+ * If the current attempt failed AND the previous attempt also failed,
+ * we emit a Sentry message — Phase 2 doesn't yet wire alert routing
+ * but this lights up the existing Sentry project.
+ */
+export async function recordRenewalAttempt(
+  supabase: SupabaseClient<Database>,
+  args: { userId: string; success: boolean; error?: string },
+): Promise<DbResult<{ id: string }>> {
+  // Read existing last_renewal_error so we can detect consecutive failures.
+  // reason: column not yet in generated Database type — cast at boundary.
+  const untyped = supabase as unknown as {
+    from: (table: 'outlook_credentials') => {
+      select: (cols: string) => {
+        eq: (col: string, val: unknown) => {
+          maybeSingle: () => Promise<{
+            data: { last_renewal_error: string | null } | null
+            error: unknown
+          }>
+        }
+      }
+      update: (patch: Record<string, unknown>) => {
+        eq: (col: string, val: unknown) => {
+          select: (cols: string) => {
+            single: () => Promise<{ data: { id: string } | null; error: unknown }>
+          }
+        }
+      }
+    }
+  }
+  const { data: prior } = await untyped
+    .from('outlook_credentials')
+    .select('last_renewal_error')
+    .eq('user_id', args.userId)
+    .maybeSingle()
+
+  const { data, error } = await untyped
+    .from('outlook_credentials')
+    .update({
+      last_renewal_error: args.success ? null : (args.error ?? 'unknown'),
+      last_renewal_attempt_at: new Date().toISOString(),
+    })
+    .eq('user_id', args.userId)
+    .select('id')
+    .single()
+  if (error || !data) {
+    Sentry.captureException(error, {
+      tags: { layer: 'db', helper: 'recordRenewalAttempt' },
+    })
+    return { ok: false, code: 'internal' }
+  }
+
+  if (!args.success && prior?.last_renewal_error) {
+    Sentry.captureMessage(
+      `outlook subscription renewal failed twice for user ${args.userId}`,
+      {
+        level: 'error',
+        tags: {
+          layer: 'inngest',
+          function: 'refresh-outlook-subscription',
+          user_id: args.userId,
+        },
+      },
+    )
+  }
+
+  return { ok: true, data }
+}
+
+/**
  * Disconnect Outlook. Sets revoked_at and nulls every token + subscription
  * column so the row is preserved (for audit) but can no longer be used.
  */

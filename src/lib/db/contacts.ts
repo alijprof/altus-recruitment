@@ -114,3 +114,34 @@ export async function deleteContact(
   }
   return { ok: true, data: { id } }
 }
+
+/**
+ * Plan 4 Task 4.3 — exact-email lookup for the Outlook sync function.
+ * Service-role-friendly: pass `organizationId` explicitly because the
+ * caller has no session for RLS to read.
+ *
+ * Backed by the contacts_email_idx (organization_id, lower(email))
+ * index added in the same plan.
+ */
+export async function findContactByEmail(
+  supabase: SupabaseClient<Database>,
+  email: string,
+  organizationId: string,
+): Promise<DbResult<{ id: string } | null>> {
+  const normalised = email.toLowerCase().trim()
+  if (!normalised) return { ok: true, data: null }
+  const { data, error } = await supabase
+    .from('contacts')
+    .select('id')
+    .eq('organization_id', organizationId)
+    .ilike('email', normalised)
+    .limit(1)
+    .maybeSingle()
+  if (error) {
+    Sentry.captureException(error, {
+      tags: { layer: 'db', helper: 'findContactByEmail' },
+    })
+    return { ok: false, code: 'internal' }
+  }
+  return { ok: true, data: data ?? null }
+}

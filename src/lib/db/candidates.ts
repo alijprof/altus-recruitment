@@ -307,6 +307,13 @@ export type CreateCandidateInput = {
   current_company?: string | null
   market_status: Enums<'market_status'>
   source: Enums<'candidate_source'>
+  // Plan 3 Task 3.2 — populated only by the apply-form action where the
+  // recruiter is unauthenticated and the candidates_set_org trigger has no
+  // current_organization_id() to read. Authenticated callers MUST leave
+  // this undefined and let the trigger fill it. The trigger no-ops when
+  // the column is already set, per phase1_domain_schema.sql:399-400.
+  organization_id?: string
+  source_detail?: string | null
   consent_basis: Enums<'consent_basis'>
   consent_at: string
   consent_text_version: string
@@ -314,17 +321,24 @@ export type CreateCandidateInput = {
 
 /**
  * Insert a candidate. `organization_id` is set by the set_organization_id
- * trigger from the session context — never pass it from caller code.
+ * trigger from the session context — never pass it from caller code,
+ * EXCEPT from the public apply form (Plan 3) where there is no auth
+ * session and the trigger therefore has no org context to read.
  */
 export async function createCandidate(
   supabase: SupabaseClient<Database>,
   input: CreateCandidateInput,
 ): Promise<DbResult<{ id: string }>> {
-  // organization_id is intentionally omitted — the BEFORE INSERT trigger
-  // `candidates_set_org` (phase1_domain_schema.sql:399-400) resolves it from
-  // auth.uid()'s current_organization_id(). Passing it manually would be a
-  // defence-in-depth anti-pattern (CLAUDE.md "Never use service role key in
-  // client-side code" applies in spirit: trust RLS + triggers).
+  // organization_id is intentionally omitted FOR AUTHENTICATED CALLERS —
+  // the BEFORE INSERT trigger `candidates_set_org` (phase1_domain_schema.sql:
+  // 399-400) resolves it from auth.uid()'s current_organization_id().
+  // Passing it manually would be a defence-in-depth anti-pattern (CLAUDE.md
+  // "Never use service role key in client-side code" applies in spirit:
+  // trust RLS + triggers).
+  //
+  // The public apply form (Plan 3) is the one exception: no auth session,
+  // so the trigger has nothing to fill in. Action passes org explicitly,
+  // derived from the slug → organizations lookup.
   // reason: TablesInsert<'candidates'> requires organization_id at the type
   // level even though the trigger fills it. Cast through unknown narrows the
   // payload to exactly what we actually send.
@@ -340,6 +354,12 @@ export async function createCandidate(
     consent_basis: input.consent_basis,
     consent_at: input.consent_at,
     consent_text_version: input.consent_text_version,
+    ...(input.organization_id !== undefined
+      ? { organization_id: input.organization_id }
+      : {}),
+    ...(input.source_detail !== undefined
+      ? { source_detail: input.source_detail }
+      : {}),
   } as unknown as TablesInsert<'candidates'>
 
   const { data, error } = await supabase
@@ -359,6 +379,37 @@ export async function createCandidate(
   }
 
   return { ok: true, data: { id: data.id } }
+}
+
+// Plan 3 Task 3.2 — duplicate-detection lookup for the public apply form.
+// Called from submitApplyAction via the service-role client (no
+// auth.uid() = no RLS). Tenant boundary is the explicit `organizationId`
+// filter — the action passes it from the slug lookup, NEVER from the
+// client.
+//
+// PII discipline (M-4): we DO NOT pass `email` through to Sentry. The
+// error payload is tag-only; the email lookup value never leaves the
+// function. The Sentry tag set is fixed and grep-safe.
+export async function getCandidateByEmailForOrg(
+  supabase: SupabaseClient<Database>,
+  args: { organizationId: string; email: string },
+): Promise<DbResult<{ id: string; market_status: Enums<'market_status'> } | null>> {
+  const { data, error } = await supabase
+    .from('candidates')
+    .select('id, market_status')
+    .eq('organization_id', args.organizationId)
+    .eq('email', args.email)
+    .limit(1)
+    .maybeSingle()
+
+  if (error) {
+    Sentry.captureException(error, {
+      tags: { layer: 'db', helper: 'getCandidateByEmailForOrg' },
+    })
+    return { ok: false, code: 'internal' }
+  }
+  if (!data) return { ok: true, data: null }
+  return { ok: true, data }
 }
 
 export type UpdateCandidateInput = Partial<{
@@ -598,4 +649,37 @@ export async function listCandidateActivities(
   }
 
   return { ok: true, data: (data ?? []) as unknown as CandidateActivityRow[] }
+}
+
+/**
+ * Plan 4 Task 4.3 — exact-email lookup for the Outlook sync function.
+ * Service-role-friendly: pass `organizationId` explicitly because the
+ * caller has no session for RLS to read.
+ *
+ * Email is normalised to lowercase before the lookup. Phase 1's
+ * `candidates_email_idx` on (organization_id, email) plus the
+ * lowercase normalisation at apply-form / candidate-create time means
+ * an `ilike` on the indexed column is satisfied.
+ */
+export async function findCandidateByEmail(
+  supabase: SupabaseClient<Database>,
+  email: string,
+  organizationId: string,
+): Promise<DbResult<{ id: string } | null>> {
+  const normalised = email.toLowerCase().trim()
+  if (!normalised) return { ok: true, data: null }
+  const { data, error } = await supabase
+    .from('candidates')
+    .select('id')
+    .eq('organization_id', organizationId)
+    .ilike('email', normalised)
+    .limit(1)
+    .maybeSingle()
+  if (error) {
+    Sentry.captureException(error, {
+      tags: { layer: 'db', helper: 'findCandidateByEmail' },
+    })
+    return { ok: false, code: 'internal' }
+  }
+  return { ok: true, data: data ?? null }
 }
