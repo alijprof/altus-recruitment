@@ -1,10 +1,12 @@
 import Link from 'next/link'
 
 import { EmptyState } from '@/components/app/empty-state'
+import { isListView, ViewToggle } from '@/components/app/view-toggle'
 import { Button } from '@/components/ui/button'
 import { listCandidates, type SortDir, type SortKey } from '@/lib/db/candidates'
 import { createClient } from '@/lib/supabase/server'
 
+import { CandidateCards } from './candidate-cards'
 import { CandidateTable } from './candidate-table'
 import { SearchInput } from './search-input'
 
@@ -22,6 +24,7 @@ type CandidatesSearchParams = {
   sort?: string
   dir?: string
   page?: string
+  view?: string
 }
 
 function parseSort(raw: string | undefined): SortKey {
@@ -54,6 +57,7 @@ export default async function CandidatesPage({
   const dir = parseDir(params.dir)
   const page = parsePage(params.page)
   const q = params.q?.trim() || undefined
+  const view = isListView(params.view)
   const offset = (page - 1) * PAGE_SIZE
 
   const result = await listCandidates(supabase, { q, sort, dir, offset, limit: PAGE_SIZE })
@@ -93,18 +97,31 @@ export default async function CandidatesPage({
         />
       ) : (
         <>
-          <div className="flex flex-wrap items-center gap-3">
+          <div className="flex flex-wrap items-center justify-between gap-3">
             <SearchInput initialQuery={q ?? ''} />
+            <ViewToggle current={view} />
           </div>
-          <CandidateTable
-            rows={rows}
-            total={total}
-            page={page}
-            pageSize={PAGE_SIZE}
-            sort={sort}
-            dir={dir}
-            query={q}
-          />
+          {view === 'cards' ? (
+            <CandidateCards
+              rows={rows}
+              total={total}
+              page={page}
+              pageSize={PAGE_SIZE}
+              sort={sort}
+              dir={dir}
+              query={q}
+            />
+          ) : (
+            <CandidateTable
+              rows={rows}
+              total={total}
+              page={page}
+              pageSize={PAGE_SIZE}
+              sort={sort}
+              dir={dir}
+              query={q}
+            />
+          )}
         </>
       )}
     </div>

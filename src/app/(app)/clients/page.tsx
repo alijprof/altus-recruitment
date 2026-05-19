@@ -1,10 +1,12 @@
 import Link from 'next/link'
 import { Plus } from 'lucide-react'
 
+import { isListView, ViewToggle } from '@/components/app/view-toggle'
 import { Button } from '@/components/ui/button'
 import { listClients, type ClientListSort, type ListDir } from '@/lib/db/clients'
 import { createClient } from '@/lib/supabase/server'
 
+import { ClientCards } from './client-cards'
 import { ClientTable } from './client-table'
 import { SearchInput } from './search-input'
 
@@ -29,13 +31,14 @@ function parsePage(raw: string | undefined): number {
 export default async function ClientsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ q?: string; sort?: string; dir?: string; page?: string }>
+  searchParams: Promise<{ q?: string; sort?: string; dir?: string; page?: string; view?: string }>
 }) {
   const sp = await searchParams
   const q = sp.q?.trim() ?? ''
   const sort = parseSort(sp.sort)
   const dir = parseDir(sp.dir)
   const page = parsePage(sp.page)
+  const view = isListView(sp.view)
   const pageSize = 25
 
   const supabase = await createClient()
@@ -61,6 +64,7 @@ export default async function ClientsPage({
     if (sort !== 'last_contacted_at') params.set('sort', sort)
     if (dir !== 'desc') params.set('dir', dir)
     if (targetPage > 1) params.set('page', String(targetPage))
+    if (view === 'cards') params.set('view', 'cards')
     const qs = params.toString()
     return qs ? `/clients?${qs}` : '/clients'
   }
@@ -101,11 +105,14 @@ export default async function ClientsPage({
 
       <div className="flex flex-wrap items-center justify-between gap-3">
         <SearchInput />
-        <p className="text-muted-foreground text-xs">
-          {total === 0
-            ? 'No matches'
-            : `${pageStart}–${pageEnd} of ${total} client${total === 1 ? '' : 's'}`}
-        </p>
+        <div className="flex items-center gap-3">
+          <p className="text-muted-foreground text-xs">
+            {total === 0
+              ? 'No matches'
+              : `${pageStart}–${pageEnd} of ${total} client${total === 1 ? '' : 's'}`}
+          </p>
+          <ViewToggle current={view} />
+        </div>
       </div>
 
       {isNoMatch ? (
@@ -114,6 +121,8 @@ export default async function ClientsPage({
             No clients match &ldquo;{q}&rdquo;. Try a shorter or different search term.
           </p>
         </div>
+      ) : view === 'cards' ? (
+        <ClientCards rows={rows} />
       ) : (
         <ClientTable rows={rows} />
       )}

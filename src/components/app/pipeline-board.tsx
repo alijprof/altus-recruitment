@@ -170,17 +170,23 @@ export function PipelineBoard({ initial, jobId }: PipelineBoardProps) {
   return (
     <>
       <DndContext sensors={sensors} onDragEnd={handleDragEnd}>
-        <div className="flex gap-4 overflow-x-auto pb-4">
-          {PIPELINE_STAGES.map((stage) => (
-            <Column
-              key={stage}
-              stage={stage}
-              cards={columns[stage]}
-              pendingIds={pendingIds}
-              onMoveTo={handleDropdownMove}
-              onReject={(card) => setDeclineTarget(card)}
-            />
-          ))}
+        {/* Full-bleed breakout so all 7 stages fit without horizontal scroll
+            on desktop. mx-[calc(50%-50vw)] yanks the board to viewport edges
+            from inside the layout's max-w-6xl wrapper; px-4 sm:px-6 restores
+            comfortable gutters. */}
+        <div className="relative mx-[calc(50%-50vw)] w-screen px-4 sm:px-6">
+          <div className="grid grid-cols-7 gap-2 pb-4 lg:gap-3">
+            {PIPELINE_STAGES.map((stage) => (
+              <Column
+                key={stage}
+                stage={stage}
+                cards={columns[stage]}
+                pendingIds={pendingIds}
+                onMoveTo={handleDropdownMove}
+                onReject={(card) => setDeclineTarget(card)}
+              />
+            ))}
+          </div>
         </div>
       </DndContext>
 
@@ -220,7 +226,7 @@ function Column({ stage, cards, pendingIds, onMoveTo, onReject }: ColumnProps) {
       ref={setNodeRef}
       data-column={stage}
       className={cn(
-        'bg-card flex min-w-[240px] max-w-[280px] shrink-0 flex-col rounded-md border p-3',
+        'bg-card flex min-w-0 flex-col rounded-md border p-3',
         isOver && 'ring-ring/40 ring-2',
       )}
     >
