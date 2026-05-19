@@ -77,6 +77,23 @@ export async function triggerHnswBuildAction(
   } = await supabase.auth.getUser()
   if (!user) return { ok: false, error: 'Not signed in.' }
 
+  // Phase 2 review H3 fix — restrict to owners. The HNSW index is a
+  // global ops gesture (shared `hnsw_build_state.last_attempt_at`); any
+  // authenticated user (in any tenant) could previously spam-clear the
+  // operator's "ready to build" signal. Mirror the role-check pattern
+  // from toggleApplyFormEnabledAction.
+  const { data: me, error: meErr } = await supabase
+    .from('users')
+    .select('role')
+    .eq('id', user.id)
+    .maybeSingle()
+  if (meErr || !me) {
+    return { ok: false, error: 'Could not load your profile.' }
+  }
+  if (me.role !== 'owner') {
+    return { ok: false, error: 'Only owners can trigger index builds.' }
+  }
+
   try {
     await inngest.send({
       name: 'admin/build-vector-index',
