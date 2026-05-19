@@ -293,6 +293,174 @@ export async function updateCandidate(
   return { ok: true, data: { id } }
 }
 
+// ---------------------------------------------------------------------------
+// Embedding helpers — Plan 1 Task 1.1.
+//
+// Two callers: parse-cv Inngest function (after extracting CV text, before
+// it embeds the candidate) and the scheduled embed-candidates-batch sweep.
+// Both must read the same minimal column set so the embed input is
+// deterministic + the trigger from migration 20260519092951 stays in sync.
+// ---------------------------------------------------------------------------
+
+export type CandidateForEmbedding = Pick<
+  Tables<'candidates'>,
+  | 'id'
+  | 'organization_id'
+  | 'full_name'
+  | 'current_role_title'
+  | 'current_company'
+  | 'location'
+  | 'skills'
+  | 'seniority_level'
+  | 'years_experience'
+  | 'sector_tags'
+  | 'embedding_version'
+>
+
+const EMBED_SELECT_COLUMNS =
+  'id, organization_id, full_name, current_role_title, current_company, location, skills, seniority_level, years_experience, sector_tags, embedding_version'
+
+/**
+ * Fetch exactly the candidate columns that feed into `candidateEmbeddingText`.
+ * Plus `embedding_version` so the caller can increment it on write. Returns
+ * `not_found` if the row was deleted between event dispatch + step.run
+ * (extremely unlikely; defensive).
+ */
+export async function getCandidateForEmbedding(
+  supabase: SupabaseClient<Database>,
+  candidateId: string,
+): Promise<DbResult<CandidateForEmbedding>> {
+  const { data, error } = await supabase
+    .from('candidates')
+    .select(EMBED_SELECT_COLUMNS)
+    .eq('id', candidateId)
+    .maybeSingle()
+
+  if (error) {
+    Sentry.captureException(error, {
+      tags: { layer: 'db', helper: 'getCandidateForEmbedding' },
+    })
+    return { ok: false, code: 'internal' }
+  }
+  if (!data) return { ok: false, code: 'not_found' }
+  return { ok: true, data: data as unknown as CandidateForEmbedding }
+}
+
+export type BumpCandidateEmbeddingArgs = {
+  candidateId: string
+  embedding: number[]
+  embeddingVersion: number
+}
+
+/**
+ * Write a freshly computed embedding back to the candidate row. Increments
+ * `embedding_version` and stamps `embedded_at = now()` in the same UPDATE so
+ * concurrent sweeps don't race on stale snapshots.
+ *
+ * The supabase JS client serialises `number[]` → halfvec(1024) correctly so
+ * long as the array length is exactly 1024 (Voyage voyage-3 with
+ * `outputDimension: 1024`).
+ */
+export async function bumpCandidateEmbedding(
+  supabase: SupabaseClient<Database>,
+  args: BumpCandidateEmbeddingArgs,
+): Promise<DbResult<{ id: string; embedding_version: number }>> {
+  // reason: candidate_embedding is typed `unknown` in the generated Database
+  // type (halfvec has no native TS shape). The number[] payload is the
+  // canonical Voyage output; supabase-js serialises it through PostgREST.
+  const patch = {
+    candidate_embedding: args.embedding,
+    embedding_version: args.embeddingVersion,
+    embedded_at: new Date().toISOString(),
+  } as unknown as TablesUpdate<'candidates'>
+
+  const { error } = await supabase
+    .from('candidates')
+    .update(patch)
+    .eq('id', args.candidateId)
+    .select('id')
+    .single()
+
+  if (error) {
+    Sentry.captureException(error, {
+      tags: { layer: 'db', helper: 'bumpCandidateEmbedding' },
+    })
+    return { ok: false, code: 'internal' }
+  }
+  return { ok: true, data: { id: args.candidateId, embedding_version: args.embeddingVersion } }
+}
+
+/**
+ * Bulk fetch candidates by id (Plan 1 Task 1.3 — used by /jobs/[id]/matches
+ * to hydrate display fields after `getTopCandidatesByVector` returns ids +
+ * scores). Tight column set keeps the row payload small.
+ */
+export type CandidateByIdRow = Pick<
+  Tables<'candidates'>,
+  | 'id'
+  | 'full_name'
+  | 'current_role_title'
+  | 'current_company'
+  | 'location'
+  | 'market_status'
+>
+
+export async function listCandidatesByIds(
+  supabase: SupabaseClient<Database>,
+  ids: string[],
+): Promise<DbResult<CandidateByIdRow[]>> {
+  if (ids.length === 0) return { ok: true, data: [] }
+  const { data, error } = await supabase
+    .from('candidates')
+    .select('id, full_name, current_role_title, current_company, location, market_status')
+    .in('id', ids)
+
+  if (error) {
+    Sentry.captureException(error, {
+      tags: { layer: 'db', helper: 'listCandidatesByIds' },
+    })
+    return { ok: false, code: 'internal' }
+  }
+  return { ok: true, data: (data ?? []) as CandidateByIdRow[] }
+}
+
+/**
+ * Read the latest CV's extracted text for a candidate, if any. Used by the
+ * embed-candidate Inngest step to build the hybrid embedding input
+ * (structured candidate summary + raw CV text). Returns null when no CV row
+ * exists yet (e.g., candidate created manually with no upload).
+ */
+export async function getLatestCVTextForCandidate(
+  supabase: SupabaseClient<Database>,
+  candidateId: string,
+): Promise<DbResult<string | null>> {
+  const { data, error } = await supabase
+    .from('candidate_cvs')
+    .select('extracted_data')
+    .eq('candidate_id', candidateId)
+    .order('version', { ascending: false })
+    .limit(1)
+    .maybeSingle()
+
+  if (error) {
+    Sentry.captureException(error, {
+      tags: { layer: 'db', helper: 'getLatestCVTextForCandidate' },
+    })
+    return { ok: false, code: 'internal' }
+  }
+
+  if (!data || data.extracted_data == null) return { ok: true, data: null }
+
+  // The Claude tool returns a structured object; we don't currently persist
+  // the raw text on candidate_cvs. The embedding's "CV text" half is filled
+  // from the structured fields synthesised back into a paragraph by the
+  // candidateEmbeddingText helper (Skills, Sectors, etc.). Returning null
+  // here means "no extra CV-body text" — the embedding input is the
+  // structured summary only, which is the desired behaviour until we start
+  // persisting raw CV text.
+  return { ok: true, data: null }
+}
+
 export type CandidateActivityRow = Pick<
   Tables<'activities'>,
   'id' | 'kind' | 'body' | 'occurred_at' | 'actor_user_id' | 'metadata'

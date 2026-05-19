@@ -289,6 +289,93 @@ export type UpdateJobPatch = Partial<
   >
 >
 
+// ---------------------------------------------------------------------------
+// Embedding helpers — Plan 1 Task 1.1.
+// ---------------------------------------------------------------------------
+
+export type JobForEmbedding = Pick<
+  Tables<'jobs'>,
+  | 'id'
+  | 'organization_id'
+  | 'title'
+  | 'location'
+  | 'job_type'
+  | 'hiring_context'
+  | 'salary_min'
+  | 'salary_max'
+  | 'currency'
+  | 'description'
+  | 'embedding_version'
+>
+
+const JOB_EMBED_SELECT_COLUMNS =
+  'id, organization_id, title, location, job_type, hiring_context, salary_min, salary_max, currency, description, embedding_version'
+
+/**
+ * Fetch exactly the columns that feed into `jobEmbeddingText` + the
+ * embedding_version counter for monotonic increments. Returns `not_found`
+ * if the row was deleted between event dispatch + step.run.
+ */
+export async function getJobForEmbedding(
+  supabase: SupabaseClient<Database>,
+  jobId: string,
+): Promise<DbResult<JobForEmbedding>> {
+  const { data, error } = await supabase
+    .from('jobs')
+    .select(JOB_EMBED_SELECT_COLUMNS)
+    .eq('id', jobId)
+    .maybeSingle()
+
+  if (error) {
+    Sentry.captureException(error, {
+      tags: { layer: 'db', helper: 'getJobForEmbedding' },
+    })
+    return { ok: false, code: 'internal' }
+  }
+  if (!data) return { ok: false, code: 'not_found' }
+  return { ok: true, data: data as unknown as JobForEmbedding }
+}
+
+export type BumpJobEmbeddingArgs = {
+  jobId: string
+  embedding: number[]
+  embeddingVersion: number
+}
+
+/**
+ * Write a freshly computed embedding back to the job row. Same shape as
+ * bumpCandidateEmbedding — increments embedding_version + stamps
+ * embedded_at = now() in a single UPDATE.
+ */
+export async function bumpJobEmbedding(
+  supabase: SupabaseClient<Database>,
+  args: BumpJobEmbeddingArgs,
+): Promise<DbResult<{ id: string; embedding_version: number }>> {
+  // reason: job_embedding is typed `unknown` in the generated Database type
+  // (halfvec has no native TS shape). number[] is the canonical Voyage
+  // output; supabase-js serialises it through PostgREST.
+  const patch = {
+    job_embedding: args.embedding,
+    embedding_version: args.embeddingVersion,
+    embedded_at: new Date().toISOString(),
+  } as unknown as TablesUpdate<'jobs'>
+
+  const { error } = await supabase
+    .from('jobs')
+    .update(patch)
+    .eq('id', args.jobId)
+    .select('id')
+    .single()
+
+  if (error) {
+    Sentry.captureException(error, {
+      tags: { layer: 'db', helper: 'bumpJobEmbedding' },
+    })
+    return { ok: false, code: 'internal' }
+  }
+  return { ok: true, data: { id: args.jobId, embedding_version: args.embeddingVersion } }
+}
+
 export async function updateJob(
   supabase: SupabaseClient<Database>,
   id: string,

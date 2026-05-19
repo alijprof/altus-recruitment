@@ -1,10 +1,26 @@
 import 'server-only'
 
+import { createRequire } from 'node:module'
+
 import * as Sentry from '@sentry/nextjs'
-import { VoyageAIClient } from 'voyageai'
 
 import { env } from '@/lib/env'
 import { createServiceClient } from '@/lib/supabase/service'
+
+// voyageai 0.2.1 ships a broken ESM build (dist/esm/extended/index.mjs
+// uses extensionless directory imports that fail under both Webpack's
+// strict ESM resolver and Node's runtime ESM loader — see
+// https://github.com/voyage-ai/typescript-sdk/issues — packaging bug).
+// We force the CJS build via createRequire so Node's CJS resolver does
+// the work. The package is server-only (`import 'server-only'` above) so
+// no client-bundle impact. `serverExternalPackages: ['voyageai']` in
+// next.config.ts keeps Next from trying to bundle it at all.
+//
+// reason: dynamic require returns an `unknown`-typed module — the SDK's
+// own types are imported separately below for the call-site signatures.
+const voyageRequire = createRequire(import.meta.url)
+type VoyageModule = typeof import('voyageai')
+const { VoyageAIClient } = voyageRequire('voyageai') as VoyageModule
 
 // ---------------------------------------------------------------------------
 // Voyage AI wrapper. Mirrors src/lib/ai/claude.ts:

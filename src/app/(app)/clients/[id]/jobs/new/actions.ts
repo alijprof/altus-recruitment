@@ -1,10 +1,12 @@
 'use server'
 
+import * as Sentry from '@sentry/nextjs'
 import { redirect } from 'next/navigation'
 import { revalidatePath } from 'next/cache'
 import { z } from 'zod'
 
 import { createJob } from '@/lib/db/jobs'
+import { inngest } from '@/lib/inngest/client'
 import { createClient as createSupabaseClient } from '@/lib/supabase/server'
 
 import { coerceSalary, jobFormSchema } from './schema'
@@ -52,6 +54,32 @@ export async function createJobAction(
     // Could be a cross-tenant FK guard fire (company in another org). Keep
     // the message generic rather than leaking the cause.
     return { ok: false, formError: 'Something went wrong. Please try again.' }
+  }
+
+  // Plan 1 Task 1.1: dispatch the job/embed Inngest event so the new job
+  // gets a Voyage embedding. The function does its own tenant boundary
+  // check; we pass organization_id explicitly so the event reads as
+  // authoritative for the recipient. Failure is non-fatal — the scheduled
+  // sweep will pick the job up on its next 10-min run.
+  try {
+    await inngest.send({
+      name: 'job/embed',
+      data: {
+        organization_id: result.data.organization_id,
+        job_id: result.data.id,
+        user_id: ownerUserId,
+      },
+    })
+  } catch (err) {
+    const errName = err instanceof Error ? err.name : 'UnknownError'
+    Sentry.captureException(new Error(`${errName}: inngest.send job/embed failed`), {
+      tags: {
+        layer: 'action',
+        helper: 'createJobAction',
+        subop: 'inngest.send',
+        job_id: result.data.id,
+      },
+    })
   }
 
   revalidatePath(`/clients/${idResult.data}`)

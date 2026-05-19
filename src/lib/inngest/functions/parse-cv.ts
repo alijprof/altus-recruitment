@@ -8,11 +8,18 @@ import {
   PDF_MIME,
   UnsupportedCVMimeTypeError,
 } from '@/lib/ai/cv-extract'
+import { candidateEmbeddingText } from '@/lib/ai/embed-text'
+import { embed } from '@/lib/ai/voyage'
 import {
   markCandidateFieldsFromCV,
   updateCandidateCVParse,
 } from '@/lib/db/candidate-cvs'
+import {
+  bumpCandidateEmbedding,
+  getCandidateForEmbedding,
+} from '@/lib/db/candidates'
 import { inngest } from '@/lib/inngest/client'
+import { readStatus } from '@/lib/observability/inngest'
 import { createServiceClient } from '@/lib/supabase/service'
 
 // Friendly message shown in the UI when parsing fails. Locked to the
@@ -79,23 +86,6 @@ async function markCvFailed(args: { candidateCvId: string; userMessage: string }
       },
     )
   }
-}
-
-/**
- * Extract a numeric `status` off an unknown error in a type-safe way.
- * Returns 'unknown' when not present. Used only for tagging Sentry
- * payloads — never for control flow.
- */
-function readStatus(err: unknown): number | 'unknown' {
-  if (
-    err !== null &&
-    typeof err === 'object' &&
-    'status' in err &&
-    typeof (err as { status: unknown }).status === 'number'
-  ) {
-    return (err as { status: number }).status
-  }
-  return 'unknown'
 }
 
 export const parseCVOnUpload = inngest.createFunction(
@@ -258,6 +248,73 @@ export const parseCVOnUpload = inngest.createFunction(
           },
         })
       })
+
+      // Step 5: embed the candidate (Plan 1 Task 1.1).
+      // Reactive embed at the CV-parse moment — the candidate's structured
+      // fields are freshly populated and the CV text is still in memory.
+      // Failure here is non-fatal: the parse already committed, and the
+      // scheduled `embed-candidates-batch` sweep picks the candidate up on
+      // its next run (NULL embedding selector). We log to Sentry but do
+      // NOT throw — we don't want a transient Voyage outage to NULL out a
+      // successful parse.
+      try {
+        await step.run('embed-candidate', async () => {
+          const supabase = createServiceClient()
+          const candidateResult = await getCandidateForEmbedding(supabase, candidate_id)
+          if (!candidateResult.ok) {
+            // Row vanished between write-extracted and here — extremely
+            // unlikely; surface and return so the sweep can retry.
+            throw new Error(`getCandidateForEmbedding: ${candidateResult.code}`)
+          }
+          const candidate = candidateResult.data
+
+          // The hybrid embedding input: structured candidate summary + raw
+          // CV text (capped via MAX_CV_CHARS_FOR_EMBED inside the builder).
+          // `text` is the already-extracted plain text from Step 2.
+          const embeddingText = candidateEmbeddingText(candidate, text)
+          if (embeddingText.trim().length === 0) {
+            // Defensive — both summary and text empty means we have nothing
+            // to embed. Skip; the sweep won't pick this up either (it
+            // filters on NULL embedding, but a degenerate row would just
+            // keep failing).
+            return
+          }
+
+          const { vectors } = await embed({
+            organizationId: organization_id,
+            userId: user_id,
+            purpose: 'candidate_embed',
+            inputType: 'document',
+            inputs: [embeddingText],
+          })
+          const vector = vectors[0]
+          if (!vector || vector.length === 0) {
+            throw new Error('voyage embed returned no vector')
+          }
+
+          await bumpCandidateEmbedding(supabase, {
+            candidateId: candidate_id,
+            embedding: vector,
+            embeddingVersion: (candidate.embedding_version ?? 0) + 1,
+          })
+        })
+      } catch (embedErr) {
+        // VERIFICATION R4: wrap name + status only — Voyage SDK errors
+        // can echo input prompts in error.message which would bypass the
+        // global Sentry beforeSend PII scrub.
+        const name = embedErr instanceof Error ? embedErr.name : 'UnknownError'
+        const status = readStatus(embedErr)
+        Sentry.captureException(new Error(`${name}: ${status}`), {
+          tags: {
+            layer: 'inngest',
+            function: 'parse-cv-on-upload',
+            subop: 'embed-candidate',
+            candidate_id,
+          },
+        })
+        // Intentionally swallow — parse already succeeded. Sweep will
+        // retry the embed on its next 10-min cadence.
+      }
     } catch (err) {
       // Anything that fell through to here is either a NonRetriableError
       // (final) or an unexpected throw from outside a step. Either way,

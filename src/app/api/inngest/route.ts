@@ -1,6 +1,8 @@
 import { serve } from 'inngest/next'
 
 import { inngest } from '@/lib/inngest/client'
+import { embedBatch } from '@/lib/inngest/functions/embed-batch'
+import { embedJobOnJDChange } from '@/lib/inngest/functions/embed-job-on-jd-change'
 import { parseCVOnUpload } from '@/lib/inngest/functions/parse-cv'
 
 // Inngest's `serve` adapter exposes GET (for function discovery), POST (for
@@ -8,5 +10,5 @@ import { parseCVOnUpload } from '@/lib/inngest/functions/parse-cv'
 // authenticates via signing key, not Supabase session.
 export const { GET, POST, PUT } = serve({
   client: inngest,
-  functions: [parseCVOnUpload],
+  functions: [parseCVOnUpload, embedBatch, embedJobOnJDChange],
 })
