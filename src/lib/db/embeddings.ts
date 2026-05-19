@@ -121,6 +121,30 @@ export async function hybridSearchJobs(
 }
 
 /**
+ * Count candidates in the current tenant whose embedding is null. Used by
+ * the /search page nudge ("N candidates haven't been embedded yet") and by
+ * /settings/integrations to decide whether to surface the Backfill button.
+ *
+ * RLS scopes this to the current org naturally.
+ */
+export async function countCandidatesWithoutEmbedding(
+  supabase: SupabaseClient<Database>,
+): Promise<DbResult<number>> {
+  const { count, error } = await supabase
+    .from('candidates')
+    .select('id', { count: 'exact', head: true })
+    .is('candidate_embedding', null)
+
+  if (error) {
+    Sentry.captureException(error, {
+      tags: { layer: 'db', helper: 'countCandidatesWithoutEmbedding' },
+    })
+    return { ok: false, code: 'internal' }
+  }
+  return { ok: true, data: count ?? 0 }
+}
+
+/**
  * Top-N candidates by vector similarity to a specific job's embedding.
  * Used by Plan 2's precompute Inngest function for batch match scoring.
  *

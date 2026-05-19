@@ -3,8 +3,10 @@ import 'server-only'
 import * as Sentry from '@sentry/nextjs'
 import type { SupabaseClient } from '@supabase/supabase-js'
 
+import { embed } from '@/lib/ai/voyage'
 import type { Database, Enums, Tables, TablesInsert, TablesUpdate } from '@/types/database'
 
+import { hybridSearchCandidates } from './embeddings'
 import type { DbResult } from './types'
 
 // ---------------------------------------------------------------------------
@@ -41,12 +43,19 @@ export type CandidateListRow = Pick<
 export type SortKey = 'last_contacted_at' | 'full_name' | 'market_status' | 'created_at'
 export type SortDir = 'asc' | 'desc'
 
+export type CandidateSearchMode = 'semantic' | 'trigram'
+
 export type ListCandidatesArgs = {
   q?: string
   sort: SortKey
   dir: SortDir
   offset: number
   limit: number
+  // Plan 1 Task 1.2 — when a `q` is present, decide whether to use the
+  // hybrid (RRF) match_candidates RPC or the legacy trigram-only RPC.
+  // Default: 'trigram' (keeps backward compatibility — explicit opt-in
+  // for semantic to avoid surprising existing callers).
+  mode?: CandidateSearchMode
 }
 
 export type ListCandidatesData = {
@@ -71,7 +80,103 @@ export async function listCandidates(
   supabase: SupabaseClient<Database>,
   args: ListCandidatesArgs,
 ): Promise<DbResult<ListCandidatesData>> {
-  const { q, sort, dir, offset, limit } = args
+  const { q, sort, dir, offset, limit, mode } = args
+
+  if (q && q.trim().length >= 2 && mode === 'semantic') {
+    // Plan 1 Task 1.2 — semantic search path. Embed the query, then call
+    // match_candidates (RRF over cosine + trigram). This path returns
+    // top-N by RRF rank; offset pagination doesn't apply (vector results
+    // are inherently top-K), so we synthesise total = rows.length for
+    // the table renderer.
+    let queryEmbedding: number[]
+    try {
+      // The Voyage wrapper logs cost to ai_usage automatically (purpose:
+      // 'search_query_embed'). RLS-derived organization_id isn't
+      // available here — callers using semantic mode in /candidates
+      // would need the user's session; we infer it inside the wrapper
+      // via the userId/organizationId pair the wrapper requires. For
+      // simplicity in this branch, the /search RSC page does the embed
+      // itself and passes through hybridSearchCandidates directly. This
+      // branch is wired for completeness so /candidates?mode=semantic
+      // works; the page passing org/user context is left to the caller
+      // when /candidates adopts semantic.
+      // The supabase client's session carries the org context — read it
+      // via auth.getUser + a profile lookup is too much for this layer;
+      // we extract org via current_organization_id() RPC.
+      const orgResult = await supabase.rpc('current_organization_id')
+      const organizationId =
+        typeof orgResult.data === 'string' ? orgResult.data : null
+      if (!organizationId) {
+        // No session / no org — fall through to trigram path which only
+        // needs auth.uid() for RLS.
+        Sentry.captureException(new Error('semantic search: no org id from session'), {
+          tags: { layer: 'db', helper: 'listCandidates', branch: 'semantic' },
+        })
+        // Continue below by setting mode to a synthetic trigram value.
+        queryEmbedding = []
+      } else {
+        const userResult = await supabase.auth.getUser()
+        const userId = userResult.data.user?.id ?? null
+        const { vectors } = await embed({
+          organizationId,
+          userId,
+          purpose: 'search_query_embed',
+          inputType: 'query',
+          inputs: [q.trim()],
+        })
+        queryEmbedding = vectors[0] ?? []
+      }
+    } catch (err) {
+      Sentry.captureException(err, {
+        tags: { layer: 'db', helper: 'listCandidates', branch: 'semantic-embed' },
+      })
+      queryEmbedding = []
+    }
+
+    if (queryEmbedding.length === 0) {
+      // Fall back to the trigram path so the user still sees results.
+      // (Setting mode=trigram via a control-flow goto would be cleaner;
+      // inline the trigram call instead.)
+      return listCandidates(supabase, { ...args, mode: 'trigram' })
+    }
+
+    const hybridResult = await hybridSearchCandidates(supabase, {
+      queryText: q.trim(),
+      queryEmbedding,
+      matchCount: limit,
+      minCosineSimilarity: 0.3,
+    })
+    if (!hybridResult.ok) {
+      return { ok: false, code: 'internal' }
+    }
+    // Hydrate display fields from the candidates table — the RPC returns
+    // a tight projection (id, full_name, role, company, location,
+    // market_status) which matches what we need EXCEPT source +
+    // last_contacted_at. Fetch those for the rows we got back.
+    const ids = hybridResult.data.map((r) => r.id)
+    if (ids.length === 0) {
+      return { ok: true, data: { rows: [], total: 0 } }
+    }
+    const { data: extras, error: extraError } = await supabase
+      .from('candidates')
+      .select(LIST_SELECT_COLUMNS)
+      .in('id', ids)
+    if (extraError) {
+      Sentry.captureException(extraError, {
+        tags: { layer: 'db', helper: 'listCandidates', branch: 'semantic-hydrate' },
+      })
+      return { ok: false, code: 'internal' }
+    }
+    // Preserve RRF order from the RPC; map by id.
+    const byId = new Map<string, CandidateListRow>()
+    for (const row of (extras ?? []) as unknown as CandidateListRow[]) {
+      byId.set(row.id, row)
+    }
+    const orderedRows = hybridResult.data
+      .map((r) => byId.get(r.id))
+      .filter((r): r is CandidateListRow => Boolean(r))
+    return { ok: true, data: { rows: orderedRows, total: orderedRows.length } }
+  }
 
   if (q && q.trim().length >= 2) {
     // Trigram search path — defers to the search_candidates RPC. Note: the

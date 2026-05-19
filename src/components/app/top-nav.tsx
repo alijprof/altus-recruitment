@@ -5,6 +5,7 @@ import { SignOutButton } from '@/components/app/sign-out-button'
 const NAV_ITEMS = [
   { href: '/', label: 'Dashboard' },
   { href: '/candidates', label: 'Candidates' },
+  { href: '/search', label: 'Search' },
   { href: '/clients', label: 'Clients' },
   { href: '/jobs', label: 'Jobs' },
   { href: '/pipeline', label: 'Pipeline' },
