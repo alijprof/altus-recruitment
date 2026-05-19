@@ -1012,6 +1012,7 @@ export type Database = {
         Args: {
           p_match_count?: number
           p_min_cosine_similarity?: number
+          p_organization_id: string
           p_query_embedding: unknown
           p_query_text: string
         }
@@ -1028,7 +1029,11 @@ export type Database = {
         }[]
       }
       match_candidates_for_job: {
-        Args: { p_job_id: string; p_match_count?: number }
+        Args: {
+          p_job_id: string
+          p_match_count?: number
+          p_organization_id: string
+        }
         Returns: {
           cosine_similarity: number
           current_company: string
