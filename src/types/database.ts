@@ -1021,6 +1021,20 @@ export type Database = {
           trigram_similarity: number
         }[]
       }
+      match_candidates_for_job: {
+        Args: { p_job_id: string; p_match_count?: number }
+        Returns: {
+          cosine_similarity: number
+          current_company: string
+          current_role_title: string
+          full_name: string
+          id: string
+          location: string
+          market_status: Database["public"]["Enums"]["market_status"]
+          rrf_score: number
+          trigram_similarity: number
+        }[]
+      }
       match_jobs: {
         Args: {
           p_match_count?: number
