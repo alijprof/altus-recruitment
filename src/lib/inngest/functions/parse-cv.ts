@@ -141,8 +141,21 @@ export const parseCVOnUpload = inngest.createFunction(
     // from a compromised account) and a cross-tenant read is THIS check.
     // RESEARCH §17 + §4. Do not move it inside a step.run — we want the
     // NonRetriableError to fire before Inngest spends an attempt on it.
+    //
+    // Two valid path layouts (both bind org_id AND candidate_id into the
+    // path so a forged event can't redirect us at another tenant's bytes):
+    //   1. Recruiter upload:   <org>/<candidate>/<filename>
+    //   2. Apply form upload:  <org>/applicants/<candidate>-<uuid>.<ext>
+    // The apply-form layout is set in submitApplyAction (D2-... — keep
+    // `applicants/` segregated for separate retention policy later).
     // -----------------------------------------------------------------------
-    if (!storage_path.startsWith(`${organization_id}/${candidate_id}/`)) {
+    const isRecruiterUpload = storage_path.startsWith(
+      `${organization_id}/${candidate_id}/`,
+    )
+    const isApplyFormUpload = storage_path.startsWith(
+      `${organization_id}/applicants/${candidate_id}-`,
+    )
+    if (!isRecruiterUpload && !isApplyFormUpload) {
       throw new NonRetriableError('storage_path outside tenant boundary')
     }
 
