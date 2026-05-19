@@ -206,6 +206,34 @@ export async function getCandidateEmbeddingVersion(
 }
 
 /**
+ * Bulk variant — returns a Map of `candidateId → embedding_version` for
+ * the supplied ids. Missing ids (deleted candidates) map to `0`. Used by
+ * Plan 2's matches page to evaluate cache-staleness for the top-10
+ * candidates in a single round-trip.
+ */
+export async function listCandidateEmbeddingVersionsByIds(
+  supabase: SupabaseClient<Database>,
+  ids: string[],
+): Promise<DbResult<Map<string, number>>> {
+  if (ids.length === 0) return { ok: true, data: new Map() }
+  const { data, error } = await supabase
+    .from('candidates')
+    .select('id, embedding_version')
+    .in('id', ids)
+  if (error) {
+    Sentry.captureException(error, {
+      tags: { layer: 'db', helper: 'listCandidateEmbeddingVersionsByIds' },
+    })
+    return { ok: false, code: 'internal' }
+  }
+  const out = new Map<string, number>()
+  for (const row of data ?? []) {
+    out.set(row.id, row.embedding_version ?? 0)
+  }
+  return { ok: true, data: out }
+}
+
+/**
  * Read `jobs.embedding_version` for a single id. Same semantics as
  * `getCandidateEmbeddingVersion`.
  */

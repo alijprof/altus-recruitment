@@ -3,16 +3,31 @@ import { notFound } from 'next/navigation'
 import { ChevronLeft } from 'lucide-react'
 
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
-import { getTopCandidatesForJob } from '@/lib/db/embeddings'
+import { listMatchSummariesForJob } from '@/lib/db/ai-summaries'
+import { listCandidatesByIds, type CandidateByIdRow } from '@/lib/db/candidates'
+import {
+  getJobEmbeddingVersion,
+  getTopCandidatesForJob,
+  listCandidateEmbeddingVersionsByIds,
+} from '@/lib/db/embeddings'
 import { getJob } from '@/lib/db/jobs'
 import { createClient as createSupabaseClient } from '@/lib/supabase/server'
 
-import { MatchRow } from './match-row'
+import { MatchCard } from './match-card'
 
-// Plan 1 Task 1.3 — vector-only candidate matches for a job (SEARCH-04
-// minimum). Plan 2 will layer Sonnet-generated explanations on top of
-// this list (strengths, gaps, screening questions). No audit row here —
-// it's a list view (D-16 carry-forward).
+// Plan 2 Task 2.2 — top matches with Sonnet-generated explanations.
+//
+// Read order:
+//   1. job header (404 if missing)
+//   2. listMatchSummariesForJob — cached match_score rows for this job
+//   3. getTopCandidatesForJob — top-10 by vector similarity
+//   4. listCandidatesByIds — hydrate display fields for top-10
+//
+// For each top-10 row, look up the cached summary by candidate id (O(1)
+// via a Map). When the cache has the row, render the full card. When it
+// doesn't, render the "Not scored yet" placeholder + <ExplainButton>.
+//
+// D-16 carry-forward: no record_audit call here (list view).
 
 const MATCH_LIMIT = 10
 
@@ -35,12 +50,46 @@ export default async function JobMatchesPage({
   }
   const job = jobResult.data
 
-  const matchesResult = await getTopCandidatesForJob(supabase, {
-    jobId: id,
-    limit: MATCH_LIMIT,
-  })
-  const matches = matchesResult.ok ? matchesResult.data : []
-  const errored = !matchesResult.ok
+  // Run vector top-N and the cache fetch in parallel — they don't depend
+  // on each other.
+  const [topResult, summariesResult, jobVersionResult] = await Promise.all([
+    getTopCandidatesForJob(supabase, { jobId: id, limit: MATCH_LIMIT }),
+    listMatchSummariesForJob(supabase, { jobId: id, limit: MATCH_LIMIT * 4 }),
+    getJobEmbeddingVersion(supabase, id),
+  ])
+  const matches = topResult.ok ? topResult.data : []
+  const summaries = summariesResult.ok ? summariesResult.data : []
+  const jobEmbeddingVersion = jobVersionResult.ok ? jobVersionResult.data : 0
+  const errored = !topResult.ok
+
+  // Hydrate the top-10 with candidate display fields + live embedding
+  // versions (needed for staleness comparison vs the cached summary's
+  // recorded versions). PRESERVE the vector order — neither helper
+  // guarantees ordering.
+  const candidateIds = matches.map((m) => m.id)
+  const [candidatesResult, candidateVersionsResult] = await Promise.all([
+    listCandidatesByIds(supabase, candidateIds),
+    listCandidateEmbeddingVersionsByIds(supabase, candidateIds),
+  ])
+  const candidatesById = new Map<string, CandidateByIdRow>()
+  if (candidatesResult.ok) {
+    for (const c of candidatesResult.data) {
+      candidatesById.set(c.id, c)
+    }
+  }
+  const candidateVersions = candidateVersionsResult.ok
+    ? candidateVersionsResult.data
+    : new Map<string, number>()
+
+  // Index summaries by candidate id. There may be more than one summary
+  // per (candidate, job) pair when embedding versions have changed; pick
+  // the freshest by created_at desc (already the listMatch order).
+  const summaryByCandidate = new Map<string, (typeof summaries)[number]>()
+  for (const s of summaries) {
+    if (s.candidate_id && !summaryByCandidate.has(s.candidate_id)) {
+      summaryByCandidate.set(s.candidate_id, s)
+    }
+  }
 
   return (
     <div className="space-y-6">
@@ -70,16 +119,34 @@ export default async function JobMatchesPage({
         <Alert>
           <AlertTitle>Not indexed yet</AlertTitle>
           <AlertDescription>
-            This job hasn&apos;t been embedded yet. Matches will appear
-            within ~30 seconds — refresh shortly.
+            This job hasn&apos;t been embedded yet. Matches will appear within
+            ~30 seconds — refresh shortly.
           </AlertDescription>
         </Alert>
       ) : (
-        <ul className="rounded-md border bg-card">
-          {matches.map((row) => (
-            <MatchRow key={row.id} row={row} />
-          ))}
-        </ul>
+        <div className="grid gap-4">
+          {matches.map((row) => {
+            const candidate = candidatesById.get(row.id) ?? {
+              id: row.id,
+              full_name: row.full_name,
+              current_role_title: row.current_role_title,
+              current_company: row.current_company,
+              location: row.location,
+              market_status: row.market_status,
+            }
+            const summary = summaryByCandidate.get(row.id) ?? null
+            return (
+              <MatchCard
+                key={row.id}
+                candidate={candidate}
+                summary={summary}
+                jobId={id}
+                candidateEmbeddingVersion={candidateVersions.get(row.id) ?? 0}
+                jobEmbeddingVersion={jobEmbeddingVersion}
+              />
+            )
+          })}
+        </div>
       )}
     </div>
   )
