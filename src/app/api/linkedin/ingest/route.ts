@@ -144,31 +144,15 @@ export async function POST(req: Request): Promise<Response> {
   }
   const organizationId = profileResult.data.organization_id
 
-  // 5. Advisory xact lock — collapse concurrent captures of the same URL.
-  //    Plan A.2 detail: `pg_try_advisory_xact_lock(hashtext(org_id::text),
-  //    hashtext(linkedin_url))`. Best-effort: if the RPC errors we proceed
-  //    without the lock (the dedup branch in step 6 is still correct;
-  //    advisory lock is a perf/race optimisation, not a correctness gate).
-  try {
-    const lockResult = await (supabase as unknown as {
-      rpc: (
-        fn: string,
-        args: Record<string, unknown>,
-      ) => Promise<{ data: boolean | null; error: unknown }>
-    }).rpc('pg_try_advisory_xact_lock', {
-      key1: hashStringToInt32(organizationId),
-      key2: hashStringToInt32(payload.linkedin_url),
-    })
-    if (lockResult.data === false) {
-      return jsonResponse(
-        { ok: false, error: 'concurrent_capture' },
-        { status: 429, cors: appendHeader(cors, 'retry-after', '2') },
-      )
-    }
-  } catch {
-    // Non-fatal: the lock is an optimisation. The upsert dedup branch still
-    // catches duplicates, just less efficiently under heavy concurrency.
-  }
+  // CR-01: the advisory-lock RPC was non-functional in production
+  // (`pg_try_advisory_xact_lock` is a pg_catalog builtin not exposed via
+  // PostgREST; even if exposed, separate HTTP calls run separate
+  // transactions so the xact-scope lock couldn't span the upsert). The race
+  // is bounded by user click-rate; the unique partial index on
+  // `(organization_id, source_detail) where source = 'linkedin'`
+  // (migration 20260520064500_phase3_candidates_linkedin_unique_source_detail)
+  // converts the concurrent-write race into a deterministic 23505 that the
+  // upsert helper's existing dedup branch already handles.
 
   // 6. Upsert
   const upsertResult = await upsertCandidateFromLinkedIn(supabase, {
@@ -233,28 +217,3 @@ export async function GET(req: Request): Promise<Response> {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-/**
- * Map an arbitrary string to a 32-bit signed int for use as a Postgres
- * advisory-lock key. `pg_try_advisory_xact_lock(bigint, bigint)` takes two
- * 32-bit-ish keys; this is a stable FNV-1a fold which is deterministic
- * across processes. NOT a security primitive — collisions just mean the
- * RPC may occasionally return false-positively (a different URL gets the
- * same key under the same org), in which case the request returns 429 and
- * the recruiter retries. Acceptable for a capture-collapsing optimisation.
- */
-function hashStringToInt32(s: string): number {
-  let h = 2166136261 // FNV offset basis (32-bit)
-  for (let i = 0; i < s.length; i++) {
-    h ^= s.charCodeAt(i)
-    h = Math.imul(h, 16777619)
-  }
-  // Wrap to signed 32-bit
-  return h | 0
-}
-
-function appendHeader(base: Headers, name: string, value: string): Headers {
-  const h = new Headers(base)
-  h.set(name, value)
-  return h
-}
