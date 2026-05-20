@@ -120,10 +120,15 @@ export async function listApplicationsForJob(
   supabase: SupabaseClient<Database>,
   jobId: string,
 ): Promise<DbResult<PipelineCardData[]>> {
+  // D3-17: shortlists and floats live in their own tabs (/jobs/[id]/shortlist,
+  // /candidates/[id]/floats, /floats) and MUST NOT appear in the per-job
+  // applications table or the pipeline kanban. This `.eq` is the invariant
+  // — the kanban-side `listApplicationsByStage` delegates to this helper.
   const { data, error } = await supabase
     .from('applications')
     .select(APP_WITH_CANDIDATE_SELECT)
     .eq('job_id', jobId)
+    .eq('application_type', 'standard')
     .order('stage_changed_at', { ascending: false })
 
   if (error) {
@@ -210,10 +215,14 @@ export async function listAllApplicationsByStage(
   const jobIds = (jobsData ?? []).map((j) => j.id)
   if (jobIds.length === 0) return { ok: true, data: emptyGrouping() }
 
+  // D3-17: shortlists and floats live in their own tabs and MUST NOT appear
+  // in the global pipeline kanban (/pipeline). This filter is the invariant.
+  // The applications_pipeline-filter test asserts the `.eq` is present.
   let appsQuery = supabase
     .from('applications')
     .select(APP_WITH_CANDIDATE_AND_JOB_SELECT)
     .in('job_id', jobIds)
+    .eq('application_type', 'standard')
 
   if (filters.ownerId) {
     appsQuery = appsQuery.eq('owner_user_id', filters.ownerId)

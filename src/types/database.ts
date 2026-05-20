@@ -199,7 +199,10 @@ export type Database = {
           decline_reason: Database["public"]["Enums"]["decline_reason"] | null
           declined_at: string | null
           id: string
-          job_id: string
+          // Phase 3 / Plan 03-03 / D3-18: float rows have job_id IS NULL.
+          // standard / shortlist / spec rows still require job_id (enforced
+          // by `applications_job_id_required_unless_float` CHECK).
+          job_id: string | null
           organization_id: string
           owner_user_id: string | null
           stage: Database["public"]["Enums"]["application_stage"]
@@ -215,7 +218,8 @@ export type Database = {
           decline_reason?: Database["public"]["Enums"]["decline_reason"] | null
           declined_at?: string | null
           id?: string
-          job_id: string
+          // Phase 3 / Plan 03-03 / D3-18: nullable for floats.
+          job_id?: string | null
           organization_id: string
           owner_user_id?: string | null
           stage?: Database["public"]["Enums"]["application_stage"]
@@ -1272,7 +1276,7 @@ export type Database = {
         | "placed"
         | "rejected"
         | "withdrawn"
-      application_type: "standard" | "spec" | "float"
+      application_type: "standard" | "spec" | "float" | "shortlist"
       audit_action: "view" | "create" | "update" | "delete" | "export"
       candidate_source:
         | "apply_form"
@@ -1457,7 +1461,7 @@ export const Constants = {
         "rejected",
         "withdrawn",
       ],
-      application_type: ["standard", "spec", "float"],
+      application_type: ["standard", "spec", "float", "shortlist"],
       audit_action: ["view", "create", "update", "delete", "export"],
       candidate_source: [
         "apply_form",

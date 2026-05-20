@@ -46,6 +46,9 @@ export default async function JobDetailPage({
             <Link href={`/jobs/${id}/matches`}>Top matches</Link>
           </Button>
           <Button asChild variant="outline">
+            <Link href={`/jobs/${id}/shortlist`}>Shortlist</Link>
+          </Button>
+          <Button asChild variant="outline">
             <Link href={`/jobs/${id}/pipeline`}>View pipeline</Link>
           </Button>
         </div>
