@@ -147,34 +147,69 @@ export const transcribeAndStructureSpec = inngest.createFunction(
           .eq('organization_id', organization_id)
       })
 
-      // Base64 round-trip — Inngest step outputs must be JSON-serializable;
-      // Buffer/Uint8Array are not. Same pattern as parse-cv.ts.
-      const audioBase64 = await step.run('download-audio', async () => {
-        const supabase = createServiceClient()
-        const { data: blob, error } = await supabase.storage
-          .from('spec-audio')
-          .download(storage_path)
-        if (error || !blob) {
-          throw new NonRetriableError(
-            `storage-download:${error?.message ?? 'no-data'}`,
-          )
-        }
-        const ab = await blob.arrayBuffer()
-        return Buffer.from(ab).toString('base64')
-      })
+      // WR-02 fix: collapse download → recompress → probe → transcribe into a
+      // single Inngest step so the audio buffer never crosses a step boundary.
+      // Inngest step outputs are JSON and capped at ~1 MB on free tier — a
+      // 100 MiB upload base64-encoded would exceed that by ~130×. We trade
+      // step-level retry granularity (which the previous code didn't really
+      // use — NonRetriableError on most failure paths) for correctness at
+      // realistic file sizes. Step output is just `{ transcript, durationSeconds }`.
+      const {
+        transcriptText: rawTranscript,
+        durationSeconds,
+        whisperCostPence,
+      } = await step.run(
+        'process-audio',
+        async (): Promise<{
+          transcriptText: string
+          durationSeconds: number
+          whisperCostPence: number
+        }> => {
+          const supabase = createServiceClient()
+          const { data: blob, error } = await supabase.storage
+            .from('spec-audio')
+            .download(storage_path)
+          if (error || !blob) {
+            throw new NonRetriableError(
+              `storage-download:${error?.message ?? 'no-data'}`,
+            )
+          }
+          const ab = await blob.arrayBuffer()
+          const rawAudio = Buffer.from(ab)
+          const compressed = await recompressToOpus(rawAudio, {
+            bitrate: '32k',
+            channels: 1,
+          })
+          const probed = await probeDurationSeconds(compressed)
+          if (probed <= 0) {
+            // Sentinel — outer code interprets a negative duration as a
+            // re-upload prompt and marks the draft failed. We can't call
+            // markSpecFailed from inside step.run because the failure path
+            // wants to happen on the orchestrator side (with retry semantics
+            // and audit). Surface the failure as -1 + empty transcript.
+            return { transcriptText: '', durationSeconds: -1, whisperCostPence: 0 }
+          }
+          if (probed > MAX_DURATION_SECONDS) {
+            return { transcriptText: '', durationSeconds: -2, whisperCostPence: 0 }
+          }
+          const transcript = await transcribe({
+            organizationId: organization_id,
+            userId: user_id,
+            purpose: 'spec_transcribe',
+            audioBuffer: compressed,
+            // After recompress the container is WebM/Opus — match it.
+            mimeType: 'audio/webm',
+            durationSeconds: probed,
+          })
+          return {
+            transcriptText: transcript.text ?? '',
+            durationSeconds: probed,
+            whisperCostPence: transcript.costPence,
+          }
+        },
+      )
 
-      const compressedBase64 = await step.run('ffmpeg-recompress', async () => {
-        const input = Buffer.from(audioBase64, 'base64')
-        const out = await recompressToOpus(input, { bitrate: '32k', channels: 1 })
-        return Buffer.from(out).toString('base64')
-      })
-
-      const durationSeconds = await step.run('ffmpeg-probe-duration', async () => {
-        const input = Buffer.from(compressedBase64, 'base64')
-        return await probeDurationSeconds(input)
-      })
-
-      if (durationSeconds <= 0) {
+      if (durationSeconds === -1) {
         await markSpecFailed({
           draftId: spec_draft_id,
           organizationId: organization_id,
@@ -182,7 +217,7 @@ export const transcribeAndStructureSpec = inngest.createFunction(
         })
         throw new NonRetriableError('spec-audio:no-duration')
       }
-      if (durationSeconds > MAX_DURATION_SECONDS) {
+      if (durationSeconds === -2) {
         await markSpecFailed({
           draftId: spec_draft_id,
           organizationId: organization_id,
@@ -192,20 +227,7 @@ export const transcribeAndStructureSpec = inngest.createFunction(
         throw new NonRetriableError('spec-audio:over-60-min')
       }
 
-      const transcript = await step.run('whisper-transcribe', async () => {
-        const input = Buffer.from(compressedBase64, 'base64')
-        return await transcribe({
-          organizationId: organization_id,
-          userId: user_id,
-          purpose: 'spec_transcribe',
-          audioBuffer: input,
-          // After recompress the container is WebM/Opus — match it.
-          mimeType: 'audio/webm',
-          durationSeconds,
-        })
-      })
-
-      const transcriptText = (transcript.text ?? '').slice(0, MAX_TRANSCRIPT_CHARS)
+      const transcriptText = rawTranscript.slice(0, MAX_TRANSCRIPT_CHARS)
 
       if (transcriptText.trim().length === 0) {
         await markSpecFailed({
@@ -247,7 +269,7 @@ export const transcribeAndStructureSpec = inngest.createFunction(
             transcript: transcriptText,
             structured_data: jdDraft,
             status: 'ready_for_review',
-            whisper_cost_pence: transcript.costPence,
+            whisper_cost_pence: whisperCostPence,
             sonnet_cost_pence: jdDraft.costPence,
             parse_error: null,
           })
