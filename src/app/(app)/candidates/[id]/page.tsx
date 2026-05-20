@@ -114,9 +114,14 @@ export default async function CandidateDetailPage({
         <Button variant="link" asChild className="text-muted-foreground -ml-3 h-auto p-0 text-xs font-normal">
           <Link href="/candidates">← All candidates</Link>
         </Button>
-        <Button variant="outline" size="sm" asChild>
-          <Link href={`/candidates/${id}/edit`}>Edit</Link>
-        </Button>
+        <div className="flex gap-2">
+          <Button variant="outline" size="sm" asChild>
+            <Link href={`/candidates/${id}/floats`}>Floats</Link>
+          </Button>
+          <Button variant="outline" size="sm" asChild>
+            <Link href={`/candidates/${id}/edit`}>Edit</Link>
+          </Button>
+        </div>
       </div>
 
       <CandidateDetailHeader candidate={candidate} />
