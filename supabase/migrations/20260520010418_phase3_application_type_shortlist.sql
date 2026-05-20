@@ -1,0 +1,24 @@
+-- Phase 3 / Plan 03-03 / Task C.1 — add the 'shortlist' value to the
+-- public.application_type enum.
+--
+-- Background: Phase 1 (commit 3f748f8 surfaced the alphabetical trigger-ordering
+-- bug for this very table) created `application_type` as
+-- ('standard', 'spec', 'float'). Phase 3 needs a fourth value 'shortlist' so
+-- the existing applications table can hold per-job working-set rows without a
+-- separate table (D3-16). 'spec' and 'float' already exist from Phase 1 —
+-- only 'shortlist' is genuinely new.
+--
+-- Postgres limitation: `alter type ... add value` cannot be combined in the
+-- same migration with DDL that REFERENCES the newly-added enum label in the
+-- same transaction (the new label is not visible to other statements until the
+-- enclosing transaction commits). To keep migrations clean and avoid silent
+-- failures the two follow-on migrations (`*_phase3_applications_nullable_job_id.sql`
+-- and `*_phase3_applications_same_org_guard_null_safe.sql`) live in their
+-- own files and run after this one.
+--
+-- HARD RULE 3 / trigger ordering: this migration changes NO triggers and adds
+-- no rows. The existing `applications_set_org` and
+-- `applications_verify_same_org_check` triggers continue to fire in
+-- alphabetical order (Phase 1 commit 3f748f8 fix).
+
+alter type public.application_type add value if not exists 'shortlist';

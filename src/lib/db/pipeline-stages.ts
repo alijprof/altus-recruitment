@@ -36,7 +36,13 @@ export type PipelineCardData = {
   stage: ApplicationStage
   stage_changed_at: string
   days_in_stage: number
-  job_id: string
+  // Phase 3 / Plan 03-03 / D3-18: nullable because the applications table now
+  // permits float rows with job_id IS NULL. The pipeline kanban filter
+  // (D3-17: `application_type='standard'`) means kanban consumers never
+  // receive a null job_id at runtime, but the per-candidate "Applications"
+  // list may include rows we want to keep typing defensively about
+  // (candidate-applications.tsx already branches on `app.job_id ? ... : ...`).
+  job_id: string | null
   job_title: string | null
   // Review fix H2: only meaningful when stage is 'rejected' or 'withdrawn'.
   // Consumed by ApplicationsList on /jobs/[id] to display "(reason)" beside
