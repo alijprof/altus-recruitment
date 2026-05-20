@@ -48,30 +48,6 @@ function buildClient(opts: {
         }
       },
       select: () => {
-        const chain: {
-          eq: (col: string, val: unknown) => typeof chain
-          order: (
-            col: string,
-            opts?: unknown,
-          ) => Promise<{ data: unknown[] | null; error: unknown }>
-        } = {
-          eq: (col, val) => {
-            filters.push({ method: 'eq', col, val })
-            return chain
-          },
-          order: (col, opts) => {
-            filters.push({ method: 'order', col, val: opts })
-            return Promise.resolve(
-              opts ? opts : null,
-            ) as unknown as Promise<{ data: unknown[] | null; error: unknown }>
-          },
-        }
-        // Replace order to actually resolve to the selectReturn.
-        chain.order = (col, opts) => {
-          filters.push({ method: 'order', col, val: opts })
-          return Promise.resolve(opts.selectReturn ?? opts.selectReturn ?? { data: [], error: null }) as unknown as Promise<{ data: unknown[] | null; error: unknown }>
-        }
-        // We need a closure over outer opts.
         const orderResolver = (
           col: string,
           orderOpts?: unknown,
@@ -79,7 +55,16 @@ function buildClient(opts: {
           filters.push({ method: 'order', col, val: orderOpts })
           return Promise.resolve(opts.selectReturn ?? { data: [], error: null })
         }
-        chain.order = orderResolver
+        const chain: {
+          eq: (col: string, val: unknown) => typeof chain
+          order: typeof orderResolver
+        } = {
+          eq: (col, val) => {
+            filters.push({ method: 'eq', col, val })
+            return chain
+          },
+          order: orderResolver,
+        }
         return chain
       },
     }
