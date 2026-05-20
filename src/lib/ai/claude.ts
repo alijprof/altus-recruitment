@@ -57,11 +57,16 @@ type RunArgs = {
 // Exported so wrappers in sibling files (src/lib/ai/match.ts, etc.) can run
 // the same retry + cost-logging path WITHOUT instantiating Anthropic. This
 // preserves the `grep -rn "new Anthropic" src/` = ONE line invariant.
+// WR-07: 3 retries total = 4 attempts (initial + 3). The previous `attempt <= 3`
+// guard allowed a 5th call which the docs/wrappers don't expect; the explicit
+// MAX_ATTEMPTS constant makes the contract unambiguous.
+const MAX_ATTEMPTS = 4 // 1 initial + 3 retries
+
 export async function runWithLogging(args: RunArgs): Promise<Anthropic.Message> {
   const started = Date.now()
   let attempt = 0
   let lastError: unknown
-  while (attempt <= 3) {
+  while (attempt < MAX_ATTEMPTS) {
     try {
       const response = await claudeClient.messages.create({
         model: args.model,
