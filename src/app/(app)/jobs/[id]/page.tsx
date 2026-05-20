@@ -4,9 +4,12 @@ import { ChevronLeft } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
 import { listApplicationsForJob } from '@/lib/db/applications'
+import { listJobAdsForJob } from '@/lib/db/job-ads'
 import { getJob } from '@/lib/db/jobs'
 import { createClient as createSupabaseClient } from '@/lib/supabase/server'
 
+import { AdPanelTrigger } from './ad-panel/ad-panel-trigger'
+import { SavedAdsList } from './ad-panel/saved-ads-list'
 import { AddCandidateForm } from './add-candidate-form'
 import { ApplicationsList } from './applications-list'
 import { JobDetailHeader } from './job-detail-header'
@@ -31,6 +34,10 @@ export default async function JobDetailPage({
   const applicationsResult = await listApplicationsForJob(supabase, id)
   const applications = applicationsResult.ok ? applicationsResult.data : []
 
+  // Plan 03-04 / Task D.3 — saved ads section (D3-33: multiple ads per job).
+  const adsResult = await listJobAdsForJob(supabase, id)
+  const ads = adsResult.ok ? adsResult.data : []
+
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -42,6 +49,7 @@ export default async function JobDetailPage({
           Jobs
         </Link>
         <div className="flex gap-2">
+          <AdPanelTrigger jobId={id} />
           <Button asChild variant="outline">
             <Link href={`/jobs/${id}/matches`}>Top matches</Link>
           </Button>
@@ -62,6 +70,11 @@ export default async function JobDetailPage({
           <AddCandidateForm jobId={id} />
         </div>
         <ApplicationsList rows={applications} />
+      </section>
+
+      <section className="space-y-4">
+        <h2 className="text-sm font-semibold">Saved ads</h2>
+        <SavedAdsList ads={ads} />
       </section>
     </div>
   )
