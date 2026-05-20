@@ -6,8 +6,10 @@ import {
   getRecentActivity,
   getStaleApplications,
 } from '@/lib/db/dashboard'
+import { getDormantClients } from '@/lib/db/dormant-clients'
 import { createClient } from '@/lib/supabase/server'
 
+import { DormantClientsWidget } from './_dashboard/dormant-clients-widget'
 import { FollowUpWidget } from './_dashboard/follow-up-widget'
 import { RecentActivityFeed } from './_dashboard/recent-activity-feed'
 import { StaleApplicationsWidget } from './_dashboard/stale-applications-widget'
@@ -21,12 +23,14 @@ import { StaleApplicationsWidget } from './_dashboard/stale-applications-widget'
 export default async function DashboardPage() {
   const supabase = await createClient()
 
-  const [metrics, activityResult, staleResult, followUpResult] = await Promise.all([
-    getDashboardMetrics(supabase),
-    getRecentActivity(supabase, 20),
-    getStaleApplications(supabase, 20),
-    getFollowUpCandidates(supabase, 10),
-  ])
+  const [metrics, activityResult, staleResult, followUpResult, dormantResult] =
+    await Promise.all([
+      getDashboardMetrics(supabase),
+      getRecentActivity(supabase, 20),
+      getStaleApplications(supabase, 20),
+      getFollowUpCandidates(supabase, 10),
+      getDormantClients(supabase),
+    ])
 
   const isEmpty = metrics.candidates === 0 && metrics.openJobs === 0
 
@@ -78,6 +82,7 @@ export default async function DashboardPage() {
         <div className="space-y-6">
           <StaleApplicationsWidget items={staleResult.ok ? staleResult.data : []} />
           <FollowUpWidget items={followUpResult.ok ? followUpResult.data : []} />
+          <DormantClientsWidget items={dormantResult.ok ? dormantResult.data : []} />
         </div>
       </section>
     </div>
