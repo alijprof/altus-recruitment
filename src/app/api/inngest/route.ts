@@ -5,6 +5,7 @@ import { bootstrapVectorIndex } from '@/lib/inngest/functions/bootstrap-vector-i
 import { cleanupStaleSummaries } from '@/lib/inngest/functions/cleanup-stale-summaries'
 import { createJobFromSpec } from '@/lib/inngest/functions/create-job-from-spec'
 import { createOutlookSubscription } from '@/lib/inngest/functions/create-outlook-subscription'
+import { draftOutreachEmailFn } from '@/lib/inngest/functions/draft-outreach-email'
 import { embedBatch } from '@/lib/inngest/functions/embed-batch'
 import { embedCandidateFromLinkedIn } from '@/lib/inngest/functions/embed-candidate-from-linkedin'
 import { embedJobOnJDChange } from '@/lib/inngest/functions/embed-job-on-jd-change'
@@ -39,5 +40,7 @@ export const { GET, POST, PUT } = serve({
     createJobFromSpec,
     specAudioRetentionSweep,
     specDraftCleanupSweep,
+    // Phase 3 — dormant outreach (Plan 03-05).
+    draftOutreachEmailFn,
   ],
 })

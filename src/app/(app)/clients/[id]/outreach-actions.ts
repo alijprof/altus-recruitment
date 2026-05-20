@@ -1,0 +1,335 @@
+'use server'
+
+import * as Sentry from '@sentry/nextjs'
+import { revalidatePath } from 'next/cache'
+import { z } from 'zod'
+
+import { sendMail } from '@/lib/integrations/outlook'
+import { inngest } from '@/lib/inngest/client'
+import { createClient as createSupabaseClient } from '@/lib/supabase/server'
+import { createServiceClient } from '@/lib/supabase/service'
+
+// ---------------------------------------------------------------------------
+// Plan 03-05 / Task E.2 — REPEAT-01 + D3-20 + D3-21.
+//
+// Two server actions:
+//   1. requestOutreachDraftAction({ clientId })
+//        Fires `outreach-draft/requested` Inngest event. Returns immediately
+//        with { ok: true, draftPending: true }. The UI polls
+//        getLatestOutreachDraftAction until the draft activity row appears.
+//   2. sendOutreachAction({ clientId, subject, body_html })
+//        Synchronous (recruiter is at the keyboard). Resolves the primary
+//        contact email, calls outlook.sendMail. On needs_consent surfaces
+//        the consentUrl so the modal can render a banner link. On success
+//        flips the prior email_draft activity row to kind='email' and
+//        stamps metadata.sent_at = now() (D3-21).
+//
+// Pattern per PATTERNS §5 (mirror jobs/[id]/actions.ts):
+//   - Zod safeParse
+//   - await createClient + auth.getUser defensive check
+//   - call DB helper or integration
+//   - surface generic error string
+//   - revalidatePath for every affected surface
+//   - discriminated union return
+// ---------------------------------------------------------------------------
+
+const idSchema = z.string().uuid()
+
+// ---------------------------------------------------------------------------
+// 1. Request a Sonnet draft (fire-and-forget)
+// ---------------------------------------------------------------------------
+
+const requestDraftSchema = z.object({ clientId: idSchema })
+
+export type RequestOutreachDraftResult =
+  | { ok: true; draftPending: true }
+  | { ok: false; error: string }
+
+export async function requestOutreachDraftAction(
+  rawInput: unknown,
+): Promise<RequestOutreachDraftResult> {
+  const parsed = requestDraftSchema.safeParse(rawInput)
+  if (!parsed.success) {
+    return { ok: false, error: 'Invalid client id.' }
+  }
+
+  const supabase = await createSupabaseClient()
+  const {
+    data: { user },
+  } = await supabase.auth.getUser()
+  if (!user) {
+    return { ok: false, error: 'Not signed in.' }
+  }
+
+  // Resolve the recruiter's organization_id from the users row. The Inngest
+  // function uses service-role and needs organization_id passed explicitly
+  // (HARD RULE 4 tenant boundary).
+  const { data: profile, error: profileErr } = await supabase
+    .from('users')
+    .select('organization_id')
+    .eq('id', user.id)
+    .maybeSingle()
+  if (profileErr || !profile) {
+    Sentry.captureException(profileErr, {
+      tags: {
+        phase: 'p3',
+        layer: 'action',
+        helper: 'requestOutreachDraftAction',
+        subop: 'resolve-profile',
+      },
+    })
+    return { ok: false, error: 'Could not resolve your organization.' }
+  }
+
+  try {
+    await inngest.send({
+      name: 'outreach-draft/requested',
+      data: {
+        organization_id: profile.organization_id,
+        company_id: parsed.data.clientId,
+        user_id: user.id,
+      },
+    })
+  } catch (err) {
+    const name = err instanceof Error ? err.name : 'UnknownError'
+    Sentry.captureException(new Error(`${name}: outreach-draft/requested dispatch failed`), {
+      tags: {
+        phase: 'p3',
+        layer: 'action',
+        helper: 'requestOutreachDraftAction',
+        subop: 'inngest.send',
+      },
+    })
+    return { ok: false, error: 'Could not start the draft. Please try again.' }
+  }
+
+  return { ok: true, draftPending: true }
+}
+
+// ---------------------------------------------------------------------------
+// 2. Get the latest email_draft activity for a client (polling target)
+// ---------------------------------------------------------------------------
+
+const getDraftSchema = z.object({ clientId: idSchema })
+
+export type LatestOutreachDraft = {
+  activity_id: string
+  subject: string
+  body_html: string
+  created_at: string
+}
+
+export type GetLatestOutreachDraftResult =
+  | { ok: true; data: LatestOutreachDraft | null }
+  | { ok: false; error: string }
+
+export async function getLatestOutreachDraftAction(
+  rawInput: unknown,
+): Promise<GetLatestOutreachDraftResult> {
+  const parsed = getDraftSchema.safeParse(rawInput)
+  if (!parsed.success) {
+    return { ok: false, error: 'Invalid client id.' }
+  }
+
+  const supabase = await createSupabaseClient()
+  const {
+    data: { user },
+  } = await supabase.auth.getUser()
+  if (!user) {
+    return { ok: false, error: 'Not signed in.' }
+  }
+
+  // reason: 'email_draft' enum value is added in this plan's migration; the
+  // generated Database types may not include it yet — cast at the boundary.
+  const filterKind = 'email_draft' as unknown as 'email'
+
+  const { data, error } = await supabase
+    .from('activities')
+    .select('id, occurred_at, metadata')
+    .eq('entity_type', 'company')
+    .eq('entity_id', parsed.data.clientId)
+    .eq('kind', filterKind)
+    .order('occurred_at', { ascending: false })
+    .limit(1)
+    .maybeSingle()
+
+  if (error) {
+    Sentry.captureException(error, {
+      tags: {
+        phase: 'p3',
+        layer: 'action',
+        helper: 'getLatestOutreachDraftAction',
+      },
+    })
+    return { ok: false, error: 'Could not fetch the draft.' }
+  }
+
+  if (!data) {
+    return { ok: true, data: null }
+  }
+
+  const meta = (data.metadata ?? {}) as { subject?: string; body_html?: string }
+  if (typeof meta.subject !== 'string' || typeof meta.body_html !== 'string') {
+    return { ok: true, data: null }
+  }
+
+  return {
+    ok: true,
+    data: {
+      activity_id: data.id,
+      subject: meta.subject,
+      body_html: meta.body_html,
+      created_at: data.occurred_at,
+    },
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 3. Send the (recruiter-edited) draft via Outlook + flip the activity row
+// ---------------------------------------------------------------------------
+
+const sendSchema = z.object({
+  clientId: idSchema,
+  subject: z.string().trim().min(1).max(200),
+  body_html: z.string().trim().min(1).max(50_000),
+})
+
+export type SendOutreachResult =
+  | { ok: true }
+  | { ok: false; error: 'reconnect_required'; consentUrl: string }
+  | { ok: false; error: string }
+
+export async function sendOutreachAction(rawInput: unknown): Promise<SendOutreachResult> {
+  const parsed = sendSchema.safeParse(rawInput)
+  if (!parsed.success) {
+    return { ok: false, error: 'Invalid email content.' }
+  }
+  const { clientId, subject, body_html } = parsed.data
+
+  const supabase = await createSupabaseClient()
+  const {
+    data: { user },
+  } = await supabase.auth.getUser()
+  if (!user) {
+    return { ok: false, error: 'Not signed in.' }
+  }
+
+  // Resolve recipient email — first contact on the company with a non-null
+  // email. The /clients/[id] page already enforces contacts must exist for
+  // dormant outreach to be meaningful; we surface a friendly error if the
+  // recruiter hasn't added one yet.
+  const { data: contact, error: contactErr } = await supabase
+    .from('contacts')
+    .select('id, email, full_name')
+    .eq('company_id', clientId)
+    .not('email', 'is', null)
+    .order('created_at', { ascending: true })
+    .limit(1)
+    .maybeSingle()
+  if (contactErr) {
+    Sentry.captureException(contactErr, {
+      tags: { phase: 'p3', layer: 'action', helper: 'sendOutreachAction', subop: 'contact' },
+    })
+    return { ok: false, error: 'Could not resolve a contact email for this client.' }
+  }
+  if (!contact?.email) {
+    return {
+      ok: false,
+      error: 'No contact with an email on file for this client. Add a contact first.',
+    }
+  }
+
+  // Send via Microsoft Graph. The helper handles the needs_consent branch
+  // (cached scope missing) and the Pitfall 9 branch (Graph 403 mid-session).
+  const sendResult = await sendMail(supabase, {
+    userId: user.id,
+    to: contact.email,
+    subject,
+    html: body_html,
+  })
+
+  if (!sendResult.ok) {
+    if (sendResult.code === 'needs_consent') {
+      return { ok: false, error: 'reconnect_required', consentUrl: sendResult.consentUrl }
+    }
+    if (sendResult.code === 'not_connected') {
+      return { ok: false, error: 'Connect Outlook first in Settings before sending.' }
+    }
+    return { ok: false, error: 'Could not send the email. Please try again.' }
+  }
+
+  // Flip the most recent email_draft activity row to kind='email' and stamp
+  // metadata.sent_at = now(). Service-role write because we have a stable
+  // user-scoped path and need to update metadata atomically — RLS would
+  // permit it as the recruiter, but the helper composes the metadata patch
+  // explicitly so we keep it simple.
+  try {
+    const service = createServiceClient()
+    const filterKind = 'email_draft' as unknown as 'email'
+    const { data: existing } = await service
+      .from('activities')
+      .select('id, metadata')
+      .eq('entity_type', 'company')
+      .eq('entity_id', clientId)
+      .eq('kind', filterKind)
+      .order('occurred_at', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+    if (existing?.id) {
+      const prevMeta = (existing.metadata ?? {}) as Record<string, unknown>
+      await service
+        .from('activities')
+        .update({
+          // 'email' is part of the enum from Phase 1 — no cast needed.
+          kind: 'email',
+          body: subject,
+          metadata: {
+            ...prevMeta,
+            subject,
+            body_html,
+            sent_at: new Date().toISOString(),
+            sent_to: contact.email,
+          },
+        })
+        .eq('id', existing.id)
+    } else {
+      // No prior draft row — create a fresh email activity so the timeline
+      // reflects the send. This branch only triggers if the recruiter sent
+      // before the draft row landed (unlikely but defensive).
+      const {
+        data: { user: u },
+      } = await supabase.auth.getUser()
+      const { data: profile } = await supabase
+        .from('users')
+        .select('organization_id')
+        .eq('id', u?.id ?? '')
+        .maybeSingle()
+      if (profile) {
+        await service.from('activities').insert({
+          organization_id: profile.organization_id,
+          kind: 'email',
+          entity_type: 'company',
+          entity_id: clientId,
+          body: subject,
+          actor_user_id: u?.id ?? null,
+          metadata: { subject, body_html, sent_at: new Date().toISOString(), sent_to: contact.email },
+        })
+      }
+    }
+  } catch (err) {
+    const name = err instanceof Error ? err.name : 'UnknownError'
+    Sentry.captureException(new Error(`${name}: post-send activity update failed`), {
+      tags: {
+        phase: 'p3',
+        layer: 'action',
+        helper: 'sendOutreachAction',
+        subop: 'activity-update',
+      },
+    })
+    // Don't block — the email did send. The activity log is best-effort.
+  }
+
+  revalidatePath('/')
+  revalidatePath(`/clients/${clientId}`)
+  return { ok: true }
+}

@@ -41,10 +41,23 @@ import type { Database } from '@/types/database'
 // 90 days of disuse. This is the most important invariant in this file.
 // ---------------------------------------------------------------------------
 
-// Scopes locked to Phase 2 D2-15 (Outlook variant). `offline_access` is
-// what gets us a refresh token; `User.Read` is mandatory for `/me` (used
+// Scopes locked to Phase 2 D2-15 (Outlook variant) PLUS Phase 3 D3-20:
+// `Mail.Send` is requested via Microsoft incremental consent the first time
+// the recruiter clicks "Send check-in" — NOT at deploy time. `offline_access`
+// is what gets us a refresh token; `User.Read` is mandatory for `/me` (used
 // during OAuth callback to derive the user's email + Entra tenant + oid).
-export const OUTLOOK_SCOPES = ['offline_access', 'Mail.Read', 'User.Read'] as const
+//
+// Adding `Mail.Send` here means the standard OAuth `getAuthorizationUrl`
+// also asks for it on a fresh connect. Recruiters who connected under
+// Phase 2 (Mail.Read + User.Read + offline_access only) will hit the
+// `needs_consent` branch on first send and be redirected through
+// `buildIncrementalConsentUrl` to grant the new scope.
+export const OUTLOOK_SCOPES = [
+  'offline_access',
+  'Mail.Read',
+  'Mail.Send',
+  'User.Read',
+] as const
 
 // Graph mail subscriptions cap at 4230 minutes (~70.5h). Stay 30 min
 // under the cap so a delayed-by-Inngest renewal still lands in-window.
@@ -571,4 +584,186 @@ export function deriveClientState(purpose: string): string {
   }
   const nonce = randomBytes(16).toString('hex')
   return createHmac('sha256', secret).update(`${purpose}:${nonce}`).digest('hex')
+}
+
+// ---------------------------------------------------------------------------
+// Phase 3 / Plan 03-05 — Mail.Send incremental consent + sendMail.
+//
+// D3-20: NO blanket consent at deploy. NO auto-send. The flow is:
+//   1. UI calls `sendMail({ supabase, userId, to, subject, html })`.
+//   2. If the user's outlook_credentials row lacks Mail.Send, return
+//      `{ ok: false, code: 'needs_consent', consentUrl }`. UI renders an
+//      inline banner with a link to the consent URL.
+//   3. Recruiter clicks consent URL → Microsoft re-prompts for the expanded
+//      scope set → returns to /api/outlook/callback → existing OAuth flow
+//      writes the new scope into outlook_credentials.scopes.
+//   4. Recruiter retries "Send" → scope present → Graph `/me/sendMail` is
+//      invoked. saveToSentItems:true so the recruiter sees the send in
+//      their own Outlook Sent folder.
+//
+// RESEARCH §Pitfall 9: Graph can return 403 + AADSTS65001 ("insufficient
+// claims") mid-session if the user revokes consent in Microsoft's account
+// portal after the cached scope check passes. Treat this identically to a
+// missing-scope cred row — surface as `needs_consent` so the UI banner
+// shows a re-consent link instead of a generic "send failed" error.
+// ---------------------------------------------------------------------------
+
+export type SendMailArgs = {
+  userId: string
+  to: string
+  subject: string
+  html: string
+}
+
+export type SendMailResult =
+  | { ok: true }
+  | { ok: false; code: 'not_connected' }
+  | { ok: false; code: 'needs_consent'; consentUrl: string }
+  | { ok: false; code: 'send_failed' }
+
+/**
+ * Predicate — checks whether a cached outlook_credentials row carries the
+ * `Mail.Send` scope. Pure; safe to call from any layer.
+ */
+export function hasMailSendScope(creds: { scopes: string[] | null | undefined }): boolean {
+  return Array.isArray(creds.scopes) && creds.scopes.includes('Mail.Send')
+}
+
+/**
+ * Build the Microsoft incremental-consent URL for `Mail.Send`. We hit the
+ * standard authorize endpoint with `prompt=consent` so Microsoft re-prompts
+ * even though the user previously consented to a subset of OUTLOOK_SCOPES.
+ *
+ * Returns an absolute HTTPS URL — the UI banner anchors to it directly.
+ * The recruiter is redirected to /api/outlook/callback by Microsoft after
+ * accepting; the existing OAuth callback re-reads the (now-expanded) scope
+ * set and persists it.
+ */
+export function buildIncrementalConsentUrl(): string {
+  const tenantId = env.OUTLOOK_TENANT_ID
+  const clientId = env.OUTLOOK_CLIENT_ID
+  const redirectUri = env.OUTLOOK_REDIRECT_URI
+  if (!tenantId || !clientId || !redirectUri) {
+    throw new Error(
+      'outlook: missing required env for incremental consent (tenant/client/redirect)',
+    )
+  }
+  const params = new URLSearchParams({
+    client_id: clientId,
+    response_type: 'code',
+    redirect_uri: redirectUri,
+    response_mode: 'query',
+    scope: OUTLOOK_SCOPES.join(' '),
+    // `prompt=consent` forces Microsoft to re-prompt for consent even when
+    // the user previously consented to a subset of these scopes. Without
+    // this, Microsoft silently reuses the prior consent and the new scope
+    // is never granted (RESEARCH §Pitfall 9).
+    prompt: 'consent',
+  })
+  return `https://login.microsoftonline.com/${tenantId}/oauth2/v2.0/authorize?${params.toString()}`
+}
+
+// ---------------------------------------------------------------------------
+// Test override hooks. The production sendMail path calls
+// `getValidAccessToken` (which transitively pulls in MSAL + encryption).
+// Tests need to bypass that without rewiring half the module — we expose
+// a single in-module override that the test setUp/tearDown clears.
+//
+// Production callers MUST NOT use this. Marked __ prefixed to discourage
+// accidental import.
+// ---------------------------------------------------------------------------
+type MailSendOverrides = {
+  getValidAccessToken?: (
+    supabase: SupabaseClient<Database>,
+    userId: string,
+  ) => Promise<string>
+}
+
+let mailSendOverrides: MailSendOverrides | null = null
+
+export function __setMailSendTestOverrides(overrides: MailSendOverrides | null): void {
+  mailSendOverrides = overrides
+}
+
+/**
+ * Send a plain HTML email as the connected user via Microsoft Graph
+ * `/me/sendMail`. Requires the `Mail.Send` scope; if missing, returns
+ * `needs_consent` with a consent URL so the UI can prompt the recruiter.
+ *
+ * NEVER auto-sends — only called from `sendOutreachAction` which itself
+ * only runs in response to an explicit recruiter click on the
+ * "Send via Outlook" button (D3-20 + HARD RULE 8).
+ */
+export async function sendMail(
+  supabase: SupabaseClient<Database>,
+  args: SendMailArgs,
+): Promise<SendMailResult> {
+  const credResult = await getOutlookCredentials(supabase, args.userId)
+  if (!credResult.ok || !credResult.data) {
+    return { ok: false, code: 'not_connected' }
+  }
+  const cred = credResult.data
+  if (cred.revoked_at) {
+    return { ok: false, code: 'not_connected' }
+  }
+  if (!hasMailSendScope({ scopes: cred.scopes })) {
+    return {
+      ok: false,
+      code: 'needs_consent',
+      consentUrl: buildIncrementalConsentUrl(),
+    }
+  }
+
+  // Decrypt + refresh via MSAL (or the test override).
+  let accessToken: string
+  try {
+    const resolve = mailSendOverrides?.getValidAccessToken ?? getValidAccessToken
+    accessToken = await resolve(supabase, args.userId)
+  } catch (err) {
+    captureScrubbed('sendMail.getValidAccessToken', err)
+    if (err instanceof OutlookReconnectRequiredError) {
+      return {
+        ok: false,
+        code: 'needs_consent',
+        consentUrl: buildIncrementalConsentUrl(),
+      }
+    }
+    return { ok: false, code: 'send_failed' }
+  }
+
+  try {
+    const graph = getGraph(accessToken)
+    await graph.api('/me/sendMail').post({
+      message: {
+        subject: args.subject,
+        body: { contentType: 'HTML', content: args.html },
+        toRecipients: [{ emailAddress: { address: args.to } }],
+      },
+      // RESEARCH §M5: persist to Sent so the recruiter sees the email in
+      // their own Outlook history — important for relationship continuity.
+      saveToSentItems: true,
+    })
+    return { ok: true }
+  } catch (err) {
+    const e = err as MicrosoftErrorLike & { code?: string; message?: string }
+    const message = String(e?.message ?? '')
+    // Pitfall 9: Graph reports an expired / partially-consented session as
+    // 403 + AADSTS65001 ("insufficient_claims" / "insufficient_scope"). The
+    // recruiter must re-consent before another send can succeed — render
+    // the same banner as the cached-scope-missing branch above.
+    if (
+      e?.statusCode === 403 ||
+      e?.code === 'AADSTS65001' ||
+      /insufficient_scope|insufficient_claims/i.test(message)
+    ) {
+      captureScrubbed('sendMail.needsConsent', err)
+      return {
+        ok: false,
+        code: 'needs_consent',
+        consentUrl: buildIncrementalConsentUrl(),
+      }
+    }
+    captureScrubbed('sendMail', err)
+    return { ok: false, code: 'send_failed' }
+  }
 }

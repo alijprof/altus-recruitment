@@ -8,6 +8,7 @@ import { createClient } from '@/lib/supabase/server'
 
 import { ClientCards } from './client-cards'
 import { ClientTable } from './client-table'
+import { DormantBadge } from './dormant-badge'
 import { SearchInput } from './search-input'
 
 const VALID_SORTS: ClientListSort[] = ['name', 'last_contacted_at', 'similarity']
@@ -94,7 +95,10 @@ export default async function ClientsPage({
   return (
     <div className="space-y-6">
       <header className="flex flex-wrap items-center justify-between gap-3">
-        <h1 className="text-2xl font-semibold tracking-tight">Clients</h1>
+        <div className="flex items-center gap-3">
+          <h1 className="text-2xl font-semibold tracking-tight">Clients</h1>
+          <DormantBadge />
+        </div>
         <Button asChild>
           <Link href="/clients/new">
             <Plus className="mr-1 size-4" />
