@@ -59,10 +59,12 @@ export function AddToShortlistDialog({ jobId }: AddToShortlistDialogProps) {
   useEffect(() => {
     const q = debouncedQuery.trim()
     if (q.length < 2) {
-      setSearch({ kind: 'idle' })
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- transitioning back to idle on cleared query
+      setSearch((prev) => (prev.kind === 'idle' ? prev : { kind: 'idle' }))
       return
     }
     const reqId = ++reqRef.current
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- request lifecycle requires loading marker before async fetch
     setSearch({ kind: 'loading', q })
     void searchCandidatesAction(q).then((res) => {
       if (reqRef.current !== reqId) return
