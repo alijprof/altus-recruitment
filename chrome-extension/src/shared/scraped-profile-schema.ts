@@ -21,6 +21,11 @@
 
 import { z } from 'zod'
 
+// CR-02: mirror the popup's LINKEDIN_PROFILE_RE here so the shared schema
+// rejects non-LinkedIn URLs at the boundary. Server-side schema enforces
+// the same pattern as a defence-in-depth gate.
+const LINKEDIN_PROFILE_RE = /^https:\/\/(www\.)?linkedin\.com\/in\/[\w\-%.]+\/?(\?.*)?$/i
+
 export const WorkExperienceSchema = z.object({
   title: z.string().min(1).max(300),
   company: z.string().max(200).nullable(),
@@ -44,7 +49,11 @@ export const ScrapedProfilePayloadSchema = z.object({
   work_experience: z.array(WorkExperienceSchema).max(30),
   education: z.array(EducationSchema).max(15),
   skills: z.array(z.string().min(1).max(100)).max(100),
-  linkedin_url: z.string().url().max(500),
+  linkedin_url: z
+    .string()
+    .url()
+    .max(500)
+    .regex(LINKEDIN_PROFILE_RE, 'linkedin_url must be a https://www.linkedin.com/in/... profile URL'),
   // 0..1 — the extension's own confidence read; the server uses it for
   // telemetry but doesn't gate on it (low-confidence captures still land).
   capture_confidence: z.number().min(0).max(1),

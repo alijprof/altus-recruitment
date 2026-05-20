@@ -23,6 +23,12 @@ export const LinkedInEducationSchema = z.object({
   dates: z.string().max(100).nullable(),
 })
 
+// CR-02 fix: the popup's LINKEDIN_PROFILE_RE is the contract. Mirror it on
+// the server so a compromised token (or curl with a stolen session) cannot
+// POST `linkedin_url: "https://evil.example.com/..."` and poison the
+// source-attribution dedup channel.
+const LINKEDIN_PROFILE_RE = /^https:\/\/(www\.)?linkedin\.com\/in\/[\w\-%.]+\/?(\?.*)?$/i
+
 export const LinkedInIngestSchema = z.object({
   name: z.string().min(1).max(200),
   headline: z.string().max(300).nullable(),
@@ -33,8 +39,14 @@ export const LinkedInIngestSchema = z.object({
   work_experience: z.array(LinkedInWorkExperienceSchema).max(30),
   education: z.array(LinkedInEducationSchema).max(15),
   skills: z.array(z.string().min(1).max(100)).max(100),
-  // url() is strict; min/max constrain payload size.
-  linkedin_url: z.string().url().max(500),
+  // Must be a LinkedIn `/in/` profile URL — server-side gate matching the
+  // extension popup's check. Prevents poisoning of `candidates.source_detail`
+  // (the dedup key) with arbitrary URLs.
+  linkedin_url: z
+    .string()
+    .url()
+    .max(500)
+    .regex(LINKEDIN_PROFILE_RE, 'linkedin_url must be a https://www.linkedin.com/in/... profile URL'),
   // Optional — extension may omit on partial scrapes; defaults to 0.
   capture_confidence: z.number().min(0).max(1).optional(),
   // Optional: extension may include an email scraped from the contact
