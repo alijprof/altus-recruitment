@@ -49,6 +49,7 @@ next-env.d.ts
 supabase/.branches
 supabase/.temp
 
-# Chrome extension build output (Phase 3 Plan 01)
+# Chrome extension build output + workspace deps (Phase 3 Plan 01)
 chrome-extension/dist/
+chrome-extension/node_modules/
 
