@@ -20,6 +20,7 @@ import {
 } from '@/components/ui/table'
 import { getProfile } from '@/lib/db/profiles'
 import { env } from '@/lib/env'
+import { formatPence } from '@/lib/format'
 import { createClient } from '@/lib/supabase/server'
 
 // ---------------------------------------------------------------------------
@@ -51,11 +52,6 @@ type AiUsageRow = {
   cost_pence: number | null
   latency_ms: number | null
   created_at: string
-}
-
-function formatPence(p: number): string {
-  if (p < 100) return `${p}p`
-  return `£${(p / 100).toFixed(2)}`
 }
 
 export default async function UsagePage() {
