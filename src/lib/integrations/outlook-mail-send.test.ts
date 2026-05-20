@@ -160,10 +160,11 @@ describe('sendMail (REPEAT-01 + D3-20)', () => {
     })
 
     expect(result.ok).toBe(false)
-    if (!result.ok) {
-      expect(result.code).toBe('needs_consent')
+    if (!result.ok && result.code === 'needs_consent') {
       expect(result.consentUrl).toMatch(/^https:\/\/login\.microsoftonline\.com\//)
-      expect(decodeURIComponent(result.consentUrl ?? '')).toContain('Mail.Send')
+      expect(decodeURIComponent(result.consentUrl)).toContain('Mail.Send')
+    } else {
+      throw new Error(`expected needs_consent, got ${JSON.stringify(result)}`)
     }
     // Never call Graph when the scope is missing — D3-20 invariant.
     expect(apiPostMock).not.toHaveBeenCalled()
@@ -229,9 +230,10 @@ describe('sendMail (REPEAT-01 + D3-20)', () => {
     })
 
     expect(result.ok).toBe(false)
-    if (!result.ok) {
-      expect(result.code).toBe('needs_consent')
-      expect(decodeURIComponent(result.consentUrl ?? '')).toContain('Mail.Send')
+    if (!result.ok && result.code === 'needs_consent') {
+      expect(decodeURIComponent(result.consentUrl)).toContain('Mail.Send')
+    } else {
+      throw new Error(`expected needs_consent, got ${JSON.stringify(result)}`)
     }
   })
 
