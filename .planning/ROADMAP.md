@@ -11,7 +11,7 @@
 
 - [x] **Phase 1: Internal ATS** - Anchor customer can manage candidates, CVs, clients, jobs, and pipeline internally
 - [ ] **Phase 2: Search, Match & Intake** - Differentiating AI capability live: semantic search, match scoring, public apply form, Outlook integration
-- [ ] **Phase 3: LinkedIn, Spec Workflow & Shortlists** - Competitive with Firefish core for perm recruitment; ahead on AI-assisted job creation
+- [x] **Phase 3: LinkedIn, Spec Workflow & Shortlists** - Competitive with Firefish core for perm recruitment; ahead on AI-assisted job creation (completed 2026-05-20)
 - [ ] **Phase 4: Voice, Marketing & Reporting** - Complete recruiter workflow with buyer-value dashboards; ready for anchor customer demo to acquirer
 - [ ] **Phase 5: SaaS Shell** - Self-service signup, Stripe billing, per-org branding; ready for paying customer #2
 
@@ -71,7 +71,7 @@
 4. Recruiter can build a per-job shortlist (working set separate from formal applications), float a candidate speculatively without a specific job, and see which clients have gone silent with a one-click outreach hook
 5. Source attribution report shows placements per source so the recruiter can see which channels produce the best ROI
 
-**Plans:** 6/7 plans executed
+**Plans:** 7/7 plans complete
 
 Plans:
 - [x] 03-00-hardening-PLAN.md — env wiring (OPENAI_API_KEY), ffmpeg probe, Sentry tag conventions, Vitest scaffolds
@@ -80,7 +80,7 @@ Plans:
 - [x] 03-03-shortlists-floats-PLAN.md — `shortlist` enum + nullable `job_id` + per-job shortlist tab + candidate floats (SHORT-01, SHORT-02)
 - [x] 03-04-job-ads-inclusivity-PLAN.md — `job_ads` table + Sonnet ad generation + inclusivity rubric (AD-01)
 - [x] 03-05-dormant-clients-outreach-PLAN.md — dormant clients widget + Sonnet outreach draft + Mail.Send incremental consent (REPEAT-01)
-- [ ] 03-06-source-attribution-PLAN.md — `source_attribution_summary` RPC + `/reports/source-attribution` page (REPEAT-02)
+- [x] 03-06-source-attribution-PLAN.md — `source_attribution_summary` RPC + `/reports/source-attribution` page (REPEAT-02)
 
 **Wave structure:**
 - Wave 0: 03-00 (hardening)
@@ -136,7 +136,7 @@ Plans:
 |-------|----------------|--------|-----------|
 | 1. Internal ATS | 0/7 | In progress | - |
 | 2. Search, Match & Intake | 0/0 | Not started | - |
-| 3. LinkedIn, Spec Workflow & Shortlists | 6/7 | In Progress|  |
+| 3. LinkedIn, Spec Workflow & Shortlists | 7/7 | Complete   | 2026-05-20 |
 | 4. Voice, Marketing & Reporting | 0/0 | Not started | - |
 | 5. SaaS Shell | 0/0 | Not started | - |
 
