@@ -30,16 +30,20 @@ reason: "Requires deployed Vercel preview + Supabase migrations applied"
 ### 2. LinkedIn capture creates candidate with embedding
 expected: |
   Recruiter installs the unpacked `chrome-extension/` via `chrome://extensions` (developer mode), navigates to a LinkedIn profile, clicks the extension icon, clicks "Capture this profile". Within ~10 seconds, a new candidate appears in `/candidates` with `source='linkedin'`, the LinkedIn URL stored as `source_detail`, and a populated embedding (visible because the candidate is findable via semantic search from Phase 2).
-result: blocked
-blocked_by: release-build
-reason: "Requires side-loaded extension + LINKEDIN_EXTENSION_ID set in Vercel env + authenticated recruiter cookie"
+result: partial-pass
+notes: |
+  2026-05-21 UAT: extension built, side-loaded, deployed against production Vercel, captured Huw Jones from linkedin.com/in/huw-jones-a739851bb/. Popup showed "Updated existing candidate." (dedup matched a row already in the DB — implicitly covers Test 3). End-to-end auth/scrape/POST/embed pipeline works.
+
+  HOWEVER: only `name` and `linkedin_url` populate correctly. Headline, location, work_experience, education, skills all return null because LinkedIn rebuilt their profile DOM and our selectors no longer match (h1 element is gone entirely). The `name` field works because we fall back to `document.title` ("<Name> | LinkedIn").
+
+  This is a known DOM-drift issue tracked as G6 in VERIFICATION.md — needs the full selector set updated before declaring Test 2 a clean pass.
 
 ### 3. LinkedIn dedup on existing candidate updates instead of creating
 expected: |
   Recruiter captures the same LinkedIn profile twice. The second capture shows an "Updated existing candidate" toast and does NOT create a duplicate row. Dedup matches on `source_detail` OR email.
-result: blocked
-blocked_by: release-build
-reason: "Same as test 2"
+result: pass
+notes: |
+  2026-05-21 UAT: confirmed via Huw Jones capture during Test 2 — popup showed "Updated existing candidate." green-status toast. Dedup matched on source_detail (the LinkedIn URL), no duplicate row created. CR-01 unique partial index would have caught any race anyway.
 
 ### 4. Spec call upload → Whisper → Sonnet draft → review/approve creates job
 expected: |
@@ -128,11 +132,12 @@ reason: "Requires live env with all AI integrations exercised"
 ## Summary
 
 total: 15
-passed: 0
+passed: 1
+partial: 1
 issues: 0
 pending: 0
 skipped: 0
-blocked: 15
+blocked: 13
 
 ## Gaps
 
