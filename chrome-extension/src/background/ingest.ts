@@ -48,68 +48,136 @@ async function getConfiguredOrigin(): Promise<string> {
 }
 
 /**
- * Read the Supabase auth cookie from the Altus origin. Supabase splits
- * long cookies into `sb-<projectref>-auth-token.0`, `.1`, etc. We
- * concatenate fragments in numeric order before base64-decoding the JSON
- * envelope to extract `access_token`. Returns null when no session.
+ * Read the Supabase access token from an open Altus tab by injecting a
+ * script that reads localStorage + document.cookie in the page's own
+ * context.
+ *
+ * Why not chrome.cookies API? Chrome 147+ has inconsistent behaviour for
+ * chrome.cookies.getAll on hosts that sit on the Public Suffix List
+ * (vercel.app is a PSL entry). hostOnly cookies on such hosts are visible
+ * to chrome.cookies.get({url,name}) but invisible to getAll() — we
+ * verified this empirically. Page-context execution sidesteps the
+ * cookies API entirely.
+ *
+ * Returns:
+ *   - access_token string if a session is found
+ *   - null if no Altus tab is open OR no session in storage
+ *
+ * Requires:
+ *   - "scripting" permission (already declared)
+ *   - host_permission matching the Altus origin (already declared)
  */
 async function readSupabaseAccessToken(origin: string): Promise<string | null> {
-  // Chrome 147+ has a quirk where `chrome.cookies.getAll({ url })` returns
-  // empty for hostOnly cookies on public-suffix-list hosts (e.g. *.vercel.app).
-  // `chrome.cookies.get({ url, name })` and `chrome.cookies.getAll({ domain })`
-  // both work. Use domain filter as the primary path; the URL-derived host
-  // is the canonical Altus origin.
-  const host = new URL(origin).hostname
-  const cookies = await chrome.cookies.getAll({ domain: host })
-  if (cookies.length === 0) return null
+  const url = new URL(origin)
+  // Match any path under the Altus origin so /dashboard, /candidates, etc.
+  // all qualify as "an Altus tab".
+  const tabs = await chrome.tabs.query({ url: `${url.origin}/*` })
+  if (tabs.length === 0) return null
 
-  // Find the `sb-<projectref>-auth-token` cookie family. Sort fragments
-  // by trailing `.N`; concatenate before decoding.
-  const family = cookies.filter(
-    (c) => c.name.startsWith('sb-') && c.name.includes('-auth-token'),
-  )
-  if (family.length === 0) return null
-
-  // Group by base name (strip trailing .0/.1/.N if present).
-  const groups = new Map<string, Array<{ idx: number; value: string }>>()
-  for (const c of family) {
-    const m = c.name.match(/^(.+?)(?:\.(\d+))?$/)
-    if (!m) continue
-    const base = m[1] ?? c.name
-    const idx = m[2] ? parseInt(m[2], 10) : 0
-    const arr = groups.get(base) ?? []
-    arr.push({ idx, value: c.value })
-    groups.set(base, arr)
-  }
-
-  for (const [, fragments] of groups) {
-    fragments.sort((a, b) => a.idx - b.idx)
-    const joined = fragments.map((f) => f.value).join('')
-    // Supabase stores either a JSON object directly or base64-prefixed
-    // (`base64-<payload>`). Try both.
-    let payload: unknown = null
+  for (const tab of tabs) {
+    if (!tab.id) continue
     try {
-      const decoded = joined.startsWith('base64-')
-        ? atob(joined.slice('base64-'.length))
-        : joined
-      payload = JSON.parse(decoded)
+      const [result] = await chrome.scripting.executeScript({
+        target: { tabId: tab.id },
+        func: extractAltusAccessTokenFromPage,
+        world: 'MAIN',
+      })
+      const token = result?.result
+      if (typeof token === 'string' && token.length > 0) {
+        return token
+      }
     } catch {
-      // Some Supabase versions URL-encode the JSON value.
+      // executeScript can fail for restricted pages (chrome://, blocked
+      // by enterprise policy, etc.) — try the next tab.
+      continue
+    }
+  }
+  return null
+}
+
+/**
+ * Runs inside the Altus page's MAIN world. Reads the Supabase access_token
+ * from localStorage first (the @supabase/ssr browser client writes there);
+ * falls back to document.cookie if localStorage is empty (cookies are
+ * httpOnly=false so the page can read them).
+ *
+ * Must be self-contained — no closure references, no imports — because
+ * chrome.scripting serialises this function and re-creates it in the
+ * target page.
+ */
+function extractAltusAccessTokenFromPage(): string | null {
+  function tryParseSession(raw: string): string | null {
+    let decoded = raw
+    if (raw.startsWith('base64-')) {
       try {
-        payload = JSON.parse(decodeURIComponent(joined))
+        decoded = atob(raw.slice('base64-'.length))
       } catch {
-        continue
+        return null
+      }
+    }
+    let obj: unknown = null
+    try {
+      obj = JSON.parse(decoded)
+    } catch {
+      try {
+        obj = JSON.parse(decodeURIComponent(decoded))
+      } catch {
+        return null
       }
     }
     if (
-      payload &&
-      typeof payload === 'object' &&
-      'access_token' in payload &&
-      typeof (payload as { access_token: unknown }).access_token === 'string'
+      obj &&
+      typeof obj === 'object' &&
+      'access_token' in obj &&
+      typeof (obj as { access_token: unknown }).access_token === 'string'
     ) {
-      return (payload as { access_token: string }).access_token
+      return (obj as { access_token: string }).access_token
     }
+    return null
   }
+
+  // 1. localStorage (preferred — single key, no fragmentation)
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i)
+      if (!k || !k.startsWith('sb-') || !k.includes('-auth-token')) continue
+      const raw = localStorage.getItem(k)
+      if (!raw) continue
+      const token = tryParseSession(raw)
+      if (token) return token
+    }
+  } catch {
+    // localStorage may be unavailable in some contexts; fall through
+  }
+
+  // 2. document.cookie (fallback — handles fragmented sb-*-auth-token.N)
+  try {
+    const groups = new Map<string, Array<{ idx: number; value: string }>>()
+    for (const entry of document.cookie.split('; ')) {
+      const eq = entry.indexOf('=')
+      if (eq <= 0) continue
+      const name = entry.slice(0, eq).trim()
+      const value = decodeURIComponent(entry.slice(eq + 1))
+      if (!name.startsWith('sb-') || !name.includes('-auth-token')) continue
+      const m = name.match(/^(.+?)(?:\.(\d+))?$/)
+      if (!m) continue
+      const base = m[1] ?? name
+      const idx = m[2] ? parseInt(m[2], 10) : 0
+      const arr = groups.get(base) ?? []
+      arr.push({ idx, value })
+      groups.set(base, arr)
+    }
+    for (const [, fragments] of groups) {
+      fragments.sort((a, b) => a.idx - b.idx)
+      const joined = fragments.map((f) => f.value).join('')
+      const token = tryParseSession(joined)
+      if (token) return token
+    }
+  } catch {
+    // document.cookie may be blocked by Permissions-Policy in some embedded
+    // contexts; fall through
+  }
+
   return null
 }
 
@@ -224,7 +292,10 @@ async function handleCapture(msg: CaptureMessage): Promise<CaptureResponse> {
   if (!token) {
     return {
       ok: false,
-      error: 'Not signed in to Altus. Open the app, sign in, then retry.',
+      error:
+        'No Altus session found. Open ' +
+        new URL(origin).hostname +
+        ' in a tab, sign in, then retry.',
     }
   }
 
