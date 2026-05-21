@@ -250,20 +250,38 @@ function scrapeProfileInPage(url: string): unknown {
   }
 
   // ---- name -------------------------------------------------------------
-  // LinkedIn's profile name is in an <h1>. Multiple fallbacks because
-  // LinkedIn's class names churn.
+  // Primary: <title> tag. LinkedIn formats it as "<Name> | LinkedIn" on every
+  // profile page and this is the most stable signal we have — survives every
+  // LinkedIn DOM rewrite. Fallback to DOM selectors if title parsing fails.
   let name: string | null = null
-  const nameSelectors = [
-    'main h1',
-    'h1.text-heading-xlarge',
-    'section.pv-text-details__left-panel h1',
-    'h1',
-  ]
-  for (const sel of nameSelectors) {
-    const v = txt(document.querySelector(sel))
-    if (v) {
-      name = v
-      break
+  const titleText = document.title || ''
+  const titleMatch = titleText.match(/^\s*([^|]+?)\s*\|\s*(?:.*?LinkedIn|LinkedIn)/i)
+  if (titleMatch && titleMatch[1] && titleMatch[1].trim().length > 0) {
+    const candidate = titleMatch[1].trim()
+    // Reject the generic "(N+) New messages" and feed titles that don't carry a person.
+    if (!/^\(\d+\+?\)/.test(candidate) && candidate.toLowerCase() !== 'feed') {
+      name = candidate
+    }
+  }
+  // DOM fallback (LinkedIn's profile-card name element churns; cover modern + legacy classes)
+  if (!name) {
+    const nameSelectors = [
+      '[data-anonymize="person-name"]',
+      'main h1',
+      'h1.text-heading-xlarge',
+      'section.pv-text-details__left-panel h1',
+      '.pv-text-details__left-panel .text-heading-xlarge',
+      '[data-view-name="profile-card"] .text-heading-xlarge',
+      'main [aria-label*="name" i]',
+      'h1',
+      'h2',
+    ]
+    for (const sel of nameSelectors) {
+      const v = txt(document.querySelector(sel))
+      if (v) {
+        name = v
+        break
+      }
     }
   }
 
