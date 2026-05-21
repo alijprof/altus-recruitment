@@ -3,7 +3,6 @@
   "name": "Altus — LinkedIn capture",
   "version": "0.1.0",
   "description": "Capture a LinkedIn profile into the Altus CRM with one click.",
-  "key": "REPLACE_WITH_BASE64_PUBLIC_KEY",
   "permissions": ["cookies", "activeTab", "scripting", "storage"],
   "host_permissions": [
     "https://www.linkedin.com/*",
