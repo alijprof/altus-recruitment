@@ -188,11 +188,16 @@ function extractAltusAccessTokenFromPage(): string | null {
  * inline the call to the bundled `scrapeLinkedInProfile` symbol.
  */
 async function runScraper(tabId: number, url: string): Promise<ScrapedProfilePayload> {
+  // MUST run in ISOLATED world to see the content script's `__altusScrape`
+  // global (content_scripts default to ISOLATED). The previous `world: 'MAIN'`
+  // setting meant the injected function ran in the page's world, where the
+  // content script's hook is invisible — causing the fallback path which
+  // returns null fields and fails Zod validation.
   const [result] = await chrome.scripting.executeScript({
     target: { tabId },
     func: scrapeProfileInPage,
     args: [url],
-    world: 'MAIN',
+    world: 'ISOLATED',
   })
   const value = result?.result as unknown
   // Re-validate at the boundary: the scraper returns the same shape as the
@@ -200,7 +205,13 @@ async function runScraper(tabId: number, url: string): Promise<ScrapedProfilePay
   const flat = flattenScraped(value)
   const parsed = ScrapedProfilePayloadSchema.safeParse(flat)
   if (!parsed.success) {
-    throw new Error(`scraper output failed validation: ${parsed.error.issues[0]?.message ?? 'unknown'}`)
+    // Surface ALL failing fields with their paths so the user knows what's
+    // wrong (e.g. "name: too small" means LinkedIn DOM didn't yield a name).
+    const issues = parsed.error.issues
+      .slice(0, 5)
+      .map((i) => `${i.path.join('.') || '<root>'}: ${i.message}`)
+      .join('; ')
+    throw new Error(`scraper output failed validation — ${issues}`)
   }
   return parsed.data
 }
