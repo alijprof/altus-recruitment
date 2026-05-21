@@ -18,7 +18,6 @@
  *     reinstalling. Defaults to the production origin.
  */
 
-import { scrapeLinkedInProfile } from '../content/scrape-profile'
 import {
   ScrapedProfilePayloadSchema,
   type ScrapedProfilePayload,
@@ -188,11 +187,9 @@ function extractAltusAccessTokenFromPage(): string | null {
  * inline the call to the bundled `scrapeLinkedInProfile` symbol.
  */
 async function runScraper(tabId: number, url: string): Promise<ScrapedProfilePayload> {
-  // MUST run in ISOLATED world to see the content script's `__altusScrape`
-  // global (content_scripts default to ISOLATED). The previous `world: 'MAIN'`
-  // setting meant the injected function ran in the page's world, where the
-  // content script's hook is invisible — causing the fallback path which
-  // returns null fields and fails Zod validation.
+  // ISOLATED world is the safer choice — MAIN world risks the page's own
+  // scripts mutating our return value. The scraper only reads the DOM,
+  // which is fully accessible from ISOLATED.
   const [result] = await chrome.scripting.executeScript({
     target: { tabId },
     func: scrapeProfileInPage,
@@ -200,13 +197,23 @@ async function runScraper(tabId: number, url: string): Promise<ScrapedProfilePay
     world: 'ISOLATED',
   })
   const value = result?.result as unknown
-  // Re-validate at the boundary: the scraper returns the same shape as the
-  // Zod schema except for the Extracted<> wrappers, so we flatten here.
-  const flat = flattenScraped(value)
-  const parsed = ScrapedProfilePayloadSchema.safeParse(flat)
+  // The scraper returns the flat shape directly — no Extracted<> wrapping
+  // to flatten. Surface the actual name-extraction failure with a clear
+  // message instead of letting Zod fail on '' with a generic error.
+  if (
+    !value ||
+    typeof value !== 'object' ||
+    typeof (value as { name?: unknown }).name !== 'string' ||
+    ((value as { name: string }).name).length === 0
+  ) {
+    throw new Error(
+      "Couldn't read the profile name from the page. The DOM may have changed " +
+        '— open DevTools on this LinkedIn tab and check the page console for ' +
+        '[Altus capture] output.',
+    )
+  }
+  const parsed = ScrapedProfilePayloadSchema.safeParse(value)
   if (!parsed.success) {
-    // Surface ALL failing fields with their paths so the user knows what's
-    // wrong (e.g. "name: too small" means LinkedIn DOM didn't yield a name).
     const issues = parsed.error.issues
       .slice(0, 5)
       .map((i) => `${i.path.join('.') || '<root>'}: ${i.message}`)
@@ -217,71 +224,212 @@ async function runScraper(tabId: number, url: string): Promise<ScrapedProfilePay
 }
 
 /**
- * Mirror of `scrapeLinkedInProfile` for injection. We re-implement the
- * shape inline because `chrome.scripting.executeScript({ func })`
- * serialises the function — the imported symbol from `../content/scrape-profile`
- * is bundled into the worker, not injected. The build step emits
- * a separate `content-script.js` artifact that's referenced by manifest's
- * `content_scripts` so the actual implementation runs in the page.
+ * Self-contained LinkedIn profile scraper. Runs in the target tab's
+ * ISOLATED world via chrome.scripting.executeScript. Must be pure — no
+ * closures, no imports — because chrome.scripting serialises this
+ * function as source code and re-creates it in the target context.
  *
- * For Phase 3 we use the popup-only UX (D3-28) — the content_scripts manifest
- * entry registers the scraper as a script; the popup messages the worker
- * which calls executeScript with a thin wrapper that calls the global
- * `window.__altusScrape` function set up by the content script.
+ * Previously this function delegated to a `globalThis.__altusScrape`
+ * hook set by a content_scripts entry. That added a dependency on the
+ * content script having actually run in the tab, which is fragile (new
+ * extension reloads, tab opened before extension install, world
+ * mismatches). Inlining the scraper eliminates that entire failure mode.
+ *
+ * Returns the flat payload shape that `ScrapedProfilePayloadSchema`
+ * validates against — no Extracted<> wrappers, no flatten step needed.
+ *
+ * Stage strategy (RESEARCH §Pattern 2): try the most-stable selector
+ * first, fall through to more fragile fallbacks. Logs to the page
+ * console so issues are diagnosable from LinkedIn-tab DevTools.
  */
 function scrapeProfileInPage(url: string): unknown {
-  const g = globalThis as unknown as { __altusScrape?: (u: string) => unknown }
-  if (typeof g.__altusScrape === 'function') {
-    return g.__altusScrape(url)
+  function txt(el: Element | null | undefined): string | null {
+    if (!el) return null
+    const t = (el.textContent ?? '').trim()
+    return t.length === 0 ? null : t
   }
-  // Content script not yet loaded — return a minimal shape so the popup
-  // surfaces a clear "couldn't read profile" message.
+
+  // ---- name -------------------------------------------------------------
+  // LinkedIn's profile name is in an <h1>. Multiple fallbacks because
+  // LinkedIn's class names churn.
+  let name: string | null = null
+  const nameSelectors = [
+    'main h1',
+    'h1.text-heading-xlarge',
+    'section.pv-text-details__left-panel h1',
+    'h1',
+  ]
+  for (const sel of nameSelectors) {
+    const v = txt(document.querySelector(sel))
+    if (v) {
+      name = v
+      break
+    }
+  }
+
+  // ---- headline ---------------------------------------------------------
+  let headline: string | null = null
+  const headlineSelectors = [
+    '[data-test-id="profile-headline"]',
+    '.pv-text-details__left-panel .text-body-medium',
+    'main h1 + div',
+    '.text-body-medium.break-words',
+  ]
+  for (const sel of headlineSelectors) {
+    const v = txt(document.querySelector(sel))
+    if (v) {
+      headline = v
+      break
+    }
+  }
+
+  // ---- location ---------------------------------------------------------
+  let location: string | null = null
+  const locationSelectors = [
+    '[data-test-id="profile-location"]',
+    '[aria-label="Location"]',
+    '.text-body-small.inline.t-black--light.break-words',
+  ]
+  for (const sel of locationSelectors) {
+    const v = txt(document.querySelector(sel))
+    if (v) {
+      location = v
+      break
+    }
+  }
+
+  // ---- about ------------------------------------------------------------
+  let about: string | null = null
+  const aboutSection =
+    document.querySelector('[data-view-name="profile-component-entity-about"]') ??
+    document.querySelector('#about')?.parentElement ??
+    document.querySelector('#about')
+  if (aboutSection) {
+    const span = aboutSection.querySelector(
+      '.inline-show-more-text span, .pv-shared-text-with-see-more span',
+    )
+    about = txt(span)
+  }
+
+  // ---- work experience --------------------------------------------------
+  type WE = { title: string; company: string | null; dates: string | null }
+  const experience: WE[] = []
+  const expSection =
+    document.querySelector('[data-view-name="profile-component-entity-experience"]') ??
+    document.querySelector('#experience')?.parentElement ??
+    document.querySelector('#experience')
+  if (expSection) {
+    const entries = expSection.querySelectorAll(
+      '[data-view-name="profile-component-entity-experience-entry"], li.pvs-list__item--line-separated, li.artdeco-list__item',
+    )
+    entries.forEach((entry) => {
+      const spans = entry.querySelectorAll('span[aria-hidden="true"]')
+      const t = txt(spans[0])
+      if (!t) return
+      const rawCompany = txt(spans[1])
+      const company = rawCompany ? rawCompany.split('·')[0]?.trim() ?? null : null
+      experience.push({
+        title: t,
+        company: company && company.length > 0 ? company : null,
+        dates: txt(spans[2]) ?? null,
+      })
+    })
+  }
+
+  // ---- education --------------------------------------------------------
+  type ED = { school: string; degree: string | null; dates: string | null }
+  const education: ED[] = []
+  const eduSection =
+    document.querySelector('[data-view-name="profile-component-entity-education"]') ??
+    document.querySelector('#education')?.parentElement ??
+    document.querySelector('#education')
+  if (eduSection) {
+    const entries = eduSection.querySelectorAll(
+      '[data-view-name="profile-component-entity-education-entry"], li.pvs-list__item--line-separated, li.artdeco-list__item',
+    )
+    entries.forEach((entry) => {
+      const spans = entry.querySelectorAll('span[aria-hidden="true"]')
+      const s = txt(spans[0])
+      if (!s) return
+      education.push({
+        school: s,
+        degree: txt(spans[1]) ?? null,
+        dates: txt(spans[2]) ?? null,
+      })
+    })
+  }
+
+  // ---- skills -----------------------------------------------------------
+  const skills: string[] = []
+  const skillsSection =
+    document.querySelector('[data-view-name="profile-component-entity-skills"]') ??
+    document.querySelector('#skills')?.parentElement ??
+    document.querySelector('#skills')
+  if (skillsSection) {
+    const entries = skillsSection.querySelectorAll(
+      '[data-view-name="profile-component-entity-skill-entry"]',
+    )
+    entries.forEach((entry) => {
+      const span = entry.querySelector('span[aria-hidden="true"]')
+      const v = txt(span)
+      if (v) skills.push(v)
+    })
+  }
+
+  // ---- current role + company ------------------------------------------
+  let current_role: string | null = null
+  let current_company: string | null = null
+  if (experience[0]) {
+    current_role = experience[0].title
+    current_company = experience[0].company
+  }
+  // Fallback: explicit aria-label on the right-panel button
+  if (!current_company) {
+    const btn = document.querySelector('button[aria-label^="Current company:"]')
+    const aria = btn?.getAttribute('aria-label') ?? ''
+    const m = aria.match(/^Current company:\s*(.+)$/i)
+    if (m && m[1]) current_company = m[1].trim()
+  }
+
+  // ---- confidence -------------------------------------------------------
+  const weights = {
+    name: name ? 0.25 : 0,
+    current_role: current_role ? 0.2 : 0,
+    current_company: current_company ? 0.15 : 0,
+    headline: headline ? 0.1 : 0,
+    location: location ? 0.05 : 0,
+    about: about ? 0.05 : 0,
+    skills: skills.length > 0 ? 0.15 : 0,
+    experience: experience.length > 0 ? 0.05 : 0,
+  }
+  const capture_confidence = Object.values(weights).reduce((a, b) => a + b, 0)
+
+  // ---- diagnostics ------------------------------------------------------
+  // Log to the page's own console so the user can debug from LinkedIn
+  // tab DevTools if scraping fails.
+  // eslint-disable-next-line no-console
+  console.log('[Altus capture]', {
+    name,
+    headline,
+    location,
+    work_count: experience.length,
+    education_count: education.length,
+    skill_count: skills.length,
+    confidence: capture_confidence,
+  })
+
   return {
-    name: { value: null, confidence: 'low', strategy_used: null },
-    headline: { value: null, confidence: 'low', strategy_used: null },
-    current_role: { value: null, confidence: 'low', strategy_used: null },
-    current_company: { value: null, confidence: 'low', strategy_used: null },
-    location: { value: null, confidence: 'low', strategy_used: null },
-    about: { value: null, confidence: 'low', strategy_used: null },
-    work_experience: [],
-    education: [],
-    skills: [],
+    name: name ?? '',
+    headline,
+    current_role,
+    current_company,
+    location,
+    about,
+    work_experience: experience,
+    education,
+    skills,
     linkedin_url: url,
-    capture_confidence: 0,
-  }
-}
-
-type ScrapedExtractedShape = { value: string | null }
-
-function flattenExtracted(v: unknown): string | null {
-  if (v && typeof v === 'object' && 'value' in v) {
-    const val = (v as ScrapedExtractedShape).value
-    return typeof val === 'string' && val.length > 0 ? val : null
-  }
-  return null
-}
-
-/**
- * Flatten the Extracted<> wrapper objects into bare string|null fields for
- * the POST payload. The Zod schema on both sides accepts the flattened
- * shape per Task A.2.
- */
-function flattenScraped(raw: unknown): unknown {
-  if (!raw || typeof raw !== 'object') return raw
-  const r = raw as Record<string, unknown>
-  return {
-    name: flattenExtracted(r.name) ?? '',
-    headline: flattenExtracted(r.headline),
-    current_role: flattenExtracted(r.current_role),
-    current_company: flattenExtracted(r.current_company),
-    location: flattenExtracted(r.location),
-    about: flattenExtracted(r.about),
-    work_experience: Array.isArray(r.work_experience) ? r.work_experience : [],
-    education: Array.isArray(r.education) ? r.education : [],
-    skills: Array.isArray(r.skills) ? r.skills : [],
-    linkedin_url: typeof r.linkedin_url === 'string' ? r.linkedin_url : '',
-    capture_confidence:
-      typeof r.capture_confidence === 'number' ? r.capture_confidence : 0,
+    capture_confidence,
   }
 }
 
@@ -372,7 +520,3 @@ chrome.runtime.onMessage.addListener((msg: unknown, _sender, sendResponse) => {
   return false
 })
 
-// Re-export the scraper so the content script bundle can set the global
-// `__altusScrape` hook. The content_scripts entry in manifest.json points at
-// a tiny shim file that assigns this function to `globalThis`.
-export { scrapeLinkedInProfile }
