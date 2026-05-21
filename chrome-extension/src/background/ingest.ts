@@ -54,8 +54,13 @@ async function getConfiguredOrigin(): Promise<string> {
  * envelope to extract `access_token`. Returns null when no session.
  */
 async function readSupabaseAccessToken(origin: string): Promise<string | null> {
-  const url = new URL(origin).origin
-  const cookies = await chrome.cookies.getAll({ url })
+  // Chrome 147+ has a quirk where `chrome.cookies.getAll({ url })` returns
+  // empty for hostOnly cookies on public-suffix-list hosts (e.g. *.vercel.app).
+  // `chrome.cookies.get({ url, name })` and `chrome.cookies.getAll({ domain })`
+  // both work. Use domain filter as the primary path; the URL-derived host
+  // is the canonical Altus origin.
+  const host = new URL(origin).hostname
+  const cookies = await chrome.cookies.getAll({ domain: host })
   if (cookies.length === 0) return null
 
   // Find the `sb-<projectref>-auth-token` cookie family. Sort fragments
