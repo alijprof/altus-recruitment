@@ -306,33 +306,97 @@ async function scrapeProfileInPage(url: string): Promise<unknown> {
     return null
   }
 
-  // Top-level entries within a section. LinkedIn nests sub-bullets (e.g.,
-  // multiple roles at the same company) — we want only the outer <li>s. An
-  // outer <li> is one whose nearest <li> ancestor (excluding itself) is null.
-  function getEntries(section: Element | null): Element[] {
+  // Top-level entries within a section. LinkedIn's modern profile DOM
+  // (Tony Wilson capture v0.1.5) showed two failure modes:
+  //   - Experience section has <li>s but no aria-hidden spans inside.
+  //   - Education / Skills sections have NO <li>s at all.
+  // So entries are now sourced by two strategies tried in order:
+  //   1. <li> elements (top-level only — sub-bullets filtered out)
+  //   2. anchor-based fallback: each unique entry container holding a
+  //      content-bearing <a> (company/school link, or any non-/details/ link)
+  function getEntries(
+    section: Element | null,
+    hrefHint: 'company' | 'school' | 'any',
+  ): Element[] {
     if (!section) return []
-    const all = [...section.querySelectorAll('li')].filter((li) =>
-      li.querySelector('span[aria-hidden="true"]'),
-    )
-    const topLevel = all.filter((li) => {
+
+    const lis = [...section.querySelectorAll('li')].filter((li) => {
       const ancestor = li.parentElement?.closest('li')
-      return !ancestor || ancestor === li
+      const isTopLevel = !ancestor || ancestor === li
+      if (!isTopLevel) return false
+      const t = (li.textContent ?? '').trim()
+      return t.length > 0
     })
-    return topLevel.length > 0 ? topLevel : all
+    if (lis.length > 0) return lis
+
+    // Anchor-based fallback. Pick anchors matching the section type, skip
+    // section-internal nav (Show all <N> at /details/...).
+    const selectors: string[] = []
+    if (hrefHint === 'company') selectors.push('a[href*="/company/"]')
+    if (hrefHint === 'school') selectors.push('a[href*="/school/"]', 'a[href*="/company/"]')
+    selectors.push('a[href]')
+
+    let anchors: HTMLAnchorElement[] = []
+    for (const sel of selectors) {
+      anchors = [...section.querySelectorAll(sel)].filter((a) => {
+        const href = (a as HTMLAnchorElement).getAttribute('href') || ''
+        if (!href || href === '#') return false
+        if (/\/details\//.test(href)) return false
+        const t = (a.textContent ?? '').trim()
+        return t.length > 0
+      }) as HTMLAnchorElement[]
+      if (anchors.length > 0) break
+    }
+
+    // Group anchors by their nearest sibling-level container — climb the
+    // anchor's ancestor chain until we hit an element whose parent has
+    // multiple children (i.e., it's one of N siblings = an entry).
+    const containers = new Set<Element>()
+    for (const a of anchors) {
+      let el: Element | null = a
+      for (let i = 0; i < 6 && el && el !== section; i++) {
+        const parentEl: HTMLElement | null = el.parentElement
+        if (!parentEl || parentEl === section) break
+        if (parentEl.children.length > 1) break
+        el = parentEl
+      }
+      if (el && el !== section && el !== a) {
+        containers.add(el)
+      } else {
+        // Last resort: the anchor itself counts as the entry container
+        containers.add(a)
+      }
+    }
+    return [...containers]
   }
 
-  // Read every aria-hidden span text inside an entry, in document order.
-  // De-duplicates exact-repeat adjacent strings (LinkedIn sometimes renders
-  // both visually-hidden and aria-hidden copies of the same text).
-  function readVisibleSpans(entry: Element): string[] {
+  // Walk all visible text nodes inside an entry. Skips text inside
+  // visually-hidden / sr-only spans (these are screen-reader duplicates).
+  // De-dupes adjacent and identical strings.
+  function readEntryText(entry: Element): string[] {
+    const seen = new Set<string>()
     const out: string[] = []
-    const spans = entry.querySelectorAll('span[aria-hidden="true"]')
-    spans.forEach((sp) => {
-      const t = (sp.textContent ?? '').trim()
-      if (t.length === 0) return
-      if (out.length > 0 && out[out.length - 1] === t) return
-      out.push(t)
+    const walker = document.createTreeWalker(entry, NodeFilter.SHOW_TEXT, {
+      acceptNode(node) {
+        let p = node.parentElement
+        while (p && p !== entry) {
+          const cls = String((p as HTMLElement).className || '')
+          if (/visually-hidden|sr-only/i.test(cls)) return NodeFilter.FILTER_REJECT
+          p = p.parentElement
+        }
+        const t = (node.textContent ?? '').trim()
+        return t.length > 0 ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT
+      },
     })
+    let n: Node | null = walker.nextNode()
+    while (n) {
+      const t = (n.textContent ?? '').trim()
+      if (t.length > 0 && !seen.has(t)) {
+        seen.add(t)
+        out.push(t)
+      }
+      n = walker.nextNode()
+    }
     return out
   }
 
@@ -470,21 +534,21 @@ async function scrapeProfileInPage(url: string): Promise<unknown> {
   let about: string | null = null
   const aboutSection = findSectionByH2('About')
   if (aboutSection) {
-    // Take the longest aria-hidden span — the actual about body is invariably
-    // the longest text in the section.
-    const spans = [...aboutSection.querySelectorAll('span[aria-hidden="true"]')]
-      .map((s) => (s.textContent ?? '').trim())
+    // Take the longest text node in the section — the actual about body is
+    // invariably the longest text. Text-walker (skips visually-hidden) so
+    // we don't rely on aria-hidden spans being present.
+    const texts = readEntryText(aboutSection)
       .filter((t) => t.length > 20 && t.toLowerCase() !== 'about')
       .sort((a, b) => b.length - a.length)
-    if (spans[0]) about = spans[0]
+    if (texts[0]) about = texts[0]
   }
 
   // ---- work experience --------------------------------------------------
   type WE = { title: string; company: string | null; dates: string | null }
   const experience: WE[] = []
   const expSection = findSectionByH2('Experience')
-  for (const entry of getEntries(expSection)) {
-    const spans = readVisibleSpans(entry)
+  for (const entry of getEntries(expSection, 'company')) {
+    const spans = readEntryText(entry)
     if (spans.length === 0) continue
     const title = spans[0]
     if (!title) continue
@@ -513,8 +577,8 @@ async function scrapeProfileInPage(url: string): Promise<unknown> {
   type ED = { school: string; degree: string | null; dates: string | null }
   const education: ED[] = []
   const eduSection = findSectionByH2('Education')
-  for (const entry of getEntries(eduSection)) {
-    const spans = readVisibleSpans(entry)
+  for (const entry of getEntries(eduSection, 'school')) {
+    const spans = readEntryText(entry)
     if (spans.length === 0) continue
     const school = spans[0]
     if (!school) continue
@@ -538,8 +602,8 @@ async function scrapeProfileInPage(url: string): Promise<unknown> {
   // ---- skills -----------------------------------------------------------
   const skills: string[] = []
   const skillsSection = findSectionByH2('Skills')
-  for (const entry of getEntries(skillsSection)) {
-    const spans = readVisibleSpans(entry)
+  for (const entry of getEntries(skillsSection, 'any')) {
+    const spans = readEntryText(entry)
     const skill = spans[0]
     // Skip "Endorsed by N connections" type strings
     if (skill && skill.length < 100 && !/^endorsed by/i.test(skill)) {
@@ -633,30 +697,20 @@ async function scrapeProfileInPage(url: string): Promise<unknown> {
   // iterate selectors. Returns counts + first few visible text strings
   // for each entry candidate. No PII beyond what's already on the user's
   // own LinkedIn page.
-  function diagnoseSection(headingText: string): unknown {
+  function diagnoseSection(headingText: string, hrefHint: 'company' | 'school' | 'any'): unknown {
     const section = findSectionByH2(headingText)
     if (!section) return { found: false }
     const lis = [...section.querySelectorAll('li')]
-    const lisWithAria = lis.filter((li) => li.querySelector('span[aria-hidden="true"]'))
-    const firstSpanTexts = [...section.querySelectorAll('span[aria-hidden="true"]')]
-      .slice(0, 8)
-      .map((s) => (s.textContent ?? '').trim().slice(0, 60))
+    const entries = getEntries(section, hrefHint)
+    const firstEntryText = entries[0] ? readEntryText(entries[0]).slice(0, 6) : []
     return {
       found: true,
       raw_li_count: lis.length,
-      li_with_aria_count: lisWithAria.length,
-      aria_hidden_span_count: section.querySelectorAll('span[aria-hidden="true"]').length,
       a_count: section.querySelectorAll('a').length,
       company_link_count: section.querySelectorAll('a[href*="/company/"]').length,
       school_link_count: section.querySelectorAll('a[href*="/school/"]').length,
-      ul_count: section.querySelectorAll('ul').length,
-      div_with_aria_span_count: [...section.querySelectorAll('div')].filter((d) => {
-        // Direct-child aria-hidden span (not deeply nested)
-        return [...d.children].some(
-          (c) => c.tagName === 'SPAN' && c.getAttribute('aria-hidden') === 'true',
-        )
-      }).length,
-      first_visible_texts: firstSpanTexts,
+      entries_resolved: entries.length,
+      first_entry_text: firstEntryText,
     }
   }
 
@@ -680,10 +734,10 @@ async function scrapeProfileInPage(url: string): Promise<unknown> {
     pvs_list_item_count: document.querySelectorAll('li.pvs-list__item--line-separated').length,
     artdeco_list_item_count: document.querySelectorAll('li.artdeco-list__item').length,
     sections_above_main: signatures('main > section', 8),
-    section_experience: diagnoseSection('Experience'),
-    section_education: diagnoseSection('Education'),
-    section_skills: diagnoseSection('Skills'),
-    section_about: diagnoseSection('About'),
+    section_experience: diagnoseSection('Experience', 'company'),
+    section_education: diagnoseSection('Education', 'school'),
+    section_skills: diagnoseSection('Skills', 'any'),
+    section_about: diagnoseSection('About', 'any'),
   })
 
   return {
