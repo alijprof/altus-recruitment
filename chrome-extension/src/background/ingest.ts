@@ -258,64 +258,67 @@ async function scrapeProfileInPage(url: string): Promise<unknown> {
   async function forceLazyMount(): Promise<void> {
     const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
     const scroller = document.scrollingElement ?? document.documentElement
-    const totalHeight = scroller.scrollHeight
-    const step = Math.max(800, Math.floor(window.innerHeight * 0.8))
+    const step = Math.max(800, Math.floor(window.innerHeight * 0.9))
+    // Scroll in passes — each pass may reveal more content (the page grows
+    // as lazy-loads land). 15 steps × 800px covers ~12000px which is more
+    // than any realistic profile page.
     let pos = 0
-    for (let i = 0; i < 12 && pos < totalHeight; i++) {
+    for (let i = 0; i < 15; i++) {
       pos += step
+      if (pos > scroller.scrollHeight) pos = scroller.scrollHeight
       window.scrollTo({ top: pos, behavior: 'instant' as ScrollBehavior })
-      await sleep(150)
+      await sleep(250)
+      if (pos >= scroller.scrollHeight) break
     }
     // Back to top so the user's view isn't disturbed
     window.scrollTo({ top: 0, behavior: 'instant' as ScrollBehavior })
-    await sleep(200)
+    await sleep(300)
   }
 
   await forceLazyMount()
 
-  // Find a section by:
-  //   1. document.getElementById(anchorId) — LinkedIn keeps these for jump-nav
-  //   2. closest('section') from the anchor — survives DOM class rewrites
-  //   3. heading-text fallback — find <h2> matching "Experience" etc.
-  function findSection(anchorId: string, headingText: string): Element | null {
-    const anchor = document.getElementById(anchorId)
-    if (anchor) {
-      const section = anchor.closest('section')
-      if (section) return section
-      // No <section> ancestor — climb two levels which typically wraps content
-      const granny = anchor.parentElement?.parentElement
-      if (granny) return granny
-    }
-    // Heading-text fallback. LinkedIn often wraps the heading text in
-    // span[aria-hidden="true"] inside the <h2>; match either.
-    const headings = document.querySelectorAll('h2')
+  // Live UAT (Tony Wilson capture, 2026-05-22) showed LinkedIn shipped a DOM
+  // where section anchor ids (#experience etc.) are gone and class names are
+  // hashed (`._6d2dbe5a`, `._81841adb`) — they change every deploy and are
+  // useless as selectors. The only stable signals left:
+  //   - <h2> heading text ("Experience", "Education", "Skills", "About")
+  //   - <span aria-hidden="true"> for visible entry text
+  //   - <li> elements as entry containers
+  // So everything below uses h2-text + structural traversal.
+  function findSectionByH2(headingText: string): Element | null {
+    const wanted = headingText.toLowerCase()
+    const headings = [...document.querySelectorAll('h2')]
     for (const h of headings) {
       const t = (h.textContent ?? '').trim().toLowerCase()
-      if (t === headingText.toLowerCase() || t.startsWith(headingText.toLowerCase())) {
-        const section = h.closest('section')
-        if (section) return section
-        if (h.parentElement) return h.parentElement
+      if (t !== wanted) continue
+      // Walk up to the nearest <section> (LinkedIn's current top-level
+      // section container). Fall back to climbing 4 levels if no <section>.
+      const section = h.closest('section')
+      if (section) return section
+      let el: Element | null = h.parentElement
+      for (let i = 0; i < 4 && el; i++) {
+        if (el.tagName === 'SECTION') return el
+        if (el.querySelector('ul li')) return el
+        el = el.parentElement
       }
+      return h.parentElement
     }
     return null
   }
 
-  // Pull entry list items from a section. LinkedIn renders entries as <li>
-  // under a <ul>. Find the first <ul> whose direct children carry visible
-  // spans (filters out nav lists, dropdown menus, etc.).
+  // Top-level entries within a section. LinkedIn nests sub-bullets (e.g.,
+  // multiple roles at the same company) — we want only the outer <li>s. An
+  // outer <li> is one whose nearest <li> ancestor (excluding itself) is null.
   function getEntries(section: Element | null): Element[] {
     if (!section) return []
-    const uls = section.querySelectorAll('ul')
-    for (const ul of uls) {
-      const directLis = [...ul.querySelectorAll(':scope > li')].filter((li) =>
-        li.querySelector('span[aria-hidden="true"]'),
-      )
-      if (directLis.length > 0) return directLis
-    }
-    // Last resort: any LI with an aria-hidden span
-    return [...section.querySelectorAll('li')].filter((li) =>
+    const all = [...section.querySelectorAll('li')].filter((li) =>
       li.querySelector('span[aria-hidden="true"]'),
     )
+    const topLevel = all.filter((li) => {
+      const ancestor = li.parentElement?.closest('li')
+      return !ancestor || ancestor === li
+    })
+    return topLevel.length > 0 ? topLevel : all
   }
 
   // Read every aria-hidden span text inside an entry, in document order.
@@ -378,49 +381,55 @@ async function scrapeProfileInPage(url: string): Promise<unknown> {
   }
 
   // ---- top card (headline + location) -----------------------------------
-  // The top card is the first <section> inside <main>. Headline is the first
-  // text-body-medium element; location is the first text-body-small that
-  // isn't a follower/connection count or "Contact info" button.
+  // The top card has no usable class names anymore (CSS-Modules-style hashed
+  // classes change every deploy). Anchor by the h2 whose text matches the
+  // captured name, walk to the top card container, then text-walk for the
+  // first two leaf strings that aren't the name and aren't button/counter
+  // chrome.
   let headline: string | null = null
   let location: string | null = null
-  const topCard =
-    document.querySelector('main section:first-of-type') ??
-    document.querySelector('main section')
-  if (topCard) {
-    // Headline: scan candidate elements for the first non-name text body.
-    const headlineCandidates = topCard.querySelectorAll(
-      '.text-body-medium, div[class*="text-body-medium"]',
-    )
-    for (const el of headlineCandidates) {
-      const t = (el.textContent ?? '').trim()
-      if (!t || t === name) continue
-      // Skip nav-bar bits & button labels
-      if (/^\d+\s+(followers|connections|mutual)/i.test(t)) continue
-      if (/^(contact info|message|connect|follow|more)$/i.test(t)) continue
-      if (t.length > 0 && t.length < 300) {
-        headline = t
+  if (name) {
+    let nameH2: Element | null = null
+    for (const h of document.querySelectorAll('h2')) {
+      if ((h.textContent ?? '').trim() === name) {
+        nameH2 = h
         break
       }
     }
-    // Location: smaller text body. Often the first .text-body-small without
-    // follower/connection wording.
-    const locCandidates = topCard.querySelectorAll(
-      '.text-body-small, span[class*="text-body-small"]',
-    )
-    for (const el of locCandidates) {
-      const t = (el.textContent ?? '').trim()
-      if (!t || t === name || t === headline) continue
-      if (/contact info|followers|connections|mutual|verifications?/i.test(t)) continue
-      if (t.length > 0 && t.length < 200) {
-        location = t
-        break
+    const topCard = nameH2?.closest('section') ?? nameH2?.parentElement?.parentElement ?? null
+    if (topCard) {
+      // Collect leaf text nodes in DOM order, dedup, then classify.
+      const seen = new Set<string>()
+      const leafTexts: string[] = []
+      const walker = document.createTreeWalker(topCard, NodeFilter.SHOW_TEXT)
+      let node = walker.nextNode()
+      while (node) {
+        const t = (node.textContent ?? '').trim()
+        if (t && t.length >= 2 && t.length <= 300 && !seen.has(t)) {
+          seen.add(t)
+          leafTexts.push(t)
+        }
+        node = walker.nextNode()
       }
+      // Reject obvious chrome
+      const reject = (t: string): boolean => {
+        if (t === name) return true
+        if (/^\d+(\.\d+)?(K|M)?\s*(followers|connections|mutual|reactions|views?)/i.test(t)) return true
+        if (/^(contact info|message|connect|follow|following|more|see contact info|verified)$/i.test(t)) return true
+        if (/^(he\/him|she\/her|they\/them)/i.test(t)) return true
+        if (/^\d+(st|nd|rd|th)\b/i.test(t)) return true
+        if (/^·$/.test(t)) return true
+        return false
+      }
+      const candidates = leafTexts.filter((t) => !reject(t))
+      if (candidates[0]) headline = candidates[0]
+      if (candidates[1]) location = candidates[1]
     }
   }
 
   // ---- about ------------------------------------------------------------
   let about: string | null = null
-  const aboutSection = findSection('about', 'About')
+  const aboutSection = findSectionByH2('About')
   if (aboutSection) {
     // Take the longest aria-hidden span — the actual about body is invariably
     // the longest text in the section.
@@ -434,7 +443,7 @@ async function scrapeProfileInPage(url: string): Promise<unknown> {
   // ---- work experience --------------------------------------------------
   type WE = { title: string; company: string | null; dates: string | null }
   const experience: WE[] = []
-  const expSection = findSection('experience', 'Experience')
+  const expSection = findSectionByH2('Experience')
   for (const entry of getEntries(expSection)) {
     const spans = readVisibleSpans(entry)
     if (spans.length === 0) continue
@@ -464,7 +473,7 @@ async function scrapeProfileInPage(url: string): Promise<unknown> {
   // ---- education --------------------------------------------------------
   type ED = { school: string; degree: string | null; dates: string | null }
   const education: ED[] = []
-  const eduSection = findSection('education', 'Education')
+  const eduSection = findSectionByH2('Education')
   for (const entry of getEntries(eduSection)) {
     const spans = readVisibleSpans(entry)
     if (spans.length === 0) continue
@@ -489,7 +498,7 @@ async function scrapeProfileInPage(url: string): Promise<unknown> {
 
   // ---- skills -----------------------------------------------------------
   const skills: string[] = []
-  const skillsSection = findSection('skills', 'Skills')
+  const skillsSection = findSectionByH2('Skills')
   for (const entry of getEntries(skillsSection)) {
     const spans = readVisibleSpans(entry)
     const skill = spans[0]
