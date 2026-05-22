@@ -28,40 +28,28 @@ All other tests (1, 4-15) still `blocked: release-build`.
 
 ## Highest-priority unfinished work
 
-### 1. Fix LinkedIn DOM selectors (G6) — ~30 min
+### 1. Fix LinkedIn DOM selectors (G6) — DONE in this session, needs live retest
 
-The scraper in `chrome-extension/src/background/ingest.ts` (`scrapeProfileInPage`) only finds the name via `document.title` — all DOM selectors miss because LinkedIn changed their profile structure.
+Rewrote `scrapeProfileInPage` in `chrome-extension/src/background/ingest.ts` to use **class-name-agnostic** strategies that survive LinkedIn DOM rewrites:
 
-**Steps to fix:**
+- **Section discovery** via `document.getElementById('experience' | 'education' | 'skills' | 'about')` + `closest('section')`. LinkedIn maintains these anchor IDs because the in-profile jump nav depends on them.
+- **Heading-text fallback** — finds the section by matching an `<h2>` whose text equals "Experience" / "Education" / "Skills" / "About".
+- **Entry extraction** uses `:scope > li` against the first `<ul>` whose children contain a `span[aria-hidden="true"]` (filters nav/dropdown lists out).
+- **Span-walk parser** — reads all `span[aria-hidden="true"]` texts in document order per entry, then classifies each as title / company / dates by pattern match (date regex catches "Jan 2020 - Present", employment-type filter strips "Full-time" chips).
+- **Top card** (headline + location) discovered via `main section:first-of-type`, picking the first `.text-body-medium` (headline) and first `.text-body-small` (location) excluding follower/connection counts.
+- **About** takes the longest aria-hidden span in the section — the actual body is invariably the longest text.
 
-1. Open Chrome with the Altus extension installed (`chrome://extensions` should show it pinned)
-2. Open a logged-in LinkedIn profile (any profile — `linkedin.com/in/<someone>` works)
-3. Open the LinkedIn tab DevTools → Console
-4. Paste this probe to find the actual element + class for the visible profile name (replace `'Huw Jones'` with whatever name is visible on the page you're on):
+Manifest bumped to `0.1.1` so the next load is identifiable. `pnpm build` clean, `pnpm test` 15/15 pass, `tsc --noEmit` clean.
 
-```js
-JSON.stringify(
-  [...document.querySelectorAll('*')]
-    .filter(el => el.children.length === 0 && el.textContent?.trim().includes('Huw Jones'))
-    .slice(0, 8)
-    .map(el => ({
-      tag: el.tagName,
-      class: String(el.className || '').slice(0, 80),
-      parent: el.parentElement?.tagName,
-      parentClass: String(el.parentElement?.className || '').slice(0, 80),
-      text: el.textContent?.trim().slice(0, 60),
-    })),
-  null, 2
-)
-```
+**To retest:**
 
-5. Paste the output back to me. I'll generate the updated selector list and rewrite `scrapeProfileInPage` for name + headline + location + experience + education + skills against the actual current DOM.
+1. `chrome://extensions` → Altus Capture → reload icon (the curved arrow). Confirm version reads `0.1.1`.
+2. Refresh any LinkedIn profile tab.
+3. Click the Altus pin → Capture this profile.
+4. Open the LinkedIn tab DevTools → Console — look for `[Altus capture]` log line. It now reports `work_count`, `education_count`, `skill_count`, `confidence`. If those are non-zero, the fields will land.
+5. Open the Altus candidate in the app — verify headline, location, about, experience entries, education entries, skills all populated.
 
-6. Rebuild + reload + retest:
-   ```bash
-   cd ~/altus-recruitment/chrome-extension && pnpm build
-   ```
-   Then in `chrome://extensions` reload the Altus card, refresh the LinkedIn tab, capture again. Verify all fields populate.
+**If a section still comes through empty:** capture the `[Altus capture]` line + a screenshot of the LinkedIn section that didn't populate. The DOM probe in the original handoff (kept below in git history at commit `55ff80f`) is the next diagnostic step.
 
 ### 2. Continue UAT tests 1, 4-15 — variable time
 

@@ -249,6 +249,79 @@ function scrapeProfileInPage(url: string): unknown {
     return t.length === 0 ? null : t
   }
 
+  // Find a section by:
+  //   1. document.getElementById(anchorId) — LinkedIn keeps these for jump-nav
+  //   2. closest('section') from the anchor — survives DOM class rewrites
+  //   3. heading-text fallback — find <h2> matching "Experience" etc.
+  function findSection(anchorId: string, headingText: string): Element | null {
+    const anchor = document.getElementById(anchorId)
+    if (anchor) {
+      const section = anchor.closest('section')
+      if (section) return section
+      // No <section> ancestor — climb two levels which typically wraps content
+      const granny = anchor.parentElement?.parentElement
+      if (granny) return granny
+    }
+    // Heading-text fallback. LinkedIn often wraps the heading text in
+    // span[aria-hidden="true"] inside the <h2>; match either.
+    const headings = document.querySelectorAll('h2')
+    for (const h of headings) {
+      const t = (h.textContent ?? '').trim().toLowerCase()
+      if (t === headingText.toLowerCase() || t.startsWith(headingText.toLowerCase())) {
+        const section = h.closest('section')
+        if (section) return section
+        if (h.parentElement) return h.parentElement
+      }
+    }
+    return null
+  }
+
+  // Pull entry list items from a section. LinkedIn renders entries as <li>
+  // under a <ul>. Find the first <ul> whose direct children carry visible
+  // spans (filters out nav lists, dropdown menus, etc.).
+  function getEntries(section: Element | null): Element[] {
+    if (!section) return []
+    const uls = section.querySelectorAll('ul')
+    for (const ul of uls) {
+      const directLis = [...ul.querySelectorAll(':scope > li')].filter((li) =>
+        li.querySelector('span[aria-hidden="true"]'),
+      )
+      if (directLis.length > 0) return directLis
+    }
+    // Last resort: any LI with an aria-hidden span
+    return [...section.querySelectorAll('li')].filter((li) =>
+      li.querySelector('span[aria-hidden="true"]'),
+    )
+  }
+
+  // Read every aria-hidden span text inside an entry, in document order.
+  // De-duplicates exact-repeat adjacent strings (LinkedIn sometimes renders
+  // both visually-hidden and aria-hidden copies of the same text).
+  function readVisibleSpans(entry: Element): string[] {
+    const out: string[] = []
+    const spans = entry.querySelectorAll('span[aria-hidden="true"]')
+    spans.forEach((sp) => {
+      const t = (sp.textContent ?? '').trim()
+      if (t.length === 0) return
+      if (out.length > 0 && out[out.length - 1] === t) return
+      out.push(t)
+    })
+    return out
+  }
+
+  // LinkedIn date strings look like "Jan 2020 - Present · 3 yrs",
+  // "2018 - 2022", "Sep 2019 - Aug 2023 · 4 yrs", etc.
+  function looksLikeDateRange(s: string): boolean {
+    return /\b(19|20)\d{2}\b/.test(s) && (/[-–—]/.test(s) || /present|current/i.test(s))
+  }
+  // Employment-type / location chips: "Full-time", "Part-time", "Remote", "Hybrid",
+  // "On-site", "Contract" — often appear separated by " · " with the company.
+  function isEmploymentMeta(s: string): boolean {
+    return /^(full[- ]time|part[- ]time|contract|temporary|internship|freelance|self[- ]employed|remote|hybrid|on[- ]site)$/i.test(
+      s.trim(),
+    )
+  }
+
   // ---- name -------------------------------------------------------------
   // Primary: <title> tag. LinkedIn formats it as "<Name> | LinkedIn" on every
   // profile page and this is the most stable signal we have — survives every
@@ -258,140 +331,149 @@ function scrapeProfileInPage(url: string): unknown {
   const titleMatch = titleText.match(/^\s*([^|]+?)\s*\|\s*(?:.*?LinkedIn|LinkedIn)/i)
   if (titleMatch && titleMatch[1] && titleMatch[1].trim().length > 0) {
     const candidate = titleMatch[1].trim()
-    // Reject the generic "(N+) New messages" and feed titles that don't carry a person.
     if (!/^\(\d+\+?\)/.test(candidate) && candidate.toLowerCase() !== 'feed') {
       name = candidate
     }
   }
-  // DOM fallback (LinkedIn's profile-card name element churns; cover modern + legacy classes)
+  // DOM fallback — try a wide spread of selectors covering recent rewrites.
   if (!name) {
     const nameSelectors = [
       '[data-anonymize="person-name"]',
       'main h1',
       'h1.text-heading-xlarge',
-      'section.pv-text-details__left-panel h1',
-      '.pv-text-details__left-panel .text-heading-xlarge',
-      '[data-view-name="profile-card"] .text-heading-xlarge',
       'main [aria-label*="name" i]',
       'h1',
-      'h2',
     ]
     for (const sel of nameSelectors) {
       const v = txt(document.querySelector(sel))
-      if (v) {
+      if (v && v.length < 100) {
         name = v
         break
       }
     }
   }
 
-  // ---- headline ---------------------------------------------------------
+  // ---- top card (headline + location) -----------------------------------
+  // The top card is the first <section> inside <main>. Headline is the first
+  // text-body-medium element; location is the first text-body-small that
+  // isn't a follower/connection count or "Contact info" button.
   let headline: string | null = null
-  const headlineSelectors = [
-    '[data-test-id="profile-headline"]',
-    '.pv-text-details__left-panel .text-body-medium',
-    'main h1 + div',
-    '.text-body-medium.break-words',
-  ]
-  for (const sel of headlineSelectors) {
-    const v = txt(document.querySelector(sel))
-    if (v) {
-      headline = v
-      break
-    }
-  }
-
-  // ---- location ---------------------------------------------------------
   let location: string | null = null
-  const locationSelectors = [
-    '[data-test-id="profile-location"]',
-    '[aria-label="Location"]',
-    '.text-body-small.inline.t-black--light.break-words',
-  ]
-  for (const sel of locationSelectors) {
-    const v = txt(document.querySelector(sel))
-    if (v) {
-      location = v
-      break
+  const topCard =
+    document.querySelector('main section:first-of-type') ??
+    document.querySelector('main section')
+  if (topCard) {
+    // Headline: scan candidate elements for the first non-name text body.
+    const headlineCandidates = topCard.querySelectorAll(
+      '.text-body-medium, div[class*="text-body-medium"]',
+    )
+    for (const el of headlineCandidates) {
+      const t = (el.textContent ?? '').trim()
+      if (!t || t === name) continue
+      // Skip nav-bar bits & button labels
+      if (/^\d+\s+(followers|connections|mutual)/i.test(t)) continue
+      if (/^(contact info|message|connect|follow|more)$/i.test(t)) continue
+      if (t.length > 0 && t.length < 300) {
+        headline = t
+        break
+      }
+    }
+    // Location: smaller text body. Often the first .text-body-small without
+    // follower/connection wording.
+    const locCandidates = topCard.querySelectorAll(
+      '.text-body-small, span[class*="text-body-small"]',
+    )
+    for (const el of locCandidates) {
+      const t = (el.textContent ?? '').trim()
+      if (!t || t === name || t === headline) continue
+      if (/contact info|followers|connections|mutual|verifications?/i.test(t)) continue
+      if (t.length > 0 && t.length < 200) {
+        location = t
+        break
+      }
     }
   }
 
   // ---- about ------------------------------------------------------------
   let about: string | null = null
-  const aboutSection =
-    document.querySelector('[data-view-name="profile-component-entity-about"]') ??
-    document.querySelector('#about')?.parentElement ??
-    document.querySelector('#about')
+  const aboutSection = findSection('about', 'About')
   if (aboutSection) {
-    const span = aboutSection.querySelector(
-      '.inline-show-more-text span, .pv-shared-text-with-see-more span',
-    )
-    about = txt(span)
+    // Take the longest aria-hidden span — the actual about body is invariably
+    // the longest text in the section.
+    const spans = [...aboutSection.querySelectorAll('span[aria-hidden="true"]')]
+      .map((s) => (s.textContent ?? '').trim())
+      .filter((t) => t.length > 20 && t.toLowerCase() !== 'about')
+      .sort((a, b) => b.length - a.length)
+    if (spans[0]) about = spans[0]
   }
 
   // ---- work experience --------------------------------------------------
   type WE = { title: string; company: string | null; dates: string | null }
   const experience: WE[] = []
-  const expSection =
-    document.querySelector('[data-view-name="profile-component-entity-experience"]') ??
-    document.querySelector('#experience')?.parentElement ??
-    document.querySelector('#experience')
-  if (expSection) {
-    const entries = expSection.querySelectorAll(
-      '[data-view-name="profile-component-entity-experience-entry"], li.pvs-list__item--line-separated, li.artdeco-list__item',
-    )
-    entries.forEach((entry) => {
-      const spans = entry.querySelectorAll('span[aria-hidden="true"]')
-      const t = txt(spans[0])
-      if (!t) return
-      const rawCompany = txt(spans[1])
-      const company = rawCompany ? rawCompany.split('·')[0]?.trim() ?? null : null
-      experience.push({
-        title: t,
-        company: company && company.length > 0 ? company : null,
-        dates: txt(spans[2]) ?? null,
-      })
-    })
+  const expSection = findSection('experience', 'Experience')
+  for (const entry of getEntries(expSection)) {
+    const spans = readVisibleSpans(entry)
+    if (spans.length === 0) continue
+    const title = spans[0]
+    if (!title) continue
+    let company: string | null = null
+    let dates: string | null = null
+    for (let i = 1; i < spans.length; i++) {
+      const s = spans[i]
+      if (!s) continue
+      if (!dates && looksLikeDateRange(s)) {
+        dates = s
+        continue
+      }
+      if (!company && !looksLikeDateRange(s)) {
+        // Strip "· Full-time", "· Contract" suffixes
+        const head = s.split('·')[0]?.trim() ?? s
+        if (head.length > 0 && head.length < 200 && !isEmploymentMeta(head)) {
+          company = head
+        }
+      }
+    }
+    experience.push({ title, company, dates })
+    if (experience.length >= 30) break
   }
 
   // ---- education --------------------------------------------------------
   type ED = { school: string; degree: string | null; dates: string | null }
   const education: ED[] = []
-  const eduSection =
-    document.querySelector('[data-view-name="profile-component-entity-education"]') ??
-    document.querySelector('#education')?.parentElement ??
-    document.querySelector('#education')
-  if (eduSection) {
-    const entries = eduSection.querySelectorAll(
-      '[data-view-name="profile-component-entity-education-entry"], li.pvs-list__item--line-separated, li.artdeco-list__item',
-    )
-    entries.forEach((entry) => {
-      const spans = entry.querySelectorAll('span[aria-hidden="true"]')
-      const s = txt(spans[0])
-      if (!s) return
-      education.push({
-        school: s,
-        degree: txt(spans[1]) ?? null,
-        dates: txt(spans[2]) ?? null,
-      })
-    })
+  const eduSection = findSection('education', 'Education')
+  for (const entry of getEntries(eduSection)) {
+    const spans = readVisibleSpans(entry)
+    if (spans.length === 0) continue
+    const school = spans[0]
+    if (!school) continue
+    let degree: string | null = null
+    let dates: string | null = null
+    for (let i = 1; i < spans.length; i++) {
+      const s = spans[i]
+      if (!s) continue
+      if (!dates && looksLikeDateRange(s)) {
+        dates = s
+        continue
+      }
+      if (!degree && !looksLikeDateRange(s) && s.length > 0 && s.length < 200) {
+        degree = s
+      }
+    }
+    education.push({ school, degree, dates })
+    if (education.length >= 15) break
   }
 
   // ---- skills -----------------------------------------------------------
   const skills: string[] = []
-  const skillsSection =
-    document.querySelector('[data-view-name="profile-component-entity-skills"]') ??
-    document.querySelector('#skills')?.parentElement ??
-    document.querySelector('#skills')
-  if (skillsSection) {
-    const entries = skillsSection.querySelectorAll(
-      '[data-view-name="profile-component-entity-skill-entry"]',
-    )
-    entries.forEach((entry) => {
-      const span = entry.querySelector('span[aria-hidden="true"]')
-      const v = txt(span)
-      if (v) skills.push(v)
-    })
+  const skillsSection = findSection('skills', 'Skills')
+  for (const entry of getEntries(skillsSection)) {
+    const spans = readVisibleSpans(entry)
+    const skill = spans[0]
+    // Skip "Endorsed by N connections" type strings
+    if (skill && skill.length < 100 && !/^endorsed by/i.test(skill)) {
+      skills.push(skill)
+      if (skills.length >= 100) break
+    }
   }
 
   // ---- current role + company ------------------------------------------

@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Altus — LinkedIn capture",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Capture a LinkedIn profile into the Altus CRM with one click.",
   "permissions": ["activeTab", "scripting", "storage"],
   "host_permissions": [
