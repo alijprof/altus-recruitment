@@ -264,6 +264,11 @@ export const parseCVOnUpload = inngest.createFunction(
             years_experience_total: parsed.years_experience_total ?? null,
             skills: parsed.skills ?? null,
             sector_tags: parsed.sector_tags ?? null,
+            // JSONB-array fields — added 2026-05-22 to populate the
+            // candidates.work_experience and candidates.education columns
+            // introduced for the LinkedIn-PDF flow.
+            work_history: parsed.work_history ?? null,
+            education: parsed.education ?? null,
           },
         })
       })

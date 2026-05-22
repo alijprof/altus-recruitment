@@ -193,8 +193,10 @@ export async function updateCandidateCVParse(
 //   Arrays (empty-array check — `text[] not null default '{}'`):
 //     skills, sector_tags
 //
-//   NOT on candidates (stay in extracted_data JSONB on candidate_cvs only):
-//     work_history, education
+//   JSONB arrays (empty-array check on the candidate column):
+//     work_history → work_experience, education → education
+//     Migration 20260522094604 added these columns so LinkedIn capture +
+//     PDF-derived CV parses can populate the candidate page directly.
 //
 // D-08: NEVER overwrite manually-entered fields. "Accept all" only fills
 // empties. The patch object built below is the single enforcement point —
@@ -215,6 +217,61 @@ type ParsedCVSubset = {
   years_experience_total?: number | null
   skills?: string[] | null
   sector_tags?: string[] | null
+  // Optional structured arrays from CV parsing. Each mapped to the matching
+  // jsonb candidate column shape (see mapWorkHistory / mapEducation).
+  work_history?: Array<{
+    company?: string
+    role?: string
+    start_date?: string
+    end_date?: string
+    summary?: string
+  }> | null
+  education?: Array<{
+    institution?: string
+    qualification?: string
+    year?: string
+  }> | null
+}
+
+// Map parsed.work_history (CV shape) onto candidates.work_experience
+// (LinkedIn-capture-ish shape). Skips entries without a role.
+function mapWorkHistory(
+  items: NonNullable<ParsedCVSubset['work_history']>,
+): Array<{ title: string; company: string | null; dates: string | null }> {
+  const out: Array<{ title: string; company: string | null; dates: string | null }> = []
+  for (const item of items) {
+    const title = (item.role ?? '').trim()
+    if (!title) continue
+    const start = (item.start_date ?? '').trim()
+    const end = (item.end_date ?? '').trim()
+    let dates: string | null = null
+    if (start && end) dates = `${start} - ${end}`
+    else if (start) dates = `${start} - Present`
+    else if (end) dates = end
+    out.push({
+      title,
+      company: (item.company ?? '').trim() || null,
+      dates,
+    })
+  }
+  return out
+}
+
+// Map parsed.education (CV shape) onto candidates.education
+function mapEducation(
+  items: NonNullable<ParsedCVSubset['education']>,
+): Array<{ school: string; degree: string | null; dates: string | null }> {
+  const out: Array<{ school: string; degree: string | null; dates: string | null }> = []
+  for (const item of items) {
+    const school = (item.institution ?? '').trim()
+    if (!school) continue
+    out.push({
+      school,
+      degree: (item.qualification ?? '').trim() || null,
+      dates: (item.year ?? '').trim() || null,
+    })
+  }
+  return out
 }
 
 // Scalar mapping: parsed key → candidate column. Note the rename of
@@ -258,6 +315,8 @@ export async function markCandidateFieldsFromCV(
   const columns = [
     ...SCALAR_FIELD_MAP.map(([, col]) => col),
     ...ARRAY_FIELD_MAP.map(([, col]) => col),
+    'work_experience',
+    'education',
   ].join(', ')
 
   const { data: current, error: readError } = await supabase
@@ -301,6 +360,24 @@ export async function markCandidateFieldsFromCV(
     ) {
       patch[col] = parsedValue
     }
+  }
+
+  // JSONB array fields — same fill-empty rule, but each needs a mapper to
+  // translate the parsed-CV shape to the candidate-column shape.
+  const candidateWorkExperience = row['work_experience']
+  const workExperienceEmpty =
+    Array.isArray(candidateWorkExperience) && candidateWorkExperience.length === 0
+  if (workExperienceEmpty && Array.isArray(args.parsed.work_history) && args.parsed.work_history.length > 0) {
+    const mapped = mapWorkHistory(args.parsed.work_history)
+    if (mapped.length > 0) patch['work_experience'] = mapped
+  }
+
+  const candidateEducation = row['education']
+  const educationEmpty =
+    Array.isArray(candidateEducation) && candidateEducation.length === 0
+  if (educationEmpty && Array.isArray(args.parsed.education) && args.parsed.education.length > 0) {
+    const mapped = mapEducation(args.parsed.education)
+    if (mapped.length > 0) patch['education'] = mapped
   }
 
   if (Object.keys(patch).length === 0) {

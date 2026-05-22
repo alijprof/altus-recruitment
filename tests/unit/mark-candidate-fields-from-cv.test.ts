@@ -36,6 +36,8 @@ type CandidateRow = {
   years_experience: number | null
   skills: string[]
   sector_tags: string[]
+  work_experience: unknown[]
+  education: unknown[]
 }
 
 type Patch = Partial<CandidateRow>
@@ -79,6 +81,8 @@ const emptyCandidate: CandidateRow = {
   years_experience: null,
   skills: [],
   sector_tags: [],
+  work_experience: [],
+  education: [],
 }
 
 const parsedFull = {
@@ -221,6 +225,8 @@ describe('markCandidateFieldsFromCV (D-08 empty-only enforcement)', () => {
       years_experience: 1,
       skills: ['x'],
       sector_tags: ['x'],
+      work_experience: [{ title: 'X' }],
+      education: [{ school: 'X' }],
     })
     const result = await markCandidateFieldsFromCV(sb.client, {
       candidateId: 'cand-1',
@@ -244,5 +250,93 @@ describe('markCandidateFieldsFromCV (D-08 empty-only enforcement)', () => {
     expect(result.ok).toBe(true)
     // All parsed values are empty — no write should occur.
     expect(sb.updateSpy).not.toHaveBeenCalled()
+  })
+
+  it('maps work_history → work_experience when the candidate column is empty', async () => {
+    const sb = makeSupabase(emptyCandidate)
+    const result = await markCandidateFieldsFromCV(sb.client, {
+      candidateId: 'cand-1',
+      parsed: {
+        work_history: [
+          {
+            role: 'Senior Engineer',
+            company: 'Acme',
+            start_date: 'Jan 2020',
+            end_date: 'Dec 2023',
+          },
+          {
+            role: 'Junior Engineer',
+            company: 'Beta',
+            start_date: '2017',
+            end_date: '2019',
+          },
+        ],
+      },
+    })
+    expect(result.ok).toBe(true)
+    expect(sb.spy()?.work_experience).toEqual([
+      { title: 'Senior Engineer', company: 'Acme', dates: 'Jan 2020 - Dec 2023' },
+      { title: 'Junior Engineer', company: 'Beta', dates: '2017 - 2019' },
+    ])
+  })
+
+  it('synthesises "Present" when work_history end_date is missing', async () => {
+    const sb = makeSupabase(emptyCandidate)
+    await markCandidateFieldsFromCV(sb.client, {
+      candidateId: 'cand-1',
+      parsed: {
+        work_history: [{ role: 'Founder', company: 'NewCo', start_date: '2024' }],
+      },
+    })
+    expect(sb.spy()?.work_experience).toEqual([
+      { title: 'Founder', company: 'NewCo', dates: '2024 - Present' },
+    ])
+  })
+
+  it('skips work_history entries without a role', async () => {
+    const sb = makeSupabase(emptyCandidate)
+    await markCandidateFieldsFromCV(sb.client, {
+      candidateId: 'cand-1',
+      parsed: {
+        work_history: [
+          { company: 'Acme' }, // no role — drop
+          { role: 'Engineer', company: 'Beta' },
+        ],
+      },
+    })
+    expect(sb.spy()?.work_experience).toEqual([
+      { title: 'Engineer', company: 'Beta', dates: null },
+    ])
+  })
+
+  it('maps education[] → candidates.education when empty', async () => {
+    const sb = makeSupabase(emptyCandidate)
+    await markCandidateFieldsFromCV(sb.client, {
+      candidateId: 'cand-1',
+      parsed: {
+        education: [
+          { institution: 'University of Warwick', qualification: 'BSc Engineering', year: '2015' },
+          { institution: 'Oxford', qualification: 'MSc', year: '' },
+        ],
+      },
+    })
+    expect(sb.spy()?.education).toEqual([
+      { school: 'University of Warwick', degree: 'BSc Engineering', dates: '2015' },
+      { school: 'Oxford', degree: 'MSc', dates: null },
+    ])
+  })
+
+  it('NEVER overwrites a populated work_experience array (D-08)', async () => {
+    const sb = makeSupabase({
+      ...emptyCandidate,
+      work_experience: [{ title: 'Manual entry' }],
+    })
+    await markCandidateFieldsFromCV(sb.client, {
+      candidateId: 'cand-1',
+      parsed: {
+        work_history: [{ role: 'Engineer', company: 'NewCo' }],
+      },
+    })
+    expect(sb.spy()?.work_experience).toBeUndefined()
   })
 })

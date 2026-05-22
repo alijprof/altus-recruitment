@@ -318,6 +318,15 @@ export default async function CandidateDetailPage({
         <aside className="space-y-4">
           <section className="bg-card space-y-3 rounded-md border p-4">
             <h2 className="text-sm font-semibold">Upload CV</h2>
+            {candidate.source === 'linkedin' &&
+            Array.isArray(candidate.work_experience) &&
+            candidate.work_experience.length === 0 ? (
+              <p className="text-muted-foreground text-xs leading-relaxed">
+                Tip: from this candidate&apos;s LinkedIn profile, click{' '}
+                <span className="font-medium">More → Save to PDF</span>, then drop
+                that PDF here to import full work history, education, and skills.
+              </p>
+            ) : null}
             <CvUpload candidateId={candidate.id} />
           </section>
 
