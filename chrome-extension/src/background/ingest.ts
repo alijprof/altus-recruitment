@@ -429,8 +429,40 @@ async function scrapeProfileInPage(url: string): Promise<unknown> {
       // isn't "· 2nd" — we want clean text.
       const clean = (raw: string): string => raw.replace(/^[\s·•|]+/, '').trim()
       const candidates = leafTexts.filter((t) => !reject(t)).map(clean)
+
+      // Classification heuristics. A location looks like "City, Country" or
+      // mentions "Area" / "Region" — and crucially does NOT contain company
+      // or school suffixes. A company/school line is the "Acme Ltd · The
+      // University of X" subtitle LinkedIn shows below the headline.
+      const looksLikeCompanySchool = (t: string): boolean =>
+        /\b(ltd|inc|llc|gmbh|co\.|corp|university|college|school|academy|institute|plc)\b/i.test(t)
+      const looksLikeLocation = (t: string): boolean => {
+        if (looksLikeCompanySchool(t)) return false
+        if (t.includes(',')) return true
+        if (/\b(area|region|county|metropolitan)\b/i.test(t)) return true
+        return false
+      }
+
+      // Pick the first candidate as headline (LinkedIn renders it directly
+      // under the name). Then pick the first location-looking candidate
+      // among the rest. If no location candidate matches, fall back to the
+      // first remaining non-company/school line.
       if (candidates[0]) headline = candidates[0]
-      if (candidates[1]) location = candidates[1]
+      const rest = candidates.slice(1)
+      for (const t of rest) {
+        if (looksLikeLocation(t)) {
+          location = t
+          break
+        }
+      }
+      if (!location) {
+        for (const t of rest) {
+          if (!looksLikeCompanySchool(t)) {
+            location = t
+            break
+          }
+        }
+      }
     }
   }
 
@@ -573,11 +605,11 @@ async function scrapeProfileInPage(url: string): Promise<unknown> {
     return out
   }
   // Just the heading text for h2s (low PII risk — these are section titles)
-  function h2Texts(): string[] {
-    return [...document.querySelectorAll('h2')]
+  function headingTexts(tag: string): string[] {
+    return [...document.querySelectorAll(tag)]
       .map((h) => (h.textContent ?? '').trim().slice(0, 60))
       .filter((t) => t.length > 0)
-      .slice(0, 20)
+      .slice(0, 25)
   }
   // Probe whether the section anchors exist in any form
   function anchorPresence(): Record<string, boolean> {
@@ -637,7 +669,9 @@ async function scrapeProfileInPage(url: string): Promise<unknown> {
     section_count: document.querySelectorAll('section').length,
     main_section_count: document.querySelectorAll('main section').length,
     anchor_presence: anchorPresence(),
-    h2_texts: h2Texts(),
+    h2_texts: headingTexts('h2'),
+    h3_count: document.querySelectorAll('h3').length,
+    h3_texts: headingTexts('h3'),
     details_links: detailsLinks(),
     top_card_first_main_section: signatures('main section:first-of-type > div', 5),
     text_body_medium_count: document.querySelectorAll('.text-body-medium').length,
