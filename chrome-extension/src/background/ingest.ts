@@ -411,17 +411,24 @@ async function scrapeProfileInPage(url: string): Promise<unknown> {
         }
         node = walker.nextNode()
       }
-      // Reject obvious chrome
-      const reject = (t: string): boolean => {
-        if (t === name) return true
-        if (/^\d+(\.\d+)?(K|M)?\s*(followers|connections|mutual|reactions|views?)/i.test(t)) return true
-        if (/^(contact info|message|connect|follow|following|more|see contact info|verified)$/i.test(t)) return true
-        if (/^(he\/him|she\/her|they\/them)/i.test(t)) return true
-        if (/^\d+(st|nd|rd|th)\b/i.test(t)) return true
-        if (/^·$/.test(t)) return true
+      // Reject obvious chrome. Strip leading separator/whitespace first
+      // because LinkedIn renders degree badges as "· 2nd" (middle-dot
+      // U+00B7 + space + ordinal).
+      const reject = (raw: string): boolean => {
+        const t = raw.replace(/^[\s·•|]+/, '').trim()
+        if (!t || t === name) return true
+        if (/^\d+(\.\d+)?[KM]?\+?\s*(followers|connections|mutual|reactions|views?|connection)/i.test(t)) return true
+        if (/^(contact info|message|connect|follow|following|more|see contact info|verified|open to work|hiring|share profile|edit profile|save|see all)$/i.test(t)) return true
+        if (/^(he\/him|she\/her|they\/them|he\/his|she\/her\/hers)/i.test(t)) return true
+        if (/^\d+(st|nd|rd|th)\+?(\s|$)/i.test(t)) return true
+        if (/^[·•|\-]+$/.test(t)) return true
+        if (/^(available|active|online|now)$/i.test(t)) return true
         return false
       }
-      const candidates = leafTexts.filter((t) => !reject(t))
+      // Also strip leading separators from candidates so the chosen value
+      // isn't "· 2nd" — we want clean text.
+      const clean = (raw: string): string => raw.replace(/^[\s·•|]+/, '').trim()
+      const candidates = leafTexts.filter((t) => !reject(t)).map(clean)
       if (candidates[0]) headline = candidates[0]
       if (candidates[1]) location = candidates[1]
     }
@@ -590,6 +597,37 @@ async function scrapeProfileInPage(url: string): Promise<unknown> {
     return [...new Set(hits)].slice(0, 10)
   }
 
+  // Probe what entries look like inside each named section so we can
+  // iterate selectors. Returns counts + first few visible text strings
+  // for each entry candidate. No PII beyond what's already on the user's
+  // own LinkedIn page.
+  function diagnoseSection(headingText: string): unknown {
+    const section = findSectionByH2(headingText)
+    if (!section) return { found: false }
+    const lis = [...section.querySelectorAll('li')]
+    const lisWithAria = lis.filter((li) => li.querySelector('span[aria-hidden="true"]'))
+    const firstSpanTexts = [...section.querySelectorAll('span[aria-hidden="true"]')]
+      .slice(0, 8)
+      .map((s) => (s.textContent ?? '').trim().slice(0, 60))
+    return {
+      found: true,
+      raw_li_count: lis.length,
+      li_with_aria_count: lisWithAria.length,
+      aria_hidden_span_count: section.querySelectorAll('span[aria-hidden="true"]').length,
+      a_count: section.querySelectorAll('a').length,
+      company_link_count: section.querySelectorAll('a[href*="/company/"]').length,
+      school_link_count: section.querySelectorAll('a[href*="/school/"]').length,
+      ul_count: section.querySelectorAll('ul').length,
+      div_with_aria_span_count: [...section.querySelectorAll('div')].filter((d) => {
+        // Direct-child aria-hidden span (not deeply nested)
+        return [...d.children].some(
+          (c) => c.tagName === 'SPAN' && c.getAttribute('aria-hidden') === 'true',
+        )
+      }).length,
+      first_visible_texts: firstSpanTexts,
+    }
+  }
+
   // eslint-disable-next-line no-console
   console.log('[Altus diagnostics]', {
     pathname: window.location.pathname,
@@ -608,6 +646,10 @@ async function scrapeProfileInPage(url: string): Promise<unknown> {
     pvs_list_item_count: document.querySelectorAll('li.pvs-list__item--line-separated').length,
     artdeco_list_item_count: document.querySelectorAll('li.artdeco-list__item').length,
     sections_above_main: signatures('main > section', 8),
+    section_experience: diagnoseSection('Experience'),
+    section_education: diagnoseSection('Education'),
+    section_skills: diagnoseSection('Skills'),
+    section_about: diagnoseSection('About'),
   })
 
   return {
