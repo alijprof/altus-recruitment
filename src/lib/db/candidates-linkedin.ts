@@ -150,13 +150,24 @@ export async function upsertCandidateFromLinkedIn(
     // UPDATE existing row — fill-empty-only on the structured fields. The
     // candidate may have manual notes/edits we don't want to clobber; the
     // "Updated existing candidate" toast in the popup signals this.
+    //
+    // For LinkedIn-sourced biographical fields (headline / about /
+    // work_experience / education / skills) we accept the freshest snapshot
+    // verbatim — LinkedIn is the canonical source of truth for these and the
+    // recruiter can edit on the candidate page.
     const patch = {
-      // Headline / current_role / current_company — accept the LinkedIn
-      // values verbatim (most up-to-date by definition). Recruiter can
-      // edit on the candidate page.
+      headline: profile.headline ?? undefined,
+      about: profile.about ?? undefined,
       current_role_title: profile.current_role ?? undefined,
       current_company: profile.current_company ?? undefined,
       location: profile.location ?? undefined,
+      ...(profile.work_experience.length > 0
+        ? { work_experience: profile.work_experience as unknown as TablesUpdate<'candidates'>['work_experience'] }
+        : {}),
+      ...(profile.education.length > 0
+        ? { education: profile.education as unknown as TablesUpdate<'candidates'>['education'] }
+        : {}),
+      ...(profile.skills.length > 0 ? { skills: profile.skills } : {}),
       // Only fill source_detail if absent (keep the original LinkedIn URL
       // if the row already has one from a prior capture).
       ...(profile.linkedin_url ? { source_detail: profile.linkedin_url } : {}),
@@ -200,11 +211,15 @@ export async function upsertCandidateFromLinkedIn(
   // payload to exactly what we actually send (mirrors candidates.ts pattern).
   const insertPayload = {
     full_name: profile.name,
+    headline: profile.headline ?? null,
+    about: profile.about ?? null,
     email: profile.email ? profile.email.toLowerCase().trim() : null,
     location: profile.location ?? null,
     current_role_title: profile.current_role ?? null,
     current_company: profile.current_company ?? null,
     skills: profile.skills ?? [],
+    work_experience: profile.work_experience,
+    education: profile.education,
     source: 'linkedin' as const,
     source_detail: profile.linkedin_url,
     consent_basis: 'legitimate_interest' as const,

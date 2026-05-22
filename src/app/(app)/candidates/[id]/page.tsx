@@ -59,6 +59,47 @@ function FieldGroup({
   )
 }
 
+// Permissive parsers — work_experience / education are stored as jsonb so the
+// generated type is `Json`. The capture path always writes the documented
+// shape, but we accept partial entries defensively (any string field can be
+// missing) so a malformed historical row doesn't blow up the page.
+type WorkEntry = { title: string; company: string | null; dates: string | null }
+type EducationEntry = { school: string; degree: string | null; dates: string | null }
+
+function parseWorkExperience(raw: unknown): WorkEntry[] {
+  if (!Array.isArray(raw)) return []
+  return raw
+    .map((r): WorkEntry | null => {
+      if (!r || typeof r !== 'object') return null
+      const obj = r as Record<string, unknown>
+      const title = typeof obj.title === 'string' ? obj.title : null
+      if (!title) return null
+      return {
+        title,
+        company: typeof obj.company === 'string' ? obj.company : null,
+        dates: typeof obj.dates === 'string' ? obj.dates : null,
+      }
+    })
+    .filter((e): e is WorkEntry => e !== null)
+}
+
+function parseEducation(raw: unknown): EducationEntry[] {
+  if (!Array.isArray(raw)) return []
+  return raw
+    .map((r): EducationEntry | null => {
+      if (!r || typeof r !== 'object') return null
+      const obj = r as Record<string, unknown>
+      const school = typeof obj.school === 'string' ? obj.school : null
+      if (!school) return null
+      return {
+        school,
+        degree: typeof obj.degree === 'string' ? obj.degree : null,
+        dates: typeof obj.dates === 'string' ? obj.dates : null,
+      }
+    })
+    .filter((e): e is EducationEntry => e !== null)
+}
+
 export default async function CandidateDetailPage({
   params,
 }: {
@@ -80,6 +121,8 @@ export default async function CandidateDetailPage({
     )
   }
   const candidate = candidateResult.data
+  const workExperience = parseWorkExperience(candidate.work_experience)
+  const education = parseEducation(candidate.education)
 
   // CV rows — newest first. Best-effort; an error doesn't block the page.
   const cvsResult = await listCandidateCVs(supabase, id)
@@ -192,6 +235,78 @@ export default async function CandidateDetailPage({
               />
             </FieldGroup>
           </div>
+
+          {candidate.headline ? (
+            <section className="bg-card space-y-2 rounded-md border p-4">
+              <h2 className="text-sm font-semibold">Headline</h2>
+              <Separator />
+              <p className="text-sm leading-relaxed">{candidate.headline}</p>
+            </section>
+          ) : null}
+
+          {candidate.about ? (
+            <section className="bg-card space-y-2 rounded-md border p-4">
+              <h2 className="text-sm font-semibold">About</h2>
+              <Separator />
+              <p className="text-sm leading-relaxed whitespace-pre-wrap">
+                {candidate.about}
+              </p>
+            </section>
+          ) : null}
+
+          {workExperience.length > 0 ? (
+            <section className="bg-card space-y-3 rounded-md border p-4">
+              <h2 className="text-sm font-semibold">Experience</h2>
+              <Separator />
+              <ul className="space-y-3">
+                {workExperience.map((entry, i) => (
+                  <li key={`exp-${i}`} className="space-y-0.5">
+                    <p className="text-sm font-medium">{entry.title}</p>
+                    {entry.company ? (
+                      <p className="text-muted-foreground text-sm">{entry.company}</p>
+                    ) : null}
+                    {entry.dates ? (
+                      <p className="text-muted-foreground text-xs">{entry.dates}</p>
+                    ) : null}
+                  </li>
+                ))}
+              </ul>
+            </section>
+          ) : null}
+
+          {education.length > 0 ? (
+            <section className="bg-card space-y-3 rounded-md border p-4">
+              <h2 className="text-sm font-semibold">Education</h2>
+              <Separator />
+              <ul className="space-y-3">
+                {education.map((entry, i) => (
+                  <li key={`edu-${i}`} className="space-y-0.5">
+                    <p className="text-sm font-medium">{entry.school}</p>
+                    {entry.degree ? (
+                      <p className="text-muted-foreground text-sm">{entry.degree}</p>
+                    ) : null}
+                    {entry.dates ? (
+                      <p className="text-muted-foreground text-xs">{entry.dates}</p>
+                    ) : null}
+                  </li>
+                ))}
+              </ul>
+            </section>
+          ) : null}
+
+          {candidate.skills && candidate.skills.length > 0 ? (
+            <section className="bg-card space-y-3 rounded-md border p-4">
+              <h2 className="text-sm font-semibold">Skills</h2>
+              <Separator />
+              <div className="flex flex-wrap gap-1.5">
+                {candidate.skills.map((skill) => (
+                  <Badge key={skill} variant="secondary" className="text-xs font-normal">
+                    {skill}
+                  </Badge>
+                ))}
+              </div>
+            </section>
+          ) : null}
 
           <section className="space-y-3">
             <h2 className="text-sm font-semibold">Activity</h2>

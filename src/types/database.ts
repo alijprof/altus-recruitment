@@ -429,6 +429,7 @@ export type Database = {
       }
       candidates: {
         Row: {
+          about: string | null
           candidate_embedding: unknown
           consent_at: string | null
           consent_basis: Database["public"]["Enums"]["consent_basis"] | null
@@ -438,10 +439,12 @@ export type Database = {
           currency: string
           current_company: string | null
           current_role_title: string | null
+          education: Json
           email: string | null
           embedded_at: string | null
           embedding_version: number | null
           full_name: string
+          headline: string | null
           id: string
           last_contacted_at: string | null
           location: string | null
@@ -458,9 +461,11 @@ export type Database = {
           source: Database["public"]["Enums"]["candidate_source"]
           source_detail: string | null
           updated_at: string
+          work_experience: Json
           years_experience: number | null
         }
         Insert: {
+          about?: string | null
           candidate_embedding?: unknown
           consent_at?: string | null
           consent_basis?: Database["public"]["Enums"]["consent_basis"] | null
@@ -470,10 +475,12 @@ export type Database = {
           currency?: string
           current_company?: string | null
           current_role_title?: string | null
+          education?: Json
           email?: string | null
           embedded_at?: string | null
           embedding_version?: number | null
           full_name: string
+          headline?: string | null
           id?: string
           last_contacted_at?: string | null
           location?: string | null
@@ -490,9 +497,11 @@ export type Database = {
           source?: Database["public"]["Enums"]["candidate_source"]
           source_detail?: string | null
           updated_at?: string
+          work_experience?: Json
           years_experience?: number | null
         }
         Update: {
+          about?: string | null
           candidate_embedding?: unknown
           consent_at?: string | null
           consent_basis?: Database["public"]["Enums"]["consent_basis"] | null
@@ -502,10 +511,12 @@ export type Database = {
           currency?: string
           current_company?: string | null
           current_role_title?: string | null
+          education?: Json
           email?: string | null
           embedded_at?: string | null
           embedding_version?: number | null
           full_name?: string
+          headline?: string | null
           id?: string
           last_contacted_at?: string | null
           location?: string | null
@@ -522,6 +533,7 @@ export type Database = {
           source?: Database["public"]["Enums"]["candidate_source"]
           source_detail?: string | null
           updated_at?: string
+          work_experience?: Json
           years_experience?: number | null
         }
         Relationships: [
