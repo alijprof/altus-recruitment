@@ -367,7 +367,28 @@ export async function acceptCVFieldsAction(rawInput: unknown): Promise<AcceptCVF
     parsed: extracted,
   })
   if (!mergeResult.ok) {
-    return { ok: false, error: 'Couldn’t merge CV fields onto the candidate.' }
+    // The helper already captures the underlying DB error to Sentry — add
+    // a contextual breadcrumb here so the dashboard groups failures by
+    // their result-code (read/update/not_found) and we can debug fast.
+    Sentry.captureException(
+      new Error(`acceptCVFieldsAction: merge failed (${mergeResult.code})`),
+      {
+        tags: {
+          layer: 'server-action',
+          action: 'acceptCVFieldsAction',
+          merge_code: mergeResult.code,
+          candidate_id: cv.candidate_id,
+          candidate_cv_id: cv.id,
+        },
+      },
+    )
+    return {
+      ok: false,
+      error:
+        mergeResult.code === 'not_found'
+          ? 'Candidate not found.'
+          : `Couldn’t merge CV fields onto the candidate (${mergeResult.code}).`,
+    }
   }
 
   // UI-SPEC §Activity Type Labels — "CV parsed" → "CV extracted by AI".

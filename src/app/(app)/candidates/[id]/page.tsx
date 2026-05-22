@@ -59,6 +59,23 @@ function FieldGroup({
   )
 }
 
+// Format a salary value with its currency. Returns null for empty so the
+// FieldRow component renders its "—" placeholder.
+function formatSalary(value: number | null | undefined, currency: string | null | undefined): string | null {
+  if (value == null) return null
+  const code = currency && currency.length > 0 ? currency : 'GBP'
+  try {
+    return new Intl.NumberFormat('en-GB', {
+      style: 'currency',
+      currency: code,
+      maximumFractionDigits: 0,
+    }).format(value)
+  } catch {
+    // Fallback if currency code is invalid — render the raw number.
+    return `${code} ${value.toLocaleString()}`
+  }
+}
+
 // Permissive parsers — work_experience / education are stored as jsonb so the
 // generated type is `Json`. The capture path always writes the documented
 // shape, but we accept partial entries defensively (any string field can be
@@ -210,10 +227,39 @@ export default async function CandidateDetailPage({
             <FieldGroup heading="Employment">
               <FieldRow label="Current role" value={candidate.current_role_title} />
               <FieldRow label="Current company" value={candidate.current_company} />
+              <FieldRow
+                label="Seniority"
+                value={
+                  candidate.seniority_level
+                    ? candidate.seniority_level
+                        .charAt(0)
+                        .toUpperCase() + candidate.seniority_level.slice(1)
+                    : null
+                }
+              />
+              <FieldRow
+                label="Years experience"
+                value={
+                  candidate.years_experience != null
+                    ? String(candidate.years_experience)
+                    : null
+                }
+              />
               <FieldRow label="Source" value={SOURCE_LABEL[candidate.source] ?? candidate.source} />
               <FieldRow
                 label="Last contacted"
                 value={formatTimeAgo(candidate.last_contacted_at ?? null)}
+              />
+            </FieldGroup>
+
+            <FieldGroup heading="Compensation">
+              <FieldRow
+                label="Current salary (est.)"
+                value={formatSalary(candidate.salary_current_estimate, candidate.currency)}
+              />
+              <FieldRow
+                label="Expected salary"
+                value={formatSalary(candidate.salary_expectation, candidate.currency)}
               />
             </FieldGroup>
 
@@ -302,6 +348,20 @@ export default async function CandidateDetailPage({
                 {candidate.skills.map((skill) => (
                   <Badge key={skill} variant="secondary" className="text-xs font-normal">
                     {skill}
+                  </Badge>
+                ))}
+              </div>
+            </section>
+          ) : null}
+
+          {candidate.sector_tags && candidate.sector_tags.length > 0 ? (
+            <section className="bg-card space-y-3 rounded-md border p-4">
+              <h2 className="text-sm font-semibold">Sectors</h2>
+              <Separator />
+              <div className="flex flex-wrap gap-1.5">
+                {candidate.sector_tags.map((sector) => (
+                  <Badge key={sector} variant="outline" className="text-xs font-normal">
+                    {sector}
                   </Badge>
                 ))}
               </div>

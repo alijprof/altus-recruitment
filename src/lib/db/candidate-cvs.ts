@@ -312,16 +312,14 @@ export async function markCandidateFieldsFromCV(
   supabase: SupabaseClient<Database>,
   args: { candidateId: string; parsed: ParsedCVSubset },
 ): Promise<DbResult<MarkCandidateFieldsResult>> {
-  const columns = [
-    ...SCALAR_FIELD_MAP.map(([, col]) => col),
-    ...ARRAY_FIELD_MAP.map(([, col]) => col),
-    'work_experience',
-    'education',
-  ].join(', ')
-
+  // Select * so we don't 400 if the migration that added work_experience /
+  // education hasn't yet applied on this environment. Reading the full row
+  // for a single id costs us only the embedding (halfvec) extra bytes,
+  // which is negligible. The empty-checks below tolerate missing columns
+  // because they short-circuit on `undefined` (not an array).
   const { data: current, error: readError } = await supabase
     .from('candidates')
-    .select(columns)
+    .select('*')
     .eq('id', args.candidateId)
     .maybeSingle()
 
