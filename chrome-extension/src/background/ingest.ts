@@ -242,12 +242,36 @@ async function runScraper(tabId: number, url: string): Promise<ScrapedProfilePay
  * first, fall through to more fragile fallbacks. Logs to the page
  * console so issues are diagnosable from LinkedIn-tab DevTools.
  */
-function scrapeProfileInPage(url: string): unknown {
+async function scrapeProfileInPage(url: string): Promise<unknown> {
   function txt(el: Element | null | undefined): string | null {
     if (!el) return null
     const t = (el.textContent ?? '').trim()
     return t.length === 0 ? null : t
   }
+
+  // LinkedIn lazy-loads the experience / education / skills sections via
+  // intersection observers. If we scrape right after the user clicks the
+  // popup, those sections may not be in the DOM yet — they only mount when
+  // scrolled into view. Force-mount them by scrolling the entire page bottom
+  // and back, with a short wait between each step to give React time to
+  // render.
+  async function forceLazyMount(): Promise<void> {
+    const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
+    const scroller = document.scrollingElement ?? document.documentElement
+    const totalHeight = scroller.scrollHeight
+    const step = Math.max(800, Math.floor(window.innerHeight * 0.8))
+    let pos = 0
+    for (let i = 0; i < 12 && pos < totalHeight; i++) {
+      pos += step
+      window.scrollTo({ top: pos, behavior: 'instant' as ScrollBehavior })
+      await sleep(150)
+    }
+    // Back to top so the user's view isn't disturbed
+    window.scrollTo({ top: 0, behavior: 'instant' as ScrollBehavior })
+    await sleep(200)
+  }
+
+  await forceLazyMount()
 
   // Find a section by:
   //   1. document.getElementById(anchorId) — LinkedIn keeps these for jump-nav
@@ -505,8 +529,9 @@ function scrapeProfileInPage(url: string): unknown {
   const capture_confidence = Object.values(weights).reduce((a, b) => a + b, 0)
 
   // ---- diagnostics ------------------------------------------------------
-  // Log to the page's own console so the user can debug from LinkedIn
-  // tab DevTools if scraping fails.
+  // Log a compact summary first, then a rich diagnostic dump that helps us
+  // iterate selectors when extraction misses. The dump deliberately avoids
+  // raw outerHTML (could contain PII) and instead reports structural signals.
   // eslint-disable-next-line no-console
   console.log('[Altus capture]', {
     name,
@@ -516,6 +541,64 @@ function scrapeProfileInPage(url: string): unknown {
     education_count: education.length,
     skill_count: skills.length,
     confidence: capture_confidence,
+  })
+
+  // Helper for the dump: collect up to N tag+class signatures of elements
+  // matching a selector. Skips text/PII so we can paste this safely.
+  function signatures(selector: string, n: number): string[] {
+    const out: string[] = []
+    const nodes = document.querySelectorAll(selector)
+    for (let i = 0; i < nodes.length && out.length < n; i++) {
+      const el = nodes[i]
+      if (!el) continue
+      const cls = String((el as HTMLElement).className || '').split(/\s+/).slice(0, 3).join('.')
+      out.push(`${el.tagName.toLowerCase()}${cls ? '.' + cls : ''}`)
+    }
+    return out
+  }
+  // Just the heading text for h2s (low PII risk — these are section titles)
+  function h2Texts(): string[] {
+    return [...document.querySelectorAll('h2')]
+      .map((h) => (h.textContent ?? '').trim().slice(0, 60))
+      .filter((t) => t.length > 0)
+      .slice(0, 20)
+  }
+  // Probe whether the section anchors exist in any form
+  function anchorPresence(): Record<string, boolean> {
+    const ids = ['about', 'experience', 'education', 'skills', 'licenses_and_certifications']
+    const out: Record<string, boolean> = {}
+    for (const id of ids) {
+      out[`#${id}`] = !!document.getElementById(id)
+    }
+    return out
+  }
+  // Detect anchors LinkedIn uses for "Show all" deep links — these are very
+  // stable URL patterns (e.g. /in/<id>/details/experience).
+  function detailsLinks(): string[] {
+    const hits = [...document.querySelectorAll('a[href*="/details/"]')]
+      .map((a) => (a as HTMLAnchorElement).getAttribute('href') || '')
+      .map((h) => h.replace(/^.*\/details\//, 'details/').slice(0, 60))
+    return [...new Set(hits)].slice(0, 10)
+  }
+
+  // eslint-disable-next-line no-console
+  console.log('[Altus diagnostics]', {
+    pathname: window.location.pathname,
+    main_exists: !!document.querySelector('main'),
+    h1_count: document.querySelectorAll('h1').length,
+    h2_count: document.querySelectorAll('h2').length,
+    section_count: document.querySelectorAll('section').length,
+    main_section_count: document.querySelectorAll('main section').length,
+    anchor_presence: anchorPresence(),
+    h2_texts: h2Texts(),
+    details_links: detailsLinks(),
+    top_card_first_main_section: signatures('main section:first-of-type > div', 5),
+    text_body_medium_count: document.querySelectorAll('.text-body-medium').length,
+    text_body_small_count: document.querySelectorAll('.text-body-small').length,
+    aria_hidden_span_count: document.querySelectorAll('span[aria-hidden="true"]').length,
+    pvs_list_item_count: document.querySelectorAll('li.pvs-list__item--line-separated').length,
+    artdeco_list_item_count: document.querySelectorAll('li.artdeco-list__item').length,
+    sections_above_main: signatures('main > section', 8),
   })
 
   return {
