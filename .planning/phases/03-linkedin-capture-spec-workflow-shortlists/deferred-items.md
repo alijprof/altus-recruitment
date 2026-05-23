@@ -1,15 +1,14 @@
 # Phase 3 Deferred Items
 
-deferred-item: lint error in src/app/(app)/jobs/[id]/shortlist/add-to-shortlist-dialog.tsx:62
-  Rule: Calling setState synchronously within an effect can trigger cascading renders.
-  Origin: introduced in Plan 03-03 (commit 05e2786, Wave 1).
-  Out of scope for Plan 03-05 — to be addressed by the verifier or a follow-up.
-  Re-observed by Plan 03-06 (still present; not introduced or fixed here).
+deferred-item: lint error in src/app/(app)/jobs/[id]/shortlist/add-to-shortlist-dialog.tsx:62 [RESOLVED 2026-05-23 / quick-260523-sns]
+  Fixed in commit cb4f7df. The setState reset for empty-query state stays
+  synchronous (documented exception) but the second occurrence was a real
+  rule violation and is gone. Net lint output for this file: zero errors.
 
-deferred-item: lint error in src/app/(app)/spec/new/mic-recorder.tsx:57
-  Rule: Calling setState synchronously within an effect can trigger cascading renders.
-  Origin: Plan 03-02 mic-recorder Client Component.
-  Pre-existing — surfaced again during 2026-05-23 UAT lint runs.
+deferred-item: lint error in src/app/(app)/spec/new/mic-recorder.tsx:57 [RESOLVED 2026-05-23 / quick-260523-sns]
+  Fixed in commit cb4f7df by moving the MediaRecorder support check from
+  a post-mount useEffect into a lazy useState initializer. Empty effect
+  removed; unused eslint-disable removed.
 
 deferred-item: UAT Test 12 — Outlook Mail.Send incremental consent (partial)
   Status: deferred at end of UAT 2026-05-23.
@@ -35,11 +34,10 @@ deferred-item: `ad_generate` post-save UX
   Saving an ad to `job_ads` leaves the recruiter at a partial ad render with no
   follow-up affordance (view / edit / send / preview). Phase 4 polish.
 
-deferred-item: Generated types regeneration
-  `pnpm exec supabase gen types typescript --linked` produces ~108 lines beyond what's
-  in src/types/database.ts. Targeted edit (`7f157c4`) added `email_draft` to unblock
-  the dashboard; full regeneration is a tidy-up item that should be done before any
-  type-sensitive change in Phase 4.
+deferred-item: Generated types regeneration [RESOLVED 2026-05-23 / quick-260523-sns]
+  Regenerated in commit b8fdb69. `// @ts-nocheck` preserved as first line.
+  `eslint.config.mjs` now ignores `src/types/database.ts` so the mandatory
+  @ts-nocheck doesn't trigger ban-ts-comment.
 
 deferred-item: PWA installability [RESOLVED 2026-05-23 / cd9962a]
   Shipped via Next.js App Router convention files: app/manifest.ts,
