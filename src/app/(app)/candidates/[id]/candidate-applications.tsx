@@ -1,6 +1,7 @@
 'use client'
 
 import Link from 'next/link'
+import { useRouter } from 'next/navigation'
 import { useState, useTransition } from 'react'
 import { Loader2, MoreHorizontal } from 'lucide-react'
 import { toast } from 'sonner'
@@ -26,7 +27,10 @@ import {
   type PipelineStage,
 } from '@/lib/db/pipeline-stages'
 
-import { moveApplicationAction } from '@/app/(app)/jobs/[id]/actions'
+import {
+  moveApplicationAction,
+  removeApplicationAction,
+} from '@/app/(app)/jobs/[id]/actions'
 
 const TERMINAL_STAGES = new Set(['rejected', 'withdrawn'])
 
@@ -65,6 +69,7 @@ export function CandidateApplications({
   candidateId,
   applications,
 }: CandidateApplicationsProps) {
+  const router = useRouter()
   const [declineTarget, setDeclineTarget] = useState<PipelineCardData | null>(null)
   const [pendingId, setPendingId] = useState<string | null>(null)
   const [, startTransition] = useTransition()
@@ -84,6 +89,33 @@ export function CandidateApplications({
         return
       }
       toast.success(`Moved to ${stageLabel(toStage)}.`)
+    })
+  }
+
+  function performRemove(application: PipelineCardData) {
+    const label = application.job_title ?? 'this job'
+    if (
+      !window.confirm(
+        `Remove this candidate from ${label}? The candidate record stays — only the application is deleted.`,
+      )
+    ) {
+      return
+    }
+    setPendingId(application.id)
+    startTransition(async () => {
+      const res = await removeApplicationAction({
+        applicationId: application.id,
+        jobId: application.job_id ?? null,
+      })
+      setPendingId(null)
+      if (!res.ok) {
+        toast.error(res.error)
+        return
+      }
+      toast.success('Application removed.')
+      // The action revalidates /candidates/[id]; refresh so this RSC
+      // sibling re-renders without the deleted row.
+      router.refresh()
     })
   }
 
@@ -181,6 +213,9 @@ export function CandidateApplications({
                         </DropdownMenuSubContent>
                       </DropdownMenuSub>
                       <DropdownMenuSeparator />
+                      <DropdownMenuItem onSelect={() => performRemove(app)}>
+                        Remove from job
+                      </DropdownMenuItem>
                       <DropdownMenuItem
                         onSelect={() => setDeclineTarget(app)}
                         className="text-destructive focus:text-destructive"

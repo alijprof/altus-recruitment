@@ -8,6 +8,7 @@ import { listContactsForCompany } from '@/lib/db/contacts'
 import { listJobsForCompany } from '@/lib/db/jobs'
 import { createClient as createSupabaseClient } from '@/lib/supabase/server'
 
+import { ClientCheckinButton } from './client-checkin-button'
 import { ClientManagementTabs } from './client-management-tabs'
 
 export default async function ClientDetailPage({
@@ -64,6 +65,11 @@ export default async function ClientDetailPage({
               </Badge>
             ) : null}
           </div>
+          {client.dormant ? (
+            <div className="pt-1">
+              <ClientCheckinButton clientId={id} clientName={client.name} />
+            </div>
+          ) : null}
           <div className="text-muted-foreground flex flex-wrap items-center gap-3 text-sm">
             {client.industry ? <span>{client.industry}</span> : null}
             {client.website ? (
