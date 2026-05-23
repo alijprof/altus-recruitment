@@ -21,6 +21,23 @@ const nextConfig: NextConfig = {
     '@ffmpeg-installer/ffmpeg',
     '@ffprobe-installer/ffprobe',
   ],
+  // serverExternalPackages prevents bundling but doesn't guarantee Vercel
+  // includes the static binary files in the function deployment.
+  // outputFileTracingIncludes explicitly traces the platform-specific
+  // binaries so they land in the Lambda. The glob covers Linux x64 (Vercel's
+  // runtime) and the macOS arm64 binary used in local dev.
+  //
+  // Without this, fluent-ffmpeg's setFfprobePath() points at a missing file
+  // and the spec-call pipeline throws "ffprobe failed" on Vercel even when
+  // it works locally on Mac.
+  outputFileTracingIncludes: {
+    '/api/inngest': [
+      './node_modules/@ffmpeg-installer/**',
+      './node_modules/@ffprobe-installer/**',
+      './node_modules/.pnpm/@ffmpeg-installer+*/**',
+      './node_modules/.pnpm/@ffprobe-installer+*/**',
+    ],
+  },
 }
 
 // Source-map upload only runs when SENTRY_AUTH_TOKEN is set (CI / deploy);
