@@ -6,6 +6,8 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { listSpecDrafts, type SpecDraftRow, type SpecDraftStatus } from '@/lib/db/spec-drafts'
 import { createClient } from '@/lib/supabase/server'
 
+import { SpecDeleteButton } from './spec-delete-button'
+
 function statusLabel(status: SpecDraftStatus): string {
   switch (status) {
     case 'pending':
@@ -93,7 +95,12 @@ export default async function SpecListPage() {
                       {getDraftTitle(draft)}
                     </Link>
                   </CardTitle>
-                  <Badge variant={statusVariant(draft.status)}>{statusLabel(draft.status)}</Badge>
+                  <div className="flex items-center gap-2">
+                    <Badge variant={statusVariant(draft.status)}>
+                      {statusLabel(draft.status)}
+                    </Badge>
+                    <SpecDeleteButton draftId={draft.id} title={getDraftTitle(draft)} />
+                  </div>
                 </div>
               </CardHeader>
               <CardContent className="text-muted-foreground pt-0 text-xs font-normal">
