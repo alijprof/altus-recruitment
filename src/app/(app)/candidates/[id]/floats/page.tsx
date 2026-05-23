@@ -9,6 +9,7 @@ import { createClient as createSupabaseClient } from '@/lib/supabase/server'
 import { formatTimeAgo } from '@/lib/date'
 
 import { FloatForm } from './float-form'
+import { FloatRowActions } from './float-row-actions'
 
 /**
  * Per-candidate floats tab (SHORT-02).
@@ -43,6 +44,33 @@ export default async function CandidateFloatsPage({
 
   const floatsResult = await listFloatsForCandidate(supabase, id)
   const rows = floatsResult.ok ? floatsResult.data : []
+
+  // Pull the most recent "note" activity per float application so the row
+  // can display whatever context the recruiter typed at submission time.
+  // Single query keyed by entity_id; we shape it into a Map below.
+  let notesByApp = new Map<string, string>()
+  if (rows.length > 0) {
+    const { data: noteRows } = await supabase
+      .from('activities')
+      .select('entity_id, body, occurred_at')
+      .eq('entity_type', 'application')
+      .eq('kind', 'note')
+      .in(
+        'entity_id',
+        rows.map((r) => r.id),
+      )
+      .order('occurred_at', { ascending: false })
+    if (noteRows) {
+      // First occurrence per entity_id wins (newest, because of the order).
+      const seen = new Map<string, string>()
+      for (const r of noteRows) {
+        if (!seen.has(r.entity_id) && r.body) {
+          seen.set(r.entity_id, r.body)
+        }
+      }
+      notesByApp = seen
+    }
+  }
 
   return (
     <div className="space-y-6">
@@ -80,19 +108,27 @@ export default async function CandidateFloatsPage({
           </div>
         ) : (
           <ul className="space-y-2">
-            {rows.map((row) => (
-              <li
-                key={row.id}
-                className="bg-card flex items-center justify-between gap-3 rounded-md border p-3"
-              >
-                <div className="text-sm">
-                  <div className="font-medium">Float</div>
-                  <div className="text-muted-foreground text-xs">
-                    Added {formatTimeAgo(row.created_at)}
+            {rows.map((row) => {
+              const note = notesByApp.get(row.id) ?? null
+              return (
+                <li
+                  key={row.id}
+                  className="bg-card flex items-start justify-between gap-3 rounded-md border p-3"
+                >
+                  <div className="min-w-0 flex-1 space-y-1 text-sm">
+                    <div className="text-muted-foreground text-xs">
+                      Added {formatTimeAgo(row.created_at)}
+                    </div>
+                    {note ? (
+                      <p className="whitespace-pre-wrap">{note}</p>
+                    ) : (
+                      <p className="text-muted-foreground italic">No note.</p>
+                    )}
                   </div>
-                </div>
-              </li>
-            ))}
+                  <FloatRowActions applicationId={row.id} />
+                </li>
+              )
+            })}
           </ul>
         )}
       </section>
