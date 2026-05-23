@@ -65,11 +65,13 @@ export default async function ClientDetailPage({
               </Badge>
             ) : null}
           </div>
-          {client.dormant ? (
-            <div className="pt-1">
-              <ClientCheckinButton clientId={id} clientName={client.name} />
-            </div>
-          ) : null}
+          <div className="pt-1">
+            <ClientCheckinButton
+              clientId={id}
+              clientName={client.name}
+              isDormant={client.dormant ?? false}
+            />
+          </div>
           <div className="text-muted-foreground flex flex-wrap items-center gap-3 text-sm">
             {client.industry ? <span>{client.industry}</span> : null}
             {client.website ? (

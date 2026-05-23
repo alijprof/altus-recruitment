@@ -7,23 +7,28 @@ import { Button } from '@/components/ui/button'
 
 import { SendCheckinModal } from '@/app/(app)/_dashboard/send-checkin-modal'
 
-// Parity affordance for the client detail page header. Renders only when
-// the page-level Dormant pill is present, so the recruiter can fire the
-// same Sonnet-drafted check-in modal from here without bouncing back to
-// the dashboard. Reuses the dashboard's SendCheckinModal verbatim — same
-// requestOutreachDraft → poll → sendOutreach flow.
+// Always-on check-in affordance on the client detail page header. The
+// button is visible whether the client is dormant or not — the recruiter
+// might want to drop a friendly note at any stage. When the client IS
+// dormant, the button takes the filled "primary" variant so it draws the
+// eye next to the amber Dormant badge.
 
 type Props = {
   clientId: string
   clientName: string
+  isDormant?: boolean
 }
 
-export function ClientCheckinButton({ clientId, clientName }: Props) {
+export function ClientCheckinButton({ clientId, clientName, isDormant = false }: Props) {
   const [open, setOpen] = useState(false)
 
   return (
     <>
-      <Button size="sm" variant="outline" onClick={() => setOpen(true)}>
+      <Button
+        size="sm"
+        variant={isDormant ? 'default' : 'outline'}
+        onClick={() => setOpen(true)}
+      >
         <Mail className="size-4" aria-hidden />
         Send check-in
       </Button>
