@@ -74,7 +74,7 @@ export default async function JobDetailPage({
 
       <section className="space-y-4">
         <h2 className="text-sm font-semibold">Saved ads</h2>
-        <SavedAdsList ads={ads} />
+        <SavedAdsList ads={ads} jobId={id} />
       </section>
     </div>
   )
