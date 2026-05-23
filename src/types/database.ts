@@ -1,3 +1,4 @@
+// @ts-nocheck
 export type Json =
   | string
   | number
@@ -11,6 +12,31 @@ export type Database = {
   // instead of createClient<Database, { PostgrestVersion: 'XX' }>(URL, KEY)
   __InternalSupabase: {
     PostgrestVersion: "14.5"
+  }
+  graphql_public: {
+    Tables: {
+      [_ in never]: never
+    }
+    Views: {
+      [_ in never]: never
+    }
+    Functions: {
+      graphql: {
+        Args: {
+          extensions?: Json
+          operationName?: string
+          query?: string
+          variables?: Json
+        }
+        Returns: Json
+      }
+    }
+    Enums: {
+      [_ in never]: never
+    }
+    CompositeTypes: {
+      [_ in never]: never
+    }
   }
   public: {
     Tables: {
@@ -198,18 +224,12 @@ export type Database = {
           decline_notes: string | null
           decline_reason: Database["public"]["Enums"]["decline_reason"] | null
           declined_at: string | null
-          // Phase 3 / REPEAT-02: placement revenue fields (20260520023100)
           fee_pence: number | null
           id: string
-          // Phase 3 / Plan 03-03 / D3-18: float rows have job_id IS NULL.
-          // standard / shortlist / spec rows still require job_id (enforced
-          // by `applications_job_id_required_unless_float` CHECK).
           job_id: string | null
           organization_id: string
           owner_user_id: string | null
-          // Phase 3 / REPEAT-02: explicit placement timestamp (20260520023100)
           placed_at: string | null
-          // UAT-260523-PLACEMENT-CAPTURE: placement type + currency (20260523160000)
           placement_currency: string
           placement_type: Database["public"]["Enums"]["placement_type"] | null
           stage: Database["public"]["Enums"]["application_stage"]
@@ -226,7 +246,6 @@ export type Database = {
           declined_at?: string | null
           fee_pence?: number | null
           id?: string
-          // Phase 3 / Plan 03-03 / D3-18: nullable for floats.
           job_id?: string | null
           organization_id: string
           owner_user_id?: string | null
@@ -247,7 +266,7 @@ export type Database = {
           declined_at?: string | null
           fee_pence?: number | null
           id?: string
-          job_id?: string
+          job_id?: string | null
           organization_id?: string
           owner_user_id?: string | null
           placed_at?: string | null
@@ -724,6 +743,73 @@ export type Database = {
         }
         Relationships: []
       }
+      job_ads: {
+        Row: {
+          body_markdown: string
+          cost_pence: number
+          created_at: string
+          created_by: string | null
+          id: string
+          inclusivity_dimensions: Json | null
+          inclusivity_score: number | null
+          inclusivity_suggestions: Json | null
+          job_id: string
+          model: string
+          organization_id: string
+          updated_at: string
+        }
+        Insert: {
+          body_markdown: string
+          cost_pence: number
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          inclusivity_dimensions?: Json | null
+          inclusivity_score?: number | null
+          inclusivity_suggestions?: Json | null
+          job_id: string
+          model: string
+          organization_id: string
+          updated_at?: string
+        }
+        Update: {
+          body_markdown?: string
+          cost_pence?: number
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          inclusivity_dimensions?: Json | null
+          inclusivity_score?: number | null
+          inclusivity_suggestions?: Json | null
+          job_id?: string
+          model?: string
+          organization_id?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "job_ads_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "job_ads_job_id_fkey"
+            columns: ["job_id"]
+            isOneToOne: false
+            referencedRelation: "jobs"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "job_ads_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       jobs: {
         Row: {
           company_id: string
@@ -989,7 +1075,7 @@ export type Database = {
           created_job_id?: string | null
           deleted_at?: string | null
           id?: string
-          organization_id?: string
+          organization_id: string
           parse_error?: string | null
           rejected_at?: string | null
           sonnet_cost_pence?: number | null
@@ -1023,6 +1109,13 @@ export type Database = {
           whisper_cost_pence?: number | null
         }
         Relationships: [
+          {
+            foreignKeyName: "spec_drafts_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "client_activity_timeline"
+            referencedColumns: ["client_id"]
+          },
           {
             foreignKeyName: "spec_drafts_company_id_fkey"
             columns: ["company_id"]
@@ -1137,6 +1230,17 @@ export type Database = {
         Returns: undefined
       }
       current_organization_id: { Args: never; Returns: string }
+      dormant_clients: {
+        Args: { p_dormant_days?: number; p_long_dormant_days?: number }
+        Returns: {
+          client_id: string
+          client_name: string
+          days_since: number
+          is_long_dormant: boolean
+          last_contacted_at: string
+          last_placement_summary: string
+        }[]
+      }
       match_candidates: {
         Args: {
           p_match_count?: number
@@ -1203,6 +1307,10 @@ export type Database = {
           p_application_id: string
           p_decline_notes?: string
           p_decline_reason?: Database["public"]["Enums"]["decline_reason"]
+          p_placement_currency?: string
+          p_placement_date?: string
+          p_placement_fee_pence?: number
+          p_placement_type?: Database["public"]["Enums"]["placement_type"]
           p_to_stage: Database["public"]["Enums"]["application_stage"]
         }
         Returns: undefined
@@ -1284,16 +1392,25 @@ export type Database = {
       }
       show_limit: { Args: never; Returns: number }
       show_trgm: { Args: { "": string }; Returns: string[] }
+      source_attribution_summary: {
+        Args: { p_from?: string; p_to?: string }
+        Returns: {
+          avg_time_to_place_days: number
+          placements_count: number
+          source: Database["public"]["Enums"]["candidate_source"]
+          total_fee_pence: number
+        }[]
+      }
     }
     Enums: {
       activity_kind:
         | "note"
         | "call"
         | "email"
-        | "email_draft"
         | "meeting"
         | "stage_change"
         | "system"
+        | "email_draft"
       application_stage:
         | "applied"
         | "screening"
@@ -1329,13 +1446,13 @@ export type Database = {
       hiring_context: "new_role" | "backfill"
       job_status: "draft" | "open" | "on_hold" | "filled" | "cancelled"
       job_type: "perm" | "contract" | "temp"
-      placement_type: "perm" | "contract" | "temp" | "fixed_term"
       market_status:
         | "actively_looking"
         | "passively_looking"
         | "hot"
         | "placed"
         | "cold"
+      placement_type: "perm" | "contract" | "temp" | "fixed_term"
       spec_draft_status:
         | "pending"
         | "transcribing"
@@ -1469,16 +1586,19 @@ export type CompositeTypes<
     : never
 
 export const Constants = {
+  graphql_public: {
+    Enums: {},
+  },
   public: {
     Enums: {
       activity_kind: [
         "note",
         "call",
         "email",
-        "email_draft",
         "meeting",
         "stage_change",
         "system",
+        "email_draft",
       ],
       application_stage: [
         "applied",
@@ -1524,6 +1644,15 @@ export const Constants = {
         "hot",
         "placed",
         "cold",
+      ],
+      placement_type: ["perm", "contract", "temp", "fixed_term"],
+      spec_draft_status: [
+        "pending",
+        "transcribing",
+        "ready_for_review",
+        "approved",
+        "rejected",
+        "failed",
       ],
       user_role: ["owner", "admin", "recruiter"],
     },

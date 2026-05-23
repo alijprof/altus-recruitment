@@ -10,7 +10,7 @@
 ## Phases
 
 - [x] **Phase 1: Internal ATS** - Anchor customer can manage candidates, CVs, clients, jobs, and pipeline internally
-- [ ] **Phase 2: Search, Match & Intake** - Differentiating AI capability live: semantic search, match scoring, public apply form, Outlook integration
+- [x] **Phase 2: Search, Match & Intake** - Differentiating AI capability live: semantic search, match scoring, public apply form, Outlook integration (completed 2026-05-19)
 - [x] **Phase 3: LinkedIn, Spec Workflow & Shortlists** - Competitive with Firefish core for perm recruitment; ahead on AI-assisted job creation (completed 2026-05-20)
 - [ ] **Phase 4: Voice, Marketing & Reporting** - Complete recruiter workflow with buyer-value dashboards; ready for anchor customer demo to acquirer
 - [ ] **Phase 5: SaaS Shell** - Self-service signup, Stripe billing, per-org branding; ready for paying customer #2
@@ -52,7 +52,19 @@
 3. A candidate can navigate to the public apply form, upload their CV, give GDPR consent, and appear as a new candidate record with CV parsing triggered automatically
 4. Recruiter can connect Outlook (Microsoft 365) via OAuth and see inbound emails to/from candidates and contacts logged to activity timelines automatically — no manual copy-paste
 
-**Plans:** TBD
+**Plans:** 5/5 plans complete
+
+Plans:
+- [x] 02-00-hardening-PLAN.md — Voyage AI wrapper, 6 migrations, RRF hybrid search RPCs, AES-256-GCM encryption, (public) route group
+- [x] 02-01-semantic-search-PLAN.md — Voyage embed pipeline, /search page with RRF k=60 hybrid ranking, /jobs/[id]/matches shell (SEARCH-01–04)
+- [x] 02-02-ai-match-scoring-PLAN.md — precompute-matches-for-job Inngest fn, Sonnet 0-100 scores + explanations, /settings/usage (MATCH-01–03)
+- [x] 02-03-public-apply-form-PLAN.md — /apply/[orgSlug], 5 abuse layers, two-stage signed-upload-URL, GDPR consent, anonymous audit (APPLY-01–02)
+- [x] 02-04-outlook-integration-PLAN.md — Outlook/Microsoft 365 OAuth, Graph webhook, delta-sync, 6-hourly subscription renewal (EMAIL-01)
+
+**Wave structure:**
+- Wave 0: 02-00 (hardening + infrastructure)
+- Wave 1 (parallel): 02-01 (semantic search), 02-02 (AI match scoring), 02-03 (apply form), 02-04 (Outlook integration)
+
 **UI hint:** yes
 
 ---
@@ -135,7 +147,7 @@ Plans:
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Internal ATS | 0/7 | In progress | - |
-| 2. Search, Match & Intake | 0/0 | Not started | - |
+| 2. Search, Match & Intake | 5/5 | Complete | 2026-05-19 |
 | 3. LinkedIn, Spec Workflow & Shortlists | 7/7 | Complete   | 2026-05-20 |
 | 4. Voice, Marketing & Reporting | 0/0 | Not started | - |
 | 5. SaaS Shell | 0/0 | Not started | - |
