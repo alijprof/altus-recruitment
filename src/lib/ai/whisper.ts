@@ -111,12 +111,20 @@ export async function transcribe(args: TranscribeArgs): Promise<TranscribeResult
   // Pick a filename hint matching the mime type — OpenAI uses the extension
   // to pick a decoder. webm covers our recompressed Opus output; the rest
   // match the upload allowlist in submitSpecCallAction.
+  // Accept the same MIME variants the upload action allows. OpenAI uses the
+  // file extension to pick a decoder, so map every variant to the canonical
+  // extension Whisper recognises.
   const filename =
-    args.mimeType === 'audio/mpeg'
+    args.mimeType === 'audio/mpeg' || args.mimeType === 'audio/mp3'
       ? 'audio.mp3'
-      : args.mimeType === 'audio/wav'
+      : args.mimeType === 'audio/wav' ||
+          args.mimeType === 'audio/wave' ||
+          args.mimeType === 'audio/x-wav'
         ? 'audio.wav'
-        : args.mimeType === 'audio/mp4'
+        : args.mimeType === 'audio/mp4' ||
+            args.mimeType === 'audio/m4a' ||
+            args.mimeType === 'audio/x-m4a' ||
+            args.mimeType === 'audio/aac'
           ? 'audio.m4a'
           : 'audio.webm'
 

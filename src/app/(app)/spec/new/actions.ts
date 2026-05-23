@@ -30,20 +30,38 @@ export type SubmitSpecCallResult =
 // and matches the bucket file_size_limit.
 const MAX_AUDIO_BYTES = 100 * 1024 * 1024
 
+// Browsers and recorder apps report audio MIME types inconsistently:
+//   - macOS Voice Memos saves .m4a as `audio/x-m4a`, not the canonical `audio/mp4`
+//   - some MP3 encoders emit `audio/mp3` instead of `audio/mpeg`
+//   - .wav can land as `audio/x-wav` or `audio/wave`
+// Accept all the common variants — they're the same containers, Whisper
+// handles each natively.
 const ACCEPTED_AUDIO_MIME = new Set([
   'audio/mpeg',
+  'audio/mp3',
   'audio/mp4',
+  'audio/m4a',
+  'audio/x-m4a',
+  'audio/aac',
   'audio/wav',
+  'audio/wave',
+  'audio/x-wav',
   'audio/webm',
 ])
 
 function extForMime(mime: string): string {
   switch (mime) {
     case 'audio/mpeg':
+    case 'audio/mp3':
       return 'mp3'
     case 'audio/wav':
+    case 'audio/wave':
+    case 'audio/x-wav':
       return 'wav'
     case 'audio/mp4':
+    case 'audio/m4a':
+    case 'audio/x-m4a':
+    case 'audio/aac':
       return 'm4a'
     default:
       return 'webm'
