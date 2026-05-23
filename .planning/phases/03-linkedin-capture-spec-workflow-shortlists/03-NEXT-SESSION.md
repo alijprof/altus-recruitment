@@ -1,99 +1,76 @@
 ---
 phase: 03
 created: "2026-05-21"
+last_updated: "2026-05-23"
 purpose: "Session-handoff for Phase 3 UAT resume. Read this FIRST when the user says 'continue from where we left off' or runs /gsd-progress."
-status: "UAT in progress — 2 of 15 tests resolved (1 pass + 1 partial), 13 blocked pending live env work"
+status: "LinkedIn ingest landed via PDF pivot. Top-card capture + PDF→CV-parser flow validated against Tony Wilson and Liam Steele. UAT tests 1, 4-15 still pending."
 ---
 
 # Phase 3 — resume here next session
 
-## Where we are
+## Current state (2026-05-23)
 
-Phase 3 code is on `main` and pushed (origin/main). All deployment plumbing is now wired:
+LinkedIn ingest is **shipped and working** via the hybrid flow:
 
-- Vercel CLI installed + linked to project `altus-recruitment` under team `alijprofs-projects`
-- OpenAI API key created, set on Vercel (Preview + Production + Development)
-- Supabase migrations already applied on the remote (auto-applied via GitHub integration on push) — `pnpm exec supabase db diff --linked` showed zero drift
-- Chrome extension built, side-loaded, ID registered with Vercel as `LINKEDIN_EXTENSION_ID`, `LINKEDIN_EXTENSION_MIN_VERSION=0.1.0`
-- Production deploy live at `https://altus-recruitment.vercel.app`
+1. **Chrome extension** (`chrome-extension/` — manifest `0.1.7`) captures the top card only: name, headline, location, LinkedIn URL. Reliable across reloads.
+2. **Candidate page** shows a tip in the Upload CV panel when `source='linkedin'` and `work_experience` is empty: *"From this candidate's LinkedIn profile, click More → Save to PDF, then drop that PDF here…"*
+3. **User uploads the LinkedIn PDF** to that panel.
+4. **Existing Phase 1 CV parser** (Claude Haiku via `parseCV`) extracts work_history/education/skills/etc.
+5. **`markCandidateFieldsFromCV`** writes the structured data back. `full_name` upgrades when the CV is a strict extension of the entered name (e.g., `Liam` → `Liam Steele`). All other fields are D-08 fill-empty-only.
+6. **CV review panel auto-refreshes** while parsing via `router.refresh()` polling at 3s. Capped at 5 minutes.
 
-## What's done in UAT (`03-UAT.md`)
+### What was abandoned and why
 
-| Test | Status | Note |
-|------|--------|------|
-| 2. LinkedIn capture creates candidate with embedding | **partial-pass** | Capture pipeline works end-to-end (auth + scrape + POST + dedup + embed). But only `name` + `linkedin_url` populate — rest of fields null because LinkedIn rebuilt the profile DOM. Tracked as G6. |
-| 3. LinkedIn dedup updates instead of creating | **pass** | Confirmed via Huw Jones capture — "Updated existing candidate." toast |
+Full DOM scraping of Experience/Education/Skills sections from LinkedIn was iterated through 7 extension versions (0.1.0–0.1.6) and abandoned. Root causes:
+- LinkedIn uses hashed CSS Module class names (`._6d2dbe5a`, `._81841adb`) that change every deploy
+- Sections lazy-load via intersection observer; programmatic scrolling didn't reliably trigger them
+- Same profile yielded different `h2_texts` counts across captures; results were structurally non-deterministic
 
-All other tests (1, 4-15) still `blocked: release-build`.
+The PDF pivot is far more reliable because LinkedIn's PDF export format is stable and the existing CV parser already handles it.
 
-## Highest-priority unfinished work
+See `.claude/projects/-Users-aj-mac-altus-recruitment/memory/phase3-linkedin-pdf-pivot.md` for full context.
 
-### 1. Fix LinkedIn DOM selectors (G6) — DONE in this session, needs live retest
+## What's left
 
-Rewrote `scrapeProfileInPage` in `chrome-extension/src/background/ingest.ts` to use **class-name-agnostic** strategies that survive LinkedIn DOM rewrites:
+### 1. Continue UAT tests 1, 4-15 — variable time
 
-- **Section discovery** via `document.getElementById('experience' | 'education' | 'skills' | 'about')` + `closest('section')`. LinkedIn maintains these anchor IDs because the in-profile jump nav depends on them.
-- **Heading-text fallback** — finds the section by matching an `<h2>` whose text equals "Experience" / "Education" / "Skills" / "About".
-- **Entry extraction** uses `:scope > li` against the first `<ul>` whose children contain a `span[aria-hidden="true"]` (filters nav/dropdown lists out).
-- **Span-walk parser** — reads all `span[aria-hidden="true"]` texts in document order per entry, then classifies each as title / company / dates by pattern match (date regex catches "Jan 2020 - Present", employment-type filter strips "Full-time" chips).
-- **Top card** (headline + location) discovered via `main section:first-of-type`, picking the first `.text-body-medium` (headline) and first `.text-body-small` (location) excluding follower/connection counts.
-- **About** takes the longest aria-hidden span in the section — the actual body is invariably the longest text.
+Test 2 (LinkedIn capture creates candidate) and Test 3 (LinkedIn dedup) were resolved in earlier sessions. Validation of the new PDF flow:
+- **Tony Wilson** capture + PDF upload → name, headline, location, current_role_title, current_company, seniority_level, years_experience, skills, sector_tags all populated.
+- **Liam Steele** capture as just "Liam" + PDF upload → upgraded to "Liam Steele" via the new strict-extension rule. Auto-refresh on parse complete worked.
 
-Manifest bumped to `0.1.1` so the next load is identifiable. `pnpm build` clean, `pnpm test` 15/15 pass, `tsc --noEmit` clean.
+Still pending tests:
+- **Test 1 (Cold smoke)** — load `https://altus-recruitment.vercel.app`, confirm dashboard renders.
+- **Test 4 (Spec call upload)** — needs a 30-second voice memo. See `03-UAT.md` for the script.
+- **Test 12 (Outlook Mail.Send)** — first send pops Microsoft consent screen, approve `Mail.Send`.
+- **Tests 6, 8-11, 13** — UI smoke, mostly clicks.
 
-**To retest:**
-
-1. `chrome://extensions` → Altus Capture → reload icon (the curved arrow). Confirm version reads `0.1.1`.
-2. Refresh any LinkedIn profile tab.
-3. Click the Altus pin → Capture this profile.
-4. Open the LinkedIn tab DevTools → Console — look for `[Altus capture]` log line. It now reports `work_count`, `education_count`, `skill_count`, `confidence`. If those are non-zero, the fields will land.
-5. Open the Altus candidate in the app — verify headline, location, about, experience entries, education entries, skills all populated.
-
-**If a section still comes through empty:** capture the `[Altus capture]` line + a screenshot of the LinkedIn section that didn't populate. The DOM probe in the original handoff (kept below in git history at commit `55ff80f`) is the next diagnostic step.
-
-### 2. Continue UAT tests 1, 4-15 — variable time
-
-After G6 is fixed:
-
-- **Test 1 (Cold smoke)** — quick, just load `https://altus-recruitment.vercel.app` and confirm dashboard renders
-- **Test 4 (Spec call upload)** — most expensive. Need a 30-second voice memo. Walk-through:
-  1. Open Voice Memos on phone (or QuickTime on Mac)
-  2. Record: *"I need a senior Python developer in Aberdeen, salary 80k, must have offshore wind experience, ideally someone who's worked at a renewables consultancy. Start date flexible."*
-  3. Save as `.m4a` or `.mp3`, move to laptop
-  4. Go to `https://altus-recruitment.vercel.app/spec/new`, upload, submit
-  5. Wait ~60s, check `/spec` for the draft → click into it → review the prefilled structured JD
-- **Test 12 (Outlook Mail.Send)** — first send pops Microsoft consent screen, approve `Mail.Send`
-- **Tests 6, 8-11, 13** — UI smoke, mostly clicks
-
-### 3. Close PR #2 after UAT passes — 1 min
+### 2. Close PR #2 once UAT passes — 1 min
 
 ```bash
 gh pr close 2 --comment "Phase 3 reviewed and shipped retroactively — work committed directly to main per branching_strategy=none. UAT passed against preview deploy. Closing without merge."
 git push origin --delete pre-phase-3-baseline   # optional
 ```
 
-## What we struggled with tonight (so next-session doesn't repeat)
+## Key learnings worth remembering
 
-1. **Chrome 147's `chrome.cookies.getAll` quirk for vercel.app cookies** — wasted ~2 hours. The cookies API returns empty for hostOnly cookies on public-suffix-list hosts (vercel.app is on the PSL). Fix: switched to `chrome.scripting.executeScript` reading localStorage + document.cookie in the page's own ISOLATED world. Committed in `02ecf6a`.
+1. **Supabase migration auto-apply is unreliable on this project.** On 2026-05-23, 12 Phase 3 migrations (Plans 03-02 through 03-06 plus my profile-fields migration) were sitting unapplied on remote for days. This caused intermittent 500s on LinkedIn ingest and "Couldn't merge CV fields" toasts. After each new migration is committed, run `pnpm exec supabase db push --linked` manually. Verify with `pnpm exec supabase db diff --linked` → expect "No schema changes found".
 
-2. **ISOLATED vs MAIN world mismatch for scripting injection** — the content_scripts ran in ISOLATED, executeScript injected into MAIN, so `globalThis.__altusScrape` was invisible to the injection. Fix in `da9868d` — changed to `world: 'ISOLATED'`.
+2. **LinkedIn DOM scraping is structurally fragile.** The pivot to PDF + existing CV parser is the right architecture. Don't reintroduce class-based scraping or attempt to extract Experience/Education/Skills from the page DOM.
 
-3. **`__altusScrape` global hook was fragile** anyway (needed tab refresh after each extension reload). Fix in `dbd8a30` — inlined the whole scraper into `scrapeProfileInPage`, dropped content_scripts entry, removed unused `cookies` permission.
+3. **Iterative selector tweaks aren't problem-solving** — when the failure mode shifts between captures of the same input, stop and step back. The user explicitly asked me to think deeper rather than continue whack-a-mole. The strategic pivot to PDF was the right call.
 
-4. **LinkedIn DOM changed since the plan was written** — original scraper used `h1` for name and `data-view-name` attributes for sections. Both are gone now. Documented as G6.
+## Commits in this session
 
-## Commits added since shipping Phase 3
+Latest: `57b171e` — feat(03): full_name upgrade + auto-refresh CV review panel while parsing
 
-| Hash | Subject |
-|------|---------|
-| `c34aa05` | fix(03-01): use domain filter for cookie lookup (Chrome 147 PSL host quirk) — superseded |
-| `02ecf6a` | fix(03-01): replace cookies API with page-context script for token extraction |
-| `da9868d` | fix(03-01): run scraper injection in ISOLATED world to match content script |
-| `dbd8a30` | fix(03-01): inline scraper into injection function, drop content_scripts dependency |
-| `5dd6c84` | fix(03-01): extract profile name from document.title; LinkedIn DOM removed h1 |
+Notable Phase 3 commits leading here:
+- `eb9e351` — fix(03): defensive merge SELECT + Sentry breadcrumb + show all parsed fields
+- `45d505c` — feat(03): pivot LinkedIn ingest to PDF + existing CV parser
+- `5537e1e` — feat(03-01): persist + render LinkedIn headline/about/experience/education
+- 12 migrations applied manually via `pnpm exec supabase db push --linked` on 2026-05-23
 
-All pushed to origin/main.
+All pushed to `origin/main`.
 
 ## Resume command
 
-When the user says "continue from where we left off" or runs `/gsd-progress`, read this file first, then read `03-UAT.md` and `03-VERIFICATION.md` for full context. The user's priority is G6 (LinkedIn DOM selectors) since they explicitly noted "it's quite important to populate it with all the work experience, education, skills, everything."
+When the user says "continue from where we left off" or runs `/gsd-progress`, read this file first, then `03-UAT.md` for outstanding tests. The PDF-based LinkedIn ingest is the validated path — no need to revisit the DOM scraper.
