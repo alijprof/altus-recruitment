@@ -1,4 +1,4 @@
-import type { Metadata } from 'next'
+import type { Metadata, Viewport } from 'next'
 import { Geist, Geist_Mono } from 'next/font/google'
 
 import { Toaster } from '@/components/ui/sonner'
@@ -18,6 +18,18 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: 'Altus Recruitment',
   description: 'AI-first recruitment CRM.',
+  // Tells iOS that this site can be installed as a home-screen app and
+  // launched in standalone mode (no Safari chrome). Manifest + icons live
+  // in sibling app/manifest.ts / app/icon.tsx / app/apple-icon.tsx.
+  appleWebApp: {
+    capable: true,
+    title: 'Altus',
+    statusBarStyle: 'default',
+  },
+}
+
+export const viewport: Viewport = {
+  themeColor: '#111111',
 }
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
