@@ -45,18 +45,15 @@ function formatElapsed(ms: number): string {
 }
 
 export function MicRecorder({ disabled, onRecording }: MicRecorderProps) {
-  const [state, setState] = useState<State>({ kind: 'idle' })
+  const [state, setState] = useState<State>(() =>
+    typeof MediaRecorder === 'undefined' || pickMime() === ''
+      ? { kind: 'unsupported' }
+      : { kind: 'idle' },
+  )
   const mediaRecorderRef = useRef<MediaRecorder | null>(null)
   const chunksRef = useRef<Blob[]>([])
   const streamRef = useRef<MediaStream | null>(null)
   const startedAtRef = useRef<number>(0)
-
-  // Detect support once on mount.
-  useEffect(() => {
-    if (typeof MediaRecorder === 'undefined' || pickMime() === '') {
-      setState({ kind: 'unsupported' })
-    }
-  }, [])
 
   const cleanup = () => {
     streamRef.current?.getTracks().forEach((t) => t.stop())
