@@ -84,7 +84,10 @@ export function SpecReviewForm({ draftId, initial, clients, initialCompanyId }: 
       }
       toast.success('Draft approved — creating job…')
       router.push('/jobs')
-      router.refresh()
+      // Inngest inserts the jobs row asynchronously, so the initial /jobs
+      // render usually beats it by a second. Refresh once it's had a beat
+      // to land so the recruiter doesn't have to hit reload.
+      setTimeout(() => router.refresh(), 2000)
     })
   }
 
