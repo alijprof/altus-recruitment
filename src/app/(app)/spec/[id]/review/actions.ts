@@ -77,6 +77,18 @@ export async function approveSpecDraftAction(rawInput: unknown): Promise<ActionR
     return { ok: false, error: 'Draft not found.' }
   }
 
+  // Guard: jobs require a company_id at the schema level, and the
+  // create-job-from-spec Inngest function refuses to create a row without
+  // one. Catch this BEFORE the async fire-and-forget so the recruiter sees
+  // a clear error rather than getting silently redirected to /jobs with no
+  // new row appearing.
+  if (!draftResult.data.company_id) {
+    return {
+      ok: false,
+      error: 'Pick a client below before approving — jobs need to be linked to a company.',
+    }
+  }
+
   // 1) Persist the recruiter-edited structured JD back to the row.
   const structuredResult = await updateSpecDraftStructuredData(supabase, {
     id: parsed.data.specDraftId,
