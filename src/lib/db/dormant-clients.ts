@@ -49,17 +49,20 @@ export async function getDormantClients(
   opts: GetDormantClientsOpts = {},
 ): Promise<DbResult<DormantClient[]>> {
   // reason: the dormant_clients RPC is added by Plan 03-05's migration; the
-  // generated Database type may not include it yet. Cast at the boundary —
-  // RLS on companies/applications/jobs still enforces correctness server-side.
-  const rpc = supabase.rpc as unknown as (
-    fn: string,
-    args: Record<string, unknown>,
-  ) => Promise<{ data: DormantClient[] | null; error: unknown }>
-
-  const { data, error } = await rpc('dormant_clients', {
+  // generated Database type may not include it yet. Cast args/result at the
+  // boundary, but DO NOT detach .rpc from `supabase` — the underlying
+  // PostgrestClient reads `this.rest`, and a bare reference loses the bind
+  // (throws "Cannot read properties of undefined (reading 'rest')" at call
+  // time). Call directly via supabase.rpc(...) instead.
+  const { data, error } = (await (
+    supabase.rpc as unknown as (
+      fn: string,
+      args: Record<string, unknown>,
+    ) => Promise<{ data: DormantClient[] | null; error: unknown }>
+  ).call(supabase, 'dormant_clients', {
     p_dormant_days: opts.dormantDays ?? DEFAULT_DORMANT_DAYS,
     p_long_dormant_days: opts.longDormantDays ?? DEFAULT_LONG_DORMANT_DAYS,
-  })
+  })) as { data: DormantClient[] | null; error: unknown }
 
   if (error) {
     Sentry.captureException(error, {

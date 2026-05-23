@@ -46,18 +46,20 @@ export async function getSourceAttribution(
   args: GetSourceAttributionArgs,
 ): Promise<DbResult<SourceAttributionRow[]>> {
   // reason: the source_attribution_summary RPC is added by Plan 03-06's
-  // migration; the generated Database type may not include it yet. Cast at
-  // the boundary — RLS on applications + candidates still enforces
-  // correctness server-side regardless of the call-site shape.
-  const rpc = supabase.rpc as unknown as (
-    fn: string,
-    args: Record<string, unknown>,
-  ) => Promise<{ data: SourceAttributionRow[] | null; error: unknown }>
-
-  const { data, error } = await rpc('source_attribution_summary', {
+  // migration; the generated Database type may not include it yet. Cast
+  // args/result at the boundary, but DO NOT detach .rpc from `supabase` —
+  // the underlying PostgrestClient reads `this.rest`, and a bare reference
+  // loses the bind (throws "Cannot read properties of undefined (reading
+  // 'rest')" at call time). Use .call(supabase, ...) to preserve binding.
+  const { data, error } = (await (
+    supabase.rpc as unknown as (
+      fn: string,
+      args: Record<string, unknown>,
+    ) => Promise<{ data: SourceAttributionRow[] | null; error: unknown }>
+  ).call(supabase, 'source_attribution_summary', {
     p_from: args.from,
     p_to: args.to,
-  })
+  })) as { data: SourceAttributionRow[] | null; error: unknown }
 
   if (error) {
     Sentry.captureException(error, {
