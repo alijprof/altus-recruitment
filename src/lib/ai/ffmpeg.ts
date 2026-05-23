@@ -1,6 +1,9 @@
 import 'server-only'
 
-import { PassThrough, Writable } from 'node:stream'
+import { randomBytes } from 'node:crypto'
+import { promises as fs } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 
 import * as Sentry from '@sentry/nextjs'
 
@@ -13,37 +16,25 @@ import ffprobeInstaller from '@ffprobe-installer/ffprobe'
 import fluentFfmpeg from 'fluent-ffmpeg'
 
 // ---------------------------------------------------------------------------
-// ffmpeg wrapper. Mirrors src/lib/ai/voyage.ts:
-//   * Single-purpose helpers (`recompressToOpus`, `probeDurationSeconds`)
-//   * `import 'server-only'` so the heavy native binary never leaks into a
-//     client bundle
-//   * Singleton path resolution at module load time via @ffmpeg-installer
-//   * Sentry captures wrap `err.name` only — never raw error message
-//     (parse-cv.ts "VERIFICATION R4" — Anthropic/Voyage/FFmpeg error
-//     strings can echo input fragments, bypassing the Sentry beforeSend
-//     PII scrub)
+// ffmpeg wrapper for Phase 3 spec-audio processing.
 //
-// Phase 3 Plan 2 (spec audio + JD) consumes both helpers:
-//   * recompressToOpus → drops 50 MiB m4a to ≤24 MiB mono Opus before
-//     Whisper upload (Whisper's hard 25 MiB cap)
-//   * probeDurationSeconds → CRITICAL-2 fix: derives the cost-basis input
-//     for ai_usage.record_ai_usage(p_input_tokens, ...) on every Whisper
-//     call (Whisper bills per minute, not per token; ai_usage stores
-//     duration seconds in p_input_tokens so /settings/usage can report
-//     per-tenant spend)
+// Key insight learned during UAT (2026-05-23): the original implementation
+// piped the input buffer through a PassThrough stream and read the output
+// off another stream. ffmpeg can do that for SOME formats, but m4a / mp4
+// have their metadata (the moov atom) at the END of the file, so ffmpeg
+// has to seek backwards to read it before it can decode anything. Streams
+// aren't seekable. ffmpeg silently produced empty / garbage output without
+// firing the 'error' event, and Whisper then rejected the file with
+// "400 The audio file could not be decoded or its format is not supported".
+//
+// Fix: write the input buffer to /tmp first, then run ffmpeg against the
+// file path. Vercel functions have a writable /tmp with 512 MB capacity,
+// comfortably above the 100 MB upload cap. Clean up in a finally block.
 // ---------------------------------------------------------------------------
 
 const ffmpegPath = (ffmpegInstaller as unknown as { path: string }).path
 const ffprobePath = (ffprobeInstaller as unknown as { path: string }).path
 
-// Module-level setters (set the binary paths for every command this process
-// constructs). fluent-ffmpeg lets us pass the paths per-command too; doing
-// it once at load avoids the chance of forgetting on a future call site.
-//
-// ffprobe is a SEPARATE binary that ships with its own package
-// (@ffprobe-installer/ffprobe). @ffmpeg-installer/ffmpeg bundles only the
-// ffmpeg binary, not ffprobe — leaving ffprobePath unset is the classic
-// "ffprobe failed" error fluent-ffmpeg emits when probing audio metadata.
 fluentFfmpeg.setFfmpegPath(ffmpegPath)
 fluentFfmpeg.setFfprobePath(ffprobePath)
 
@@ -60,90 +51,76 @@ export type RecompressOptions = {
   channels: number
 }
 
+async function writeTempBuffer(input: Buffer, suffix: string): Promise<string> {
+  const id = randomBytes(8).toString('hex')
+  const path = join(tmpdir(), `altus-${id}.${suffix}`)
+  await fs.writeFile(path, input)
+  return path
+}
+
 /**
- * Recompress an audio buffer to Opus inside an Ogg container.
+ * Recompress an audio buffer to Opus inside a WebM container.
  *
  * Asserts the exact codec flags (`-c:a libopus -b:a <bitrate> -ac <channels>`)
  * required to land under Whisper's 25 MiB request cap. Returns the encoded
- * Ogg buffer. On error, captures `err.name` only to Sentry — NEVER the raw
- * error (R4 invariant).
+ * WebM buffer.
+ *
+ * Pipeline uses /tmp files (not streams) so input formats requiring seek
+ * — m4a, mp4, sometimes wav — decode correctly. Output is WebM-Opus, which
+ * is in Whisper's accepted format list and matches the audio/webm MIME the
+ * caller declares.
+ *
+ * Throws if the recompressed output is empty (defensive — catches the
+ * silent-empty-output failure mode the previous stream-based pipeline had).
+ * Error message includes the underlying ffmpeg detail (truncated, no PII
+ * concern — ffmpeg errors are library internals like "ENOENT", "moov atom
+ * not found", "Decoder not found").
  */
 export async function recompressToOpus(
   input: Buffer,
   opts: RecompressOptions,
 ): Promise<Buffer> {
-  return await new Promise<Buffer>((resolve, reject) => {
-    const inputStream = new PassThrough()
-    inputStream.end(input)
+  if (input.byteLength === 0) {
+    throw new Error('ffmpeg recompress: empty input buffer')
+  }
 
-    const chunks: Buffer[] = []
-    const sink = new Writable({
-      write(chunk: Buffer, _enc, cb) {
-        chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk))
-        cb()
-      },
+  // Use a generic suffix — ffmpeg auto-detects the format from content.
+  // We don't know the source extension at this layer and ffmpeg's content
+  // sniff is more reliable than guessing from the input MIME anyway.
+  const inPath = await writeTempBuffer(input, 'in')
+  const outPath = join(tmpdir(), `altus-${randomBytes(8).toString('hex')}.webm`)
+
+  try {
+    await new Promise<void>((resolve, reject) => {
+      fluentFfmpeg(inPath)
+        .audioCodec('libopus')
+        .audioBitrate(opts.bitrate)
+        .audioChannels(opts.channels)
+        .format('webm')
+        .on('error', (err: { name?: string; message?: string }) => {
+          const detail = (err?.message ?? err?.name ?? 'UnknownError').slice(0, 300)
+          Sentry.captureException(
+            new Error(`ffmpeg.recompressToOpus: ${detail}`),
+            { tags: { phase: 'p3', layer: 'ai-wrapper', helper: 'recompressToOpus' } },
+          )
+          reject(new Error(`ffmpeg recompress failed: ${detail}`))
+        })
+        .on('end', () => resolve())
+        .save(outPath)
     })
-    sink.on('finish', () => resolve(Buffer.concat(chunks)))
 
-    fluentFfmpeg(inputStream)
-      .audioCodec('libopus')
-      .audioBitrate(opts.bitrate)
-      .audioChannels(opts.channels)
-      .format('ogg')
-      .on('error', (err: { name?: string; message?: string }) => {
-        // Surface the underlying message (truncated) so future Vercel
-        // failures aren't opaque. ffmpeg/ffprobe error strings don't echo
-        // user prompts the way LLM SDKs do — they're library internals
-        // ("ENOENT", "moov atom not found", etc.) and safe to log.
-        const detail = (err?.message ?? err?.name ?? 'UnknownError').slice(0, 300)
-        Sentry.captureException(
-          new Error(`ffmpeg.recompressToOpus: ${detail}`),
-          { tags: { phase: 'p3', layer: 'ai-wrapper', helper: 'recompressToOpus' } },
-        )
-        reject(new Error(`ffmpeg recompress failed: ${detail}`))
-      })
-      .on('end', () => {
-        // sink resolves once `finish` fires after `end()` propagates
-      })
-      .pipe(sink)
-  })
-}
-
-// ---------------------------------------------------------------------------
-// probeDurationSeconds (CRITICAL-2 fix — required by Plan B Task B.2)
-// ---------------------------------------------------------------------------
-
-/**
- * Probe the duration of an audio buffer in seconds, rounded to the nearest
- * integer. Used to populate `ai_usage.p_input_tokens` for Whisper calls so
- * per-tenant spend reporting is accurate (Whisper bills per audio minute).
- *
- * Failures are surfaced as a generic error to the caller and a Sentry
- * capture with `err.name` only.
- */
-export async function probeDurationSeconds(input: Buffer): Promise<number> {
-  return await new Promise<number>((resolve, reject) => {
-    const inputStream = new PassThrough()
-    inputStream.end(input)
-
-    fluentFfmpeg(inputStream).ffprobe((err: Error | null, data: unknown) => {
-      if (err) {
-        const e = err as { name?: string }
-        Sentry.captureException(
-          new Error(`ffmpeg.probeDurationSeconds: ${e?.name ?? 'UnknownError'}`),
-          { tags: { phase: 'p3', layer: 'ai-wrapper', helper: 'probeDurationSeconds' } },
-        )
-        reject(new Error('ffprobe failed'))
-        return
-      }
-      // reason: fluent-ffmpeg's typed `FfprobeData` has `format.duration` as
-      // `number | undefined`. We coerce defensively — an unprobeable file
-      // resolves to 0 seconds (caller treats as a degenerate input).
-      const d = data as { format?: { duration?: number } }
-      const seconds = Math.round(d.format?.duration ?? 0)
-      resolve(seconds)
-    })
-  })
+    const output = await fs.readFile(outPath)
+    if (output.byteLength === 0) {
+      throw new Error('ffmpeg recompress produced empty output (input may be corrupt or unsupported)')
+    }
+    return output
+  } finally {
+    // Best-effort cleanup. /tmp on Vercel is per-invocation but we tidy
+    // anyway in case the Lambda is reused for another invocation in the
+    // same warm-pool slot.
+    await fs.unlink(inPath).catch(() => {})
+    await fs.unlink(outPath).catch(() => {})
+  }
 }
 
 /**

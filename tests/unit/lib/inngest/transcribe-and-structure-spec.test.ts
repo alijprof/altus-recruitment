@@ -37,7 +37,6 @@ vi.mock('@/lib/ai/whisper', () => ({ transcribe: vi.fn() }))
 vi.mock('@/lib/ai/jd-extract', () => ({ extractJdFromTranscript: vi.fn() }))
 vi.mock('@/lib/ai/ffmpeg', () => ({
   recompressToOpus: vi.fn(),
-  probeDurationSeconds: vi.fn(),
 }))
 
 describe('transcribe-and-structure-spec — HARD RULE 4 tenant boundary', () => {

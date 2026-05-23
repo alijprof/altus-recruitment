@@ -48,6 +48,9 @@ vi.mock('fluent-ffmpeg', () => {
     // reason: chainable fluent-ffmpeg surface — `Record<string, unknown>`
     // is unavoidable because we add ad-hoc methods that the wrapper exercises.
     const cmd: Record<string, unknown> = {}
+    // Capture the 'end' handler so save() can trigger it after writing
+    // the stub output file.
+    let endHandler: (() => void) | null = null
 
     const chain = (method: string) =>
       (...args: unknown[]) => {
@@ -67,23 +70,20 @@ vi.mock('fluent-ffmpeg', () => {
     cmd.on = (event: string, handler: (...args: unknown[]) => void) => {
       recorded.push({ method: `on:${event}`, args: [] })
       if (event === 'end') {
-        queueMicrotask(() => handler())
+        endHandler = handler as () => void
       }
       return cmd
     }
 
-    cmd.pipe = (writable: NodeJS.WritableStream) => {
-      recorded.push({ method: 'pipe', args: [] })
-      queueMicrotask(() => {
-        writable.write(Buffer.from([0x4f, 0x67, 0x67, 0x53])) // "OggS" header
-        writable.end()
-      })
-      return writable
-    }
-
-    cmd.ffprobe = (cb: (err: Error | null, data: unknown) => void) => {
-      recorded.push({ method: 'ffprobe', args: [] })
-      queueMicrotask(() => cb(null, { format: { duration: 42.7 } }))
+    cmd.save = (outPath: string) => {
+      recorded.push({ method: 'save', args: [outPath] })
+      // Write a stub WebM EBML header (0x1A 0x45 0xDF 0xA3) so the wrapper's
+      // fs.readFile returns non-empty bytes and the size guard passes.
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const realFs = require('node:fs') as typeof import('node:fs')
+      realFs.writeFileSync(outPath, Buffer.from([0x1a, 0x45, 0xdf, 0xa3]))
+      queueMicrotask(() => endHandler?.())
+      return cmd
     }
 
     return cmd
@@ -111,39 +111,38 @@ vi.mock('@ffprobe-installer/ffprobe', () => ({
 // Import the wrapper AFTER mocks are registered.
 // ---------------------------------------------------------------------------
 
-import { probeDurationSeconds, recompressToOpus } from '@/lib/ai/ffmpeg'
+import { recompressToOpus } from '@/lib/ai/ffmpeg'
 
 beforeEach(() => {
   getRecordedRef().value = []
 })
 
 describe('src/lib/ai/ffmpeg.recompressToOpus', () => {
-  it('passes -c:a libopus -b:a 32k -ac 1 (mono 32 kbps Opus)', async () => {
+  it('passes -c:a libopus -b:a 32k -ac 1 -f webm (mono 32 kbps Opus in WebM)', async () => {
     const input = Buffer.from('fake-audio-input')
     const out = await recompressToOpus(input, { bitrate: '32k', channels: 1 })
     expect(Buffer.isBuffer(out)).toBe(true)
+    // EBML header bytes the mock save() writes.
+    expect(out.byteLength).toBeGreaterThan(0)
 
     const calls = getRecordedRef().value
     const codec = calls.find((c) => c.method === 'audioCodec')
     const bitrate = calls.find((c) => c.method === 'audioBitrate')
     const channels = calls.find((c) => c.method === 'audioChannels')
     const format = calls.find((c) => c.method === 'format')
+    const save = calls.find((c) => c.method === 'save')
 
     expect(codec?.args[0]).toBe('libopus')
     expect(bitrate?.args[0]).toBe('32k')
     expect(channels?.args[0]).toBe(1)
-    expect(format?.args[0]).toBe('ogg')
+    expect(format?.args[0]).toBe('webm')
+    // Output path lives under tmpdir — assert .save() was called with one.
+    expect(typeof save?.args[0]).toBe('string')
   })
-})
 
-describe('src/lib/ai/ffmpeg.probeDurationSeconds (CRITICAL-2: required by Plan B Task B.2)', () => {
-  it('returns format.duration rounded to nearest integer', async () => {
-    const input = Buffer.from('fake-audio-input')
-    const seconds = await probeDurationSeconds(input)
-    // Mock duration is 42.7 → expect 43 (nearest integer per CRITICAL-2 fix).
-    expect(seconds).toBe(43)
-
-    const calls = getRecordedRef().value
-    expect(calls.find((c) => c.method === 'ffprobe')).toBeDefined()
+  it('rejects an empty input buffer up front', async () => {
+    await expect(
+      recompressToOpus(Buffer.alloc(0), { bitrate: '32k', channels: 1 }),
+    ).rejects.toThrow('empty input buffer')
   })
 })
