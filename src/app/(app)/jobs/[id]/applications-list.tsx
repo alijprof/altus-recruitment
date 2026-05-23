@@ -13,6 +13,8 @@ import { formatTimeAgo } from '@/lib/date'
 import { formatDeclineReason } from '@/lib/legal/decline-reasons'
 import type { PipelineCardData } from '@/lib/db/applications'
 
+import { ApplicationRowActions } from './application-row-actions'
+
 // Stage label mapping — keep inline because it's only used here in Phase 1.
 // Mirrors the column titles in PipelineBoard's STAGES capitalisation rule.
 function stageLabel(stage: string): string {
@@ -27,9 +29,10 @@ export type ApplicationsListProps = {
   // need for the inline type widening that previously masked the missing
   // SELECT column.
   rows: PipelineCardData[]
+  jobId: string
 }
 
-export function ApplicationsList({ rows }: ApplicationsListProps) {
+export function ApplicationsList({ rows, jobId }: ApplicationsListProps) {
   if (rows.length === 0) {
     return (
       <div className="bg-card rounded-md border p-10 text-center">
@@ -60,6 +63,9 @@ export function ApplicationsList({ rows }: ApplicationsListProps) {
             </TableHead>
             <TableHead className="text-muted-foreground text-xs font-normal">
               Last move
+            </TableHead>
+            <TableHead className="w-12 text-right">
+              <span className="sr-only">Actions</span>
             </TableHead>
           </TableRow>
         </TableHeader>
@@ -111,6 +117,14 @@ export function ApplicationsList({ rows }: ApplicationsListProps) {
                 </TableCell>
                 <TableCell className="text-muted-foreground text-sm font-normal">
                   {formatTimeAgo(row.stage_changed_at)}
+                </TableCell>
+                <TableCell className="text-right">
+                  <ApplicationRowActions
+                    applicationId={row.id}
+                    candidateName={row.candidate_name}
+                    currentStage={row.stage}
+                    jobId={jobId}
+                  />
                 </TableCell>
               </TableRow>
             )

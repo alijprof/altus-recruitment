@@ -69,7 +69,7 @@ export default async function JobDetailPage({
           <h2 className="text-sm font-semibold">Applications</h2>
           <AddCandidateForm jobId={id} />
         </div>
-        <ApplicationsList rows={applications} />
+        <ApplicationsList rows={applications} jobId={id} />
       </section>
 
       <section className="space-y-4">
