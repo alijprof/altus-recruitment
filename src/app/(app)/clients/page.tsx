@@ -6,8 +6,7 @@ import { Button } from '@/components/ui/button'
 import { listClients, type ClientListSort, type ListDir } from '@/lib/db/clients'
 import { createClient } from '@/lib/supabase/server'
 
-import { ClientCards } from './client-cards'
-import { ClientTable } from './client-table'
+import { ClientsShell } from './clients-shell'
 import { DormantBadge } from './dormant-badge'
 import { SearchInput } from './search-input'
 
@@ -115,16 +114,19 @@ export default async function ClientsPage({
               ? 'No matches'
               : `${pageStart}–${pageEnd} of ${total} client${total === 1 ? '' : 's'}`}
           </p>
-          <ViewToggle
-            basePath="/clients"
-            current={view}
-            params={{
-              q: q || undefined,
-              sort: sort !== 'last_contacted_at' ? sort : undefined,
-              dir: dir !== 'desc' ? dir : undefined,
-              page: page > 1 ? String(page) : undefined,
-            }}
-          />
+          {/* ViewToggle hidden on mobile — the shell forces cards regardless of ?view= */}
+          <div className="hidden md:inline-flex">
+            <ViewToggle
+              basePath="/clients"
+              current={view}
+              params={{
+                q: q || undefined,
+                sort: sort !== 'last_contacted_at' ? sort : undefined,
+                dir: dir !== 'desc' ? dir : undefined,
+                page: page > 1 ? String(page) : undefined,
+              }}
+            />
+          </div>
         </div>
       </div>
 
@@ -134,10 +136,8 @@ export default async function ClientsPage({
             No clients match &ldquo;{q}&rdquo;. Try a shorter or different search term.
           </p>
         </div>
-      ) : view === 'cards' ? (
-        <ClientCards rows={rows} />
       ) : (
-        <ClientTable rows={rows} />
+        <ClientsShell desktopView={view} rows={rows} />
       )}
 
       {total > pageSize && (

@@ -6,8 +6,7 @@ import { Button } from '@/components/ui/button'
 import { listCandidates, type SortDir, type SortKey } from '@/lib/db/candidates'
 import { createClient } from '@/lib/supabase/server'
 
-import { CandidateCards } from './candidate-cards'
-import { CandidateTable } from './candidate-table'
+import { CandidatesShell } from './candidates-shell'
 import { SearchInput } from './search-input'
 
 // D-15: default sort is last_contacted_at DESC NULLS LAST (most recently
@@ -99,38 +98,30 @@ export default async function CandidatesPage({
         <>
           <div className="flex flex-wrap items-center justify-between gap-3">
             <SearchInput initialQuery={q ?? ''} />
-            <ViewToggle
-              basePath="/candidates"
-              current={view}
-              params={{
-                q: q,
-                sort: sort !== DEFAULT_SORT ? sort : undefined,
-                dir: dir !== DEFAULT_DIR ? dir : undefined,
-                page: page > 1 ? String(page) : undefined,
-              }}
-            />
+            {/* ViewToggle hidden on mobile — the shell forces cards regardless of ?view= */}
+            <div className="hidden md:inline-flex">
+              <ViewToggle
+                basePath="/candidates"
+                current={view}
+                params={{
+                  q: q,
+                  sort: sort !== DEFAULT_SORT ? sort : undefined,
+                  dir: dir !== DEFAULT_DIR ? dir : undefined,
+                  page: page > 1 ? String(page) : undefined,
+                }}
+              />
+            </div>
           </div>
-          {view === 'cards' ? (
-            <CandidateCards
-              rows={rows}
-              total={total}
-              page={page}
-              pageSize={PAGE_SIZE}
-              sort={sort}
-              dir={dir}
-              query={q}
-            />
-          ) : (
-            <CandidateTable
-              rows={rows}
-              total={total}
-              page={page}
-              pageSize={PAGE_SIZE}
-              sort={sort}
-              dir={dir}
-              query={q}
-            />
-          )}
+          <CandidatesShell
+            desktopView={view}
+            rows={rows}
+            total={total}
+            page={page}
+            pageSize={PAGE_SIZE}
+            sort={sort}
+            dir={dir}
+            query={q}
+          />
         </>
       )}
     </div>
