@@ -15,7 +15,12 @@ const nextConfig: NextConfig = {
   // cannot be bundled by webpack. Marked server-external so Next resolves
   // them at runtime via Node's CJS resolver. The wrappers are server-only
   // (`import 'server-only'` in src/lib/ai/{ffmpeg,whisper}.ts).
-  serverExternalPackages: ['voyageai', 'fluent-ffmpeg', '@ffmpeg-installer/ffmpeg'],
+  serverExternalPackages: [
+    'voyageai',
+    'fluent-ffmpeg',
+    '@ffmpeg-installer/ffmpeg',
+    '@ffprobe-installer/ffprobe',
+  ],
 }
 
 // Source-map upload only runs when SENTRY_AUTH_TOKEN is set (CI / deploy);
