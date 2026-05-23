@@ -24,6 +24,7 @@ vi.mock('@sentry/nextjs', () => ({
 import { markCandidateFieldsFromCV } from '@/lib/db/candidate-cvs'
 
 type CandidateRow = {
+  full_name: string
   email: string | null
   phone: string | null
   location: string | null
@@ -69,6 +70,7 @@ function makeSupabase(current: CandidateRow) {
 }
 
 const emptyCandidate: CandidateRow = {
+  full_name: 'Existing Full Name',
   email: null,
   phone: null,
   location: null,
@@ -213,6 +215,7 @@ describe('markCandidateFieldsFromCV (D-08 empty-only enforcement)', () => {
     // database write should fire (an empty UPDATE is wasteful and would
     // trigger updated_at unnecessarily).
     const sb = makeSupabase({
+      full_name: 'Existing Full Name',
       email: 'a@a.com',
       phone: '+1',
       location: 'X',
@@ -338,5 +341,68 @@ describe('markCandidateFieldsFromCV (D-08 empty-only enforcement)', () => {
       },
     })
     expect(sb.spy()?.work_experience).toBeUndefined()
+  })
+
+  it('upgrades full_name when the CV is a strict extension of the existing name', async () => {
+    // The common quick-add-then-upload-CV flow: user typed 'Liam', CV says
+    // 'Liam Steele'. We upgrade because the parsed name strictly extends
+    // the existing one (case-insensitive prefix + trailing space).
+    const sb = makeSupabase({ ...emptyCandidate, full_name: 'Liam' })
+    await markCandidateFieldsFromCV(sb.client, {
+      candidateId: 'cand-1',
+      parsed: { name: 'Liam Steele' },
+    })
+    expect(sb.spy()?.full_name).toBe('Liam Steele')
+  })
+
+  it('upgrades full_name across case differences', async () => {
+    // User typed 'liam' lowercase, CV has proper 'Liam Steele'. Still an
+    // extension by case-insensitive prefix — upgrade.
+    const sb = makeSupabase({ ...emptyCandidate, full_name: 'liam' })
+    await markCandidateFieldsFromCV(sb.client, {
+      candidateId: 'cand-1',
+      parsed: { name: 'Liam Steele' },
+    })
+    expect(sb.spy()?.full_name).toBe('Liam Steele')
+  })
+
+  it('does NOT downgrade full_name when the CV name is shorter', async () => {
+    const sb = makeSupabase({ ...emptyCandidate, full_name: 'Liam Steele' })
+    await markCandidateFieldsFromCV(sb.client, {
+      candidateId: 'cand-1',
+      parsed: { name: 'Liam' },
+    })
+    expect(sb.spy()?.full_name).toBeUndefined()
+  })
+
+  it('does NOT upgrade full_name when the CV name is unrelated', async () => {
+    // 'Lima' (typo) + 'Liam Steele' — neither is a prefix of the other.
+    // Preserve the manually-entered value.
+    const sb = makeSupabase({ ...emptyCandidate, full_name: 'Lima' })
+    await markCandidateFieldsFromCV(sb.client, {
+      candidateId: 'cand-1',
+      parsed: { name: 'Liam Steele' },
+    })
+    expect(sb.spy()?.full_name).toBeUndefined()
+  })
+
+  it('does NOT upgrade full_name on partial-word matches', async () => {
+    // 'Liam' + 'Liamsy' — same prefix but no separating space. Treat as
+    // unrelated names; do not upgrade.
+    const sb = makeSupabase({ ...emptyCandidate, full_name: 'Liam' })
+    await markCandidateFieldsFromCV(sb.client, {
+      candidateId: 'cand-1',
+      parsed: { name: 'Liamsy' },
+    })
+    expect(sb.spy()?.full_name).toBeUndefined()
+  })
+
+  it('fills full_name when the column is an empty string', async () => {
+    const sb = makeSupabase({ ...emptyCandidate, full_name: '' })
+    await markCandidateFieldsFromCV(sb.client, {
+      candidateId: 'cand-1',
+      parsed: { name: 'Liam Steele' },
+    })
+    expect(sb.spy()?.full_name).toBe('Liam Steele')
   })
 })

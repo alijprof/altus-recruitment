@@ -205,6 +205,7 @@ export async function updateCandidateCVParse(
 // ---------------------------------------------------------------------------
 
 type ParsedCVSubset = {
+  name?: string | null
   email?: string | null
   phone?: string | null
   location?: string | null
@@ -357,6 +358,26 @@ export async function markCandidateFieldsFromCV(
       parsedValue.length > 0
     ) {
       patch[col] = parsedValue
+    }
+  }
+
+  // Name — special-case D-08. full_name is NOT NULL so the column is never
+  // truly null; treat empty string as fillable. Beyond that, allow an
+  // *upgrade*: if the user typed a partial (e.g., 'Liam') and the CV fills
+  // in a strict extension ('Liam Steele' — same case-insensitive prefix +
+  // a trailing space + more text), promote to the more complete value.
+  // This handles the common quick-add-then-upload-CV flow without
+  // clobbering an intentional full name with a CV-extracted variant.
+  const parsedName = (args.parsed.name ?? '').trim()
+  const currentName = String(row['full_name'] ?? '').trim()
+  if (parsedName) {
+    if (!currentName) {
+      patch['full_name'] = parsedName
+    } else if (
+      parsedName.length > currentName.length &&
+      parsedName.toLowerCase().startsWith(currentName.toLowerCase() + ' ')
+    ) {
+      patch['full_name'] = parsedName
     }
   }
 

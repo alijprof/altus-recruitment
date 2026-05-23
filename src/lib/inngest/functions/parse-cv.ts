@@ -250,6 +250,7 @@ export const parseCVOnUpload = inngest.createFunction(
           candidateId: candidate_id,
           // The helper subset matches the parsed CV shape one-to-one.
           parsed: {
+            name: parsed.name ?? null,
             email: parsed.email ?? null,
             phone: parsed.phone ?? null,
             location: parsed.location ?? null,
