@@ -98,3 +98,94 @@ export async function addFloatAction(
   revalidatePath(`/floats`)
   return { ok: true, applicationId: data.id }
 }
+
+// ---------------------------------------------------------------------------
+// updateFloatNoteAction — edit the latest note attached to a float.
+//
+// The page renders the most-recent note activity per application. Editing
+// here means either updating that row in-place (if one exists) or inserting
+// a new one (if the float was added without a note). Keeps the data shape
+// the page already reads from — no migration required.
+// ---------------------------------------------------------------------------
+
+const updateNoteSchema = z.object({
+  applicationId: idSchema,
+  candidateId: idSchema,
+  body: z.string().trim().max(2_000),
+})
+
+export type UpdateFloatNoteResult =
+  | { ok: true }
+  | { ok: false; formError: string }
+
+export async function updateFloatNoteAction(
+  rawInput: unknown,
+): Promise<UpdateFloatNoteResult> {
+  const parsed = updateNoteSchema.safeParse(rawInput)
+  if (!parsed.success) {
+    return { ok: false, formError: 'Invalid note payload.' }
+  }
+
+  const supabase = await createSupabaseClient()
+  const { data: userData } = await supabase.auth.getUser()
+  if (!userData.user) {
+    return { ok: false, formError: 'Not signed in.' }
+  }
+
+  // Find the latest existing note for this float (RLS scopes to the org).
+  const { data: existing, error: readErr } = await supabase
+    .from('activities')
+    .select('id')
+    .eq('entity_type', 'application')
+    .eq('entity_id', parsed.data.applicationId)
+    .eq('kind', 'note')
+    .order('occurred_at', { ascending: false })
+    .limit(1)
+    .maybeSingle()
+  if (readErr) {
+    Sentry.captureException(readErr, {
+      tags: { layer: 'action', helper: 'updateFloatNoteAction', step: 'read' },
+    })
+    return { ok: false, formError: 'Could not load existing note.' }
+  }
+
+  const body = parsed.data.body.length > 0 ? parsed.data.body : null
+
+  if (existing) {
+    const { error: updErr } = await supabase
+      .from('activities')
+      .update({ body })
+      .eq('id', existing.id)
+    if (updErr) {
+      Sentry.captureException(updErr, {
+        tags: { layer: 'action', helper: 'updateFloatNoteAction', step: 'update' },
+      })
+      return { ok: false, formError: 'Could not update note.' }
+    }
+  } else if (body) {
+    // No existing note — insert a fresh one. Mirrors the addFloat insert
+    // shape so the page query keeps finding it the same way.
+    const insert = {
+      kind: 'note',
+      body,
+      actor_user_id: userData.user.id,
+      entity_type: 'application',
+      entity_id: parsed.data.applicationId,
+      metadata: {
+        candidate_id: parsed.data.candidateId,
+        application_type: 'float',
+      },
+    } as unknown as TablesInsert<'activities'>
+    const { error: insErr } = await supabase.from('activities').insert(insert)
+    if (insErr) {
+      Sentry.captureException(insErr, {
+        tags: { layer: 'action', helper: 'updateFloatNoteAction', step: 'insert' },
+      })
+      return { ok: false, formError: 'Could not save note.' }
+    }
+  }
+  // else: no existing row and empty body — nothing to do.
+
+  revalidatePath(`/candidates/${parsed.data.candidateId}/floats`)
+  return { ok: true }
+}

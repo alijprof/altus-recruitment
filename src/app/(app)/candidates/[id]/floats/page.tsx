@@ -9,6 +9,7 @@ import { createClient as createSupabaseClient } from '@/lib/supabase/server'
 import { formatTimeAgo } from '@/lib/date'
 
 import { FloatForm } from './float-form'
+import { FloatNoteEditor } from './float-note-editor'
 import { FloatRowActions } from './float-row-actions'
 
 /**
@@ -119,11 +120,11 @@ export default async function CandidateFloatsPage({
                     <div className="text-muted-foreground text-xs">
                       Added {formatTimeAgo(row.created_at)}
                     </div>
-                    {note ? (
-                      <p className="whitespace-pre-wrap">{note}</p>
-                    ) : (
-                      <p className="text-muted-foreground italic">No note.</p>
-                    )}
+                    <FloatNoteEditor
+                      applicationId={row.id}
+                      candidateId={id}
+                      initialNote={note}
+                    />
                   </div>
                   <FloatRowActions applicationId={row.id} />
                 </li>
