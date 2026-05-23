@@ -34,6 +34,40 @@ See `.claude/projects/-Users-aj-mac-altus-recruitment/memory/phase3-linkedin-pdf
 
 - **PWA installability** — Make Altus installable as a phone app icon. Requires `public/manifest.json` (name, icons, theme), apple-touch-icons in `app/layout.tsx`, optional service worker for offline. Estimated 2h. Important enough that the user explicitly flagged it during Test 4 — surface this on the next session if not done by then.
 
+## Test 4 — finishing the spec-review flow (BLOCKED at the finish line)
+
+State as of 2026-05-23 end of session: the spec pipeline transcribes audio + extracts a structured JD correctly. The remaining failure is **UI gaps on the review/approve step**, not the backend pipeline.
+
+### What works
+- Upload `.m4a` / `.webm` / record via mic → ffmpeg recompress to WebM-Opus via `/tmp` file → Whisper transcribe → Sonnet structure → spec draft lands with parsed JD ✓
+- Approve action blocks when no client is selected (fix `c0638d0`) so we don't silently lose data anymore
+
+### What's broken / missing
+1. **Review form has no client picker.** `src/app/(app)/spec/[id]/review/spec-review-form.tsx` doesn't render a `<select>` for companies. Confirmed via `grep -n "company\|client"` — only the `'use client'` directive shows. The approve action requires `draft.company_id` (jobs.company_id is NOT NULL) so without a picker the user can't progress past the inline-error toast my fix surfaces. **Need to: add a company picker to the review form, wire it to a server action that updates spec_drafts.company_id, re-render the page.** The /spec/new form already has the same picker code — copy that pattern.
+2. **Failed-draft view only shows "upload another file."** When `create-job-from-spec` marks a draft `failed`, the recruiter loses the parsed JD they spent time on. The /spec/[id] page should show: status banner + the parsed JD + a "Pick a client and retry" CTA that re-fires `spec-draft/approved` after setting `company_id`. Inspect `src/app/(app)/spec/[id]/page.tsx` to see what it currently renders.
+
+### Where to start next session
+
+```bash
+# Read these to load context:
+cat src/app/\(app\)/spec/\[id\]/review/spec-review-form.tsx       # missing picker
+cat src/app/\(app\)/spec/\[id\]/page.tsx                          # failed-state view
+cat src/app/\(app\)/spec/new/spec-upload-form.tsx                 # has the picker pattern to copy
+cat src/lib/inngest/functions/create-job-from-spec.ts             # the function that needs the company_id
+```
+
+Then:
+1. Add `clients={clients}` prop wiring in `review/page.tsx` (server page that loads clients via existing `listClients`-style helper), pass into form.
+2. Add a `<select>` for `company_id` in `spec-review-form.tsx`, default to the draft's current company_id if set.
+3. Update `approveSpecDraftAction` to accept `companyId` in the input schema and persist it via `update spec_drafts set company_id = $1`.
+4. On `/spec/[id]/page.tsx`, when status='failed' and parsed JD exists, render the JD + a "Pick client + retry" link that takes the user back to `/spec/[id]/review`.
+
+Existing orphaned draft from UAT can be repaired by editing `spec_drafts.company_id` directly via Supabase Studio, then `update spec_drafts set status='ready_for_review' where id='<id>'` to make it reviewable again — the new fix path will then work end-to-end.
+
+### Remaining UAT tests after Test 4 closes
+
+Tests 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15 — see `03-UAT.md`.
+
 ## What's left
 
 ### 1. Continue UAT tests 1, 4-15 — variable time
