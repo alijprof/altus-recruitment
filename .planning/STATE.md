@@ -128,6 +128,7 @@ None currently. Tasks 3–7 can proceed in order.
 | 260523-qyc | Placement-fee capture modal — prompt for fee/date/type on move-to-placed; persist via new applications columns; surface revenue in source-attribution | 2026-05-23 | e996e0d, ac4df51 | [SUMMARY](quick/260523-qyc-add-placement-fee-capture-modal-prompt-f/260523-qyc-SUMMARY.md) |
 | 260523-ret | Mobile UX overhaul — hamburger drawer nav + condensed mobile header + table-to-card transformations on /candidates, /clients, /jobs, /floats | 2026-05-23 | af56ac4, b556468, 5060e4c | [SUMMARY](quick/260523-ret-mobile-ux-overhaul-phone-navigation-betw/260523-ret-SUMMARY.md) |
 | 260523-sns | Wave 1 hygiene — backfilled Phase 2 plan summaries, marked Phase 2 complete in ROADMAP, regenerated database.ts (~108-line drift cleared), fixed two pre-existing lint errors, un-aged Aberdeen Renewables demo data | 2026-05-23 | b8fdb69, cb4f7df, 578c06a | [SUMMARY](quick/260523-sns-wave-1-hygiene-backfill-phase-2-plan-sum/260523-sns-SUMMARY.md) |
+| 260523-tje | Ad-save UX polish — full saved-ad render + per-row Copy/View/Delete dropdown + View dialog rendering inclusivity suggestions on /jobs/[id] | 2026-05-23 | 7d28560, c469ffa | [SUMMARY](quick/260523-tje-ad-save-ux-polish-full-saved-ad-render-p/260523-tje-SUMMARY.md) |
 
 ---
 

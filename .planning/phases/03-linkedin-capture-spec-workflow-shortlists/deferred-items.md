@@ -30,9 +30,13 @@ deferred-item: No placement-fee capture modal [RESOLVED 2026-05-23 / quick-26052
   - moveApplicationAction guard returns "Capture fee, date, and type before placing." when fields missing
   Commits: e996e0d, ac4df51.
 
-deferred-item: `ad_generate` post-save UX
-  Saving an ad to `job_ads` leaves the recruiter at a partial ad render with no
-  follow-up affordance (view / edit / send / preview). Phase 4 polish.
+deferred-item: `ad_generate` post-save UX [RESOLVED 2026-05-23 / quick-260523-tje]
+  Shipped via /gsd-quick (commits 7d28560 + c469ffa):
+  - Full ad body now renders inline on the saved-ads list (no more partial snippet)
+  - Per-row "..." dropdown with Copy / View full / Delete actions
+  - View dialog shows the full ad + inclusivity score + suggestions
+  - deleteJobAdAction with confirm prompt + audit log entry
+  Edit-in-place, send-to-LinkedIn, and versioning remain deferred (Phase 4 scope).
 
 deferred-item: Generated types regeneration [RESOLVED 2026-05-23 / quick-260523-sns]
   Regenerated in commit b8fdb69. `// @ts-nocheck` preserved as first line.
