@@ -94,13 +94,49 @@ type BodyProps = {
   onCancel: () => void
 }
 
+// AI returns body_html as simple <p>-wrapped paragraphs. We hide that
+// HTML detail from the recruiter — they edit prose, we wrap on send.
+function htmlToPlain(html: string): string {
+  return html
+    .replace(/<\/p>\s*<p[^>]*>/gi, '\n\n')
+    .replace(/<p[^>]*>/gi, '')
+    .replace(/<\/p>/gi, '')
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&#39;/g, "'")
+    .replace(/&quot;/g, '"')
+    .trim()
+}
+
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
+}
+
+function plainToHtml(text: string): string {
+  return text
+    .split(/\n\s*\n/)
+    .map((p) => p.trim())
+    .filter(Boolean)
+    .map((p) => `<p>${escapeHtml(p).replace(/\n/g, '<br>')}</p>`)
+    .join('')
+}
+
 function SendCheckinModalBody({ clientId, onSent, onCancel }: BodyProps) {
   // Initial status starts as `requesting`; the effect dispatches the
   // Inngest event + begins polling immediately on mount. No `open` check
   // needed because the parent only mounts us when open=true.
   const [status, setStatus] = useState<Status>({ kind: 'requesting' })
   const [subject, setSubject] = useState('')
-  const [bodyHtml, setBodyHtml] = useState('')
+  const [bodyText, setBodyText] = useState('')
   // Set seed inside the effect (Date.now() is impure during render).
   const seedTimeRef = useRef<number>(0)
 
@@ -129,7 +165,7 @@ function SendCheckinModalBody({ clientId, onSent, onCancel }: BodyProps) {
           const draftTime = new Date(got.data.created_at).getTime()
           if (draftTime + 5_000 >= seedTimeRef.current) {
             setSubject(got.data.subject)
-            setBodyHtml(got.data.body_html)
+            setBodyText(htmlToPlain(got.data.body_html))
             setStatus({ kind: 'ready' })
             return
           }
@@ -146,7 +182,11 @@ function SendCheckinModalBody({ clientId, onSent, onCancel }: BodyProps) {
 
   async function handleSend() {
     setStatus({ kind: 'sending' })
-    const result = await sendOutreachAction({ clientId, subject, body_html: bodyHtml })
+    const result = await sendOutreachAction({
+      clientId,
+      subject,
+      body_html: plainToHtml(bodyText),
+    })
     if (result.ok) {
       onSent()
       return
@@ -178,7 +218,7 @@ function SendCheckinModalBody({ clientId, onSent, onCancel }: BodyProps) {
         const draftTime = new Date(got.data.created_at).getTime()
         if (draftTime + 5_000 >= seedTimeRef.current) {
           setSubject(got.data.subject)
-          setBodyHtml(got.data.body_html)
+          setBodyText(htmlToPlain(got.data.body_html))
           setStatus({ kind: 'ready' })
           return
         }
@@ -259,15 +299,19 @@ function SendCheckinModalBody({ clientId, onSent, onCancel }: BodyProps) {
             />
           </div>
           <div className="space-y-1">
-            <Label htmlFor="dormant-body">Body (HTML)</Label>
+            <Label htmlFor="dormant-body">Body</Label>
             <Textarea
               id="dormant-body"
-              value={bodyHtml}
-              onChange={(e) => setBodyHtml(e.target.value)}
+              value={bodyText}
+              onChange={(e) => setBodyText(e.target.value)}
               required
               rows={10}
-              className="font-mono text-xs"
+              placeholder="Edit the AI-drafted message. Blank lines start a new paragraph."
             />
+            <p className="text-muted-foreground text-xs">
+              Paragraph breaks come from blank lines. Formatting is added
+              automatically when you send.
+            </p>
           </div>
           <DialogFooter className="gap-2">
             <Button
