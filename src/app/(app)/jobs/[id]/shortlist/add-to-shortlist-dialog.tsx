@@ -68,7 +68,6 @@ export function AddToShortlistDialog({ jobId }: AddToShortlistDialogProps) {
     const reqId = ++reqRef.current
     // Loading marker must be set synchronously before the async fetch so the
     // UI reflects the in-flight state immediately.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     setSearch({ kind: 'loading', q })
     void searchCandidatesAction(q).then((res) => {
       if (reqRef.current !== reqId) return
