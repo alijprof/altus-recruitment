@@ -2,7 +2,7 @@ import { EmptyState } from '@/components/app/empty-state'
 import { listJobs } from '@/lib/db/jobs'
 import { createClient } from '@/lib/supabase/server'
 
-import { JobsTable } from './jobs-table'
+import { JobsShell } from './jobs-shell'
 
 // D-15: Jobs default sort is created_at DESC and statusFilter defaults to
 // `open`. D-14 puts list interaction state in URL search params.
@@ -68,7 +68,7 @@ export default async function JobsPage({
           cta={{ href: '/clients', label: 'View clients' }}
         />
       ) : (
-        <JobsTable rows={rows} total={total} page={page} pageSize={PAGE_SIZE} />
+        <JobsShell rows={rows} total={total} page={page} pageSize={PAGE_SIZE} />
       )}
     </div>
   )

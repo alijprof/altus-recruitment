@@ -19,33 +19,8 @@ import {
 } from '@/components/ui/table'
 import { formatTimeAgo } from '@/lib/date'
 import type { JobListRow } from '@/lib/db/jobs'
-import type { Enums } from '@/types/database'
 
-// Human labels for enum values rendered inline.
-const TYPE_LABEL: Record<Enums<'job_type'>, string> = {
-  perm: 'Perm',
-  contract: 'Contract',
-  temp: 'Temp',
-}
-
-const STATUS_VARIANT: Record<
-  Enums<'job_status'>,
-  'default' | 'outline' | 'secondary'
-> = {
-  draft: 'outline',
-  open: 'default',
-  on_hold: 'secondary',
-  filled: 'secondary',
-  cancelled: 'outline',
-}
-
-const STATUS_LABEL: Record<Enums<'job_status'>, string> = {
-  draft: 'Draft',
-  open: 'Open',
-  on_hold: 'On hold',
-  filled: 'Filled',
-  cancelled: 'Cancelled',
-}
+import { TYPE_LABEL, STATUS_VARIANT, STATUS_LABEL } from './job-labels'
 
 export type JobsTableProps = {
   rows: JobListRow[]
