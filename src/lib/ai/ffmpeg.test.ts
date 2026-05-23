@@ -95,8 +95,17 @@ vi.mock('fluent-ffmpeg', () => {
   factory.setFfmpegPath = (_p: string) => {
     getRecordedRef().value.push({ method: 'module:setFfmpegPath', args: [_p] })
   }
+  factory.setFfprobePath = (_p: string) => {
+    getRecordedRef().value.push({ method: 'module:setFfprobePath', args: [_p] })
+  }
   return { default: factory }
 })
+
+// Mock the new @ffprobe-installer/ffprobe package the same way as ffmpeg.
+vi.mock('@ffprobe-installer/ffprobe', () => ({
+  default: { path: '/mock/path/to/ffprobe' },
+  path: '/mock/path/to/ffprobe',
+}))
 
 // ---------------------------------------------------------------------------
 // Import the wrapper AFTER mocks are registered.

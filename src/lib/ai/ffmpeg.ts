@@ -4,10 +4,12 @@ import { PassThrough, Writable } from 'node:stream'
 
 import * as Sentry from '@sentry/nextjs'
 
-// reason: @ffmpeg-installer/ffmpeg has no DefinitelyTyped definitions;
-// `(installer as { path: string }).path` is the documented runtime shape.
-// fluent-ffmpeg is typed via @types/fluent-ffmpeg.
+// reason: @ffmpeg-installer/ffmpeg + @ffprobe-installer/ffprobe have no
+// DefinitelyTyped definitions; `(installer as { path: string }).path` is
+// the documented runtime shape. fluent-ffmpeg is typed via
+// @types/fluent-ffmpeg.
 import ffmpegInstaller from '@ffmpeg-installer/ffmpeg'
+import ffprobeInstaller from '@ffprobe-installer/ffprobe'
 import fluentFfmpeg from 'fluent-ffmpeg'
 
 // ---------------------------------------------------------------------------
@@ -32,11 +34,18 @@ import fluentFfmpeg from 'fluent-ffmpeg'
 // ---------------------------------------------------------------------------
 
 const ffmpegPath = (ffmpegInstaller as unknown as { path: string }).path
+const ffprobePath = (ffprobeInstaller as unknown as { path: string }).path
 
-// Module-level setter (sets the binary path for every command this process
-// constructs). fluent-ffmpeg lets us pass the path per-command too; doing it
-// once at load avoids the chance of forgetting on a future call site.
+// Module-level setters (set the binary paths for every command this process
+// constructs). fluent-ffmpeg lets us pass the paths per-command too; doing
+// it once at load avoids the chance of forgetting on a future call site.
+//
+// ffprobe is a SEPARATE binary that ships with its own package
+// (@ffprobe-installer/ffprobe). @ffmpeg-installer/ffmpeg bundles only the
+// ffmpeg binary, not ffprobe — leaving ffprobePath unset is the classic
+// "ffprobe failed" error fluent-ffmpeg emits when probing audio metadata.
 fluentFfmpeg.setFfmpegPath(ffmpegPath)
+fluentFfmpeg.setFfprobePath(ffprobePath)
 
 // ---------------------------------------------------------------------------
 // recompressToOpus
@@ -138,4 +147,11 @@ export async function probeDurationSeconds(input: Buffer): Promise<number> {
  */
 export function getFfmpegBinaryPath(): string {
   return ffmpegPath
+}
+
+/**
+ * Exported for diagnostics. Path to the @ffprobe-installer static binary.
+ */
+export function getFfprobeBinaryPath(): string {
+  return ffprobePath
 }
