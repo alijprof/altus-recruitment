@@ -59,12 +59,16 @@ type JobAdsTableClient = {
           col: string,
           opts: { ascending: boolean },
         ) => Promise<{ data: JobAdRow[] | null; error: unknown }>
+        maybeSingle: () => Promise<{ data: { id: string; job_id: string } | null; error: unknown }>
       }
     }
     insert: (row: Record<string, unknown>) => {
       select: (cols: string) => {
         single: () => Promise<{ data: { id: string } | null; error: unknown }>
       }
+    }
+    delete: () => {
+      eq: (col: string, val: unknown) => Promise<{ error: unknown }>
     }
   }
 }
@@ -135,4 +139,44 @@ export async function listJobAdsForJob(
     return { ok: false, code: 'internal' }
   }
   return { ok: true, data: data ?? [] }
+}
+
+/**
+ * Hard-delete a single job_ad row. Reads the row first (select → delete) so
+ * the caller has id + job_id for the audit log entry and revalidatePath call
+ * even after the row is gone. RLS `tenant delete` policy scopes the delete to
+ * the caller's org — no manual organization_id filter needed.
+ *
+ * UAT-260523-AD-SAVE-UX: backs the per-row Delete action (Test 6).
+ */
+export async function deleteJobAd(
+  supabase: SupabaseClient<Database>,
+  args: { adId: string },
+): Promise<DbResult<{ id: string; job_id: string }>> {
+  const client = asJobAdsClient(supabase)
+
+  // Pre-read so the caller can write a meaningful audit row after deletion.
+  const { data: existing, error: readErr } = await client
+    .from('job_ads')
+    .select('id, job_id')
+    .eq('id', args.adId)
+    .maybeSingle()
+
+  if (readErr) {
+    Sentry.captureException(readErr, {
+      tags: { layer: 'db', helper: 'deleteJobAd', subop: 'read' },
+    })
+    return { ok: false, code: 'internal' }
+  }
+  if (!existing) return { ok: false, code: 'not_found' }
+
+  const { error: delErr } = await client.from('job_ads').delete().eq('id', args.adId)
+  if (delErr) {
+    Sentry.captureException(delErr, {
+      tags: { layer: 'db', helper: 'deleteJobAd', subop: 'delete' },
+    })
+    return { ok: false, code: 'internal' }
+  }
+
+  return { ok: true, data: existing }
 }

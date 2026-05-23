@@ -12,7 +12,7 @@ import {
   type InclusivitySuggestion,
   type ScoreOnlyResult,
 } from '@/lib/ai/ad-generate'
-import { createJobAd } from '@/lib/db/job-ads'
+import { createJobAd, deleteJobAd } from '@/lib/db/job-ads'
 import { getJob } from '@/lib/db/jobs'
 import { createClient as createSupabaseClient } from '@/lib/supabase/server'
 
@@ -238,4 +238,72 @@ export async function saveJobAdAction(
 
   revalidatePath(`/jobs/${parsed.data.jobId}`)
   return { ok: true, adId: result.data.id }
+}
+
+// ---------------------------------------------------------------------------
+// deleteJobAdAction — hard-delete a saved ad row (UAT-260523-AD-SAVE-UX Test 6).
+//
+// Mirrors removeApplicationAction in src/app/(app)/jobs/[id]/actions.ts:
+//   1. Zod-parse the input (adId + jobId both UUIDs).
+//   2. Auth check.
+//   3. deleteJobAd helper (read-then-delete via RLS `tenant delete` policy).
+//   4. Audit via record_audit RPC — failure is Sentry-captured but MUST NOT
+//      block the success return (the row is already gone).
+//   5. revalidatePath so the list refreshes on the next server render.
+//
+// entity_type 'job_ad': recruiter-owned artefact, not candidate PII. The audit
+// entry is belt-and-suspenders; the primary audit requirement (GDPR) targets
+// candidate reads. If the DB CHECK constraint on entity_type rejects 'job_ad',
+// the Sentry capture will surface it and the delete still succeeds.
+// ---------------------------------------------------------------------------
+
+const deleteAdSchema = z.object({
+  adId: uuid,
+  jobId: uuid,
+})
+
+export type DeleteJobAdActionResult = { ok: true } | { ok: false; error: string }
+
+export async function deleteJobAdAction(
+  rawInput: unknown,
+): Promise<DeleteJobAdActionResult> {
+  const parsed = deleteAdSchema.safeParse(rawInput)
+  if (!parsed.success) {
+    return { ok: false, error: 'Invalid ad or job id.' }
+  }
+
+  const supabase = await createSupabaseClient()
+  const {
+    data: { user },
+  } = await supabase.auth.getUser()
+  if (!user) return { ok: false, error: 'Not signed in.' }
+
+  const res = await deleteJobAd(supabase, { adId: parsed.data.adId })
+  if (!res.ok) {
+    if (res.code === 'not_found') return { ok: false, error: 'Ad already removed.' }
+    return { ok: false, error: 'Could not delete ad.' }
+  }
+
+  // Write an audit_log row — failure must not block the success path.
+  const supabaseUntyped = supabase as unknown as {
+    rpc: (
+      fn: string,
+      args: Record<string, unknown>,
+    ) => Promise<{ data: unknown; error: unknown }>
+  }
+  const { error: auditErr } = await supabaseUntyped.rpc('record_audit', {
+    p_action: 'delete',
+    p_entity_type: 'job_ad',
+    p_entity_id: res.data.id,
+    p_metadata: { job_id: res.data.job_id, via: 'saved_ads_list_row_action' },
+  })
+  if (auditErr) {
+    Sentry.captureException(auditErr, {
+      tags: { layer: 'action', helper: 'deleteJobAdAction', subop: 'audit' },
+    })
+    // Don't block — the row is already deleted and the request was authorised.
+  }
+
+  revalidatePath(`/jobs/${parsed.data.jobId}`)
+  return { ok: true }
 }
