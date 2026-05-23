@@ -21,21 +21,20 @@ const nextConfig: NextConfig = {
     '@ffmpeg-installer/ffmpeg',
     '@ffprobe-installer/ffprobe',
   ],
-  // serverExternalPackages prevents bundling but doesn't guarantee Vercel
-  // includes the static binary files in the function deployment.
-  // outputFileTracingIncludes explicitly traces the platform-specific
-  // binaries so they land in the Lambda. The glob covers Linux x64 (Vercel's
-  // runtime) and the macOS arm64 binary used in local dev.
+  // Narrowly trace ONLY the Linux x64 ffprobe binary into /api/inngest. The
+  // broader `./node_modules/@ffprobe-installer/**` glob bundles every
+  // platform's binary (darwin-arm64, linux-arm64, win32-x64, etc.) and
+  // overflows Vercel's 250 MB function size, breaking the deploy step
+  // after compile success.
   //
-  // Without this, fluent-ffmpeg's setFfprobePath() points at a missing file
-  // and the spec-call pipeline throws "ffprobe failed" on Vercel even when
-  // it works locally on Mac.
+  // @ffmpeg-installer is handled automatically by Vercel's tracer — the
+  // path is referenced as `installer.path` in src/lib/ai/ffmpeg.ts and the
+  // tracer follows it. @ffprobe-installer needs the same path coverage;
+  // listing the linux-x64 binary explicitly is the smallest fix that ships
+  // it without pulling in every platform.
   outputFileTracingIncludes: {
     '/api/inngest': [
-      './node_modules/@ffmpeg-installer/**',
-      './node_modules/@ffprobe-installer/**',
-      './node_modules/.pnpm/@ffmpeg-installer+*/**',
-      './node_modules/.pnpm/@ffprobe-installer+*/**',
+      './node_modules/.pnpm/@ffprobe-installer+linux-x64@*/node_modules/@ffprobe-installer/linux-x64/ffprobe',
     ],
   },
 }

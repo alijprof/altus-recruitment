@@ -10,6 +10,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 
 import { submitSpecCallAction } from './actions'
+import { MicRecorder } from './mic-recorder'
 
 type SpecUploadFormProps = {
   // Optional list of {id, name} for the client picker. Wired by the server
@@ -41,10 +42,33 @@ export function SpecUploadForm({ clients }: SpecUploadFormProps) {
     })
   }
 
+  // Clear the file input when the recorder takes over (and vice versa), so
+  // the "Ready to upload" hint reflects which source the submit will use.
+  const onRecordingChange = (next: File | null) => {
+    if (next && inputRef.current) inputRef.current.value = ''
+    setFile(next)
+  }
+
   return (
-    <form onSubmit={handleSubmit} className="space-y-4">
+    <form onSubmit={handleSubmit} className="space-y-5">
       <div className="space-y-2">
-        <Label htmlFor="spec-audio">Audio recording</Label>
+        <Label>Record this spec call</Label>
+        <MicRecorder disabled={isPending} onRecording={onRecordingChange} />
+      </div>
+
+      <div className="relative">
+        <div className="absolute inset-0 flex items-center" aria-hidden>
+          <span className="border-border w-full border-t" />
+        </div>
+        <div className="relative flex justify-center">
+          <span className="bg-card text-muted-foreground px-2 text-xs font-normal uppercase">
+            or
+          </span>
+        </div>
+      </div>
+
+      <div className="space-y-2">
+        <Label htmlFor="spec-audio">Upload an existing file</Label>
         <Input
           id="spec-audio"
           ref={inputRef}
