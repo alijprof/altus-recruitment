@@ -6,6 +6,7 @@ import { useState, useTransition } from 'react'
 import { toast } from 'sonner'
 
 import { DeclineModal } from '@/components/app/decline-modal'
+import { PlacementModal } from '@/components/app/placement-modal'
 import { Button } from '@/components/ui/button'
 import {
   DropdownMenu,
@@ -51,9 +52,18 @@ export function ApplicationRowActions({
 }: Props) {
   const router = useRouter()
   const [declineOpen, setDeclineOpen] = useState(false)
+  // UAT-260523-PLACEMENT-CAPTURE: open PlacementModal when "Move to → Placed".
+  const [placementOpen, setPlacementOpen] = useState(false)
   const [isPending, startTransition] = useTransition()
 
   const handleMove = (toStage: PipelineStage) => {
+    // UAT-260523-PLACEMENT-CAPTURE: intercept placed stage — open modal instead
+    // of calling action directly. Modal calls moveApplicationAction on confirm.
+    if (toStage === 'placed') {
+      setPlacementOpen(true)
+      return
+    }
+
     startTransition(async () => {
       const res = await moveApplicationAction({
         applicationId,
@@ -135,6 +145,23 @@ export function ApplicationRowActions({
         onOpenChange={setDeclineOpen}
         onDeclined={() => {
           router.refresh()
+        }}
+      />
+
+      {/* UAT-260523-PLACEMENT-CAPTURE: PlacementModal for "Move to → Placed"
+          from the jobs table row dropdown. Refreshes the table on confirm. */}
+      <PlacementModal
+        applicationId={applicationId}
+        candidateName={candidateName}
+        jobId={jobId}
+        open={placementOpen}
+        onOpenChange={setPlacementOpen}
+        onPlaced={() => {
+          router.refresh()
+        }}
+        onError={() => {
+          // No optimistic state to revert; just close.
+          setPlacementOpen(false)
         }}
       />
     </>

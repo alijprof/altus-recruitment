@@ -18,6 +18,7 @@ import { useState, useTransition } from 'react'
 import { toast } from 'sonner'
 
 import { DeclineModal } from '@/components/app/decline-modal'
+import { PlacementModal } from '@/components/app/placement-modal'
 import { PipelineCard } from '@/components/app/pipeline-card'
 import { cn } from '@/lib/utils'
 import {
@@ -50,6 +51,8 @@ export function PipelineBoard({ initial, jobId }: PipelineBoardProps) {
   const [columns, setColumns] = useState<GroupedByStage>(initial)
   const [pendingIds, setPendingIds] = useState<Set<string>>(new Set())
   const [declineTarget, setDeclineTarget] = useState<PipelineCardData | null>(null)
+  // UAT-260523-PLACEMENT-CAPTURE: intercept placed-stage moves before action call.
+  const [placementTarget, setPlacementTarget] = useState<PipelineCardData | null>(null)
   const [, startTransition] = useTransition()
 
   // PointerSensor activationConstraint.distance: 4 px — prevents click-to-
@@ -161,12 +164,30 @@ export function PipelineBoard({ initial, jobId }: PipelineBoardProps) {
 
     const card = columns[fromStage].find((c) => c.id === activeId)
     if (!card) return
+
+    // UAT-260523-PLACEMENT-CAPTURE: intercept drag-to-Placed. Do NOT optimistically
+    // move the card; wait for PlacementModal.onPlaced to confirm the DB write
+    // succeeded. If the modal is cancelled, the card stays in its original column.
+    if (toStage === 'placed') {
+      setPlacementTarget(card)
+      return
+    }
+
     performMove(card, fromStage, toStage)
   }
 
   function handleDropdownMove(card: PipelineCardData, toStage: PipelineStage) {
     const fromStage = findStageOf(card.id)
     if (!fromStage) return
+
+    // UAT-260523-PLACEMENT-CAPTURE: intercept dropdown "Move to → Placed".
+    // Open PlacementModal instead of calling performMove. No optimistic move
+    // until onPlaced fires.
+    if (toStage === 'placed') {
+      setPlacementTarget(card)
+      return
+    }
+
     performMove(card, fromStage, toStage)
   }
 
@@ -238,6 +259,33 @@ export function PipelineBoard({ initial, jobId }: PipelineBoardProps) {
             // Remove the card from whatever column it sits in.
             const fromStage = findStageOf(applicationId)
             if (fromStage) setColumns(removeCardLocal(applicationId, fromStage))
+          }}
+        />
+      ) : null}
+
+      {/* UAT-260523-PLACEMENT-CAPTURE: PlacementModal for drag-to-placed and
+          dropdown "Move to → Placed". Only moves the card locally AFTER the
+          DB write is confirmed (onPlaced). Cancel leaves the card in place. */}
+      {placementTarget ? (
+        <PlacementModal
+          applicationId={placementTarget.id}
+          candidateName={placementTarget.candidate_name}
+          jobId={jobId ?? null}
+          open={true}
+          onOpenChange={(open) => {
+            if (!open) setPlacementTarget(null)
+          }}
+          onPlaced={(applicationId) => {
+            // Move card to the placed column now that the DB write succeeded.
+            const fromStage = findStageOf(applicationId)
+            if (fromStage) {
+              setColumns(moveCardLocal(applicationId, fromStage, 'placed'))
+            }
+            setPlacementTarget(null)
+          }}
+          onError={() => {
+            // No optimistic move to revert — card stayed in its original column.
+            setPlacementTarget(null)
           }}
         />
       ) : null}

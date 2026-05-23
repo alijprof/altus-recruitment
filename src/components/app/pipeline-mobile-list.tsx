@@ -4,6 +4,7 @@ import { useState, useTransition } from 'react'
 import { toast } from 'sonner'
 
 import { DeclineModal } from '@/components/app/decline-modal'
+import { PlacementModal } from '@/components/app/placement-modal'
 import {
   Accordion,
   AccordionContent,
@@ -50,6 +51,8 @@ export type PipelineMobileListProps = {
 export function PipelineMobileList({ initial, jobId }: PipelineMobileListProps) {
   const [columns, setColumns] = useState<GroupedByStage>(initial)
   const [declineTarget, setDeclineTarget] = useState<PipelineCardData | null>(null)
+  // UAT-260523-PLACEMENT-CAPTURE: intercept placed-stage moves before action call.
+  const [placementTarget, setPlacementTarget] = useState<PipelineCardData | null>(null)
   const [, startTransition] = useTransition()
 
   function findStageOf(cardId: string): PipelineStage | null {
@@ -62,6 +65,14 @@ export function PipelineMobileList({ initial, jobId }: PipelineMobileListProps) 
   function performMove(card: PipelineCardData, toStage: PipelineStage) {
     const fromStage = findStageOf(card.id)
     if (!fromStage || fromStage === toStage) return
+
+    // UAT-260523-PLACEMENT-CAPTURE: intercept placed-stage moves. Do NOT
+    // optimistically move the card; PlacementModal.onPlaced fires after the
+    // DB write is confirmed. Cancel leaves the card in its original column.
+    if (toStage === 'placed') {
+      setPlacementTarget(card)
+      return
+    }
 
     // Optimistic move; the mobile flow doesn't show a per-card spinner
     // because the Sheet closes immediately and the user moves on.
@@ -96,6 +107,24 @@ export function PipelineMobileList({ initial, jobId }: PipelineMobileListProps) 
       ...prev,
       [fromStage]: prev[fromStage].filter((c) => c.id !== applicationId),
     }))
+  }
+
+  // UAT-260523-PLACEMENT-CAPTURE: called by PlacementModal after DB write succeeds.
+  // Moves the card into the placed column; deferred until confirmation to avoid
+  // optimistic state that must be unwound on cancel.
+  function handlePlaced(applicationId: string) {
+    const fromStage = findStageOf(applicationId)
+    if (!fromStage) return
+    setColumns((prev) => {
+      const card = prev[fromStage].find((c) => c.id === applicationId)
+      if (!card) return prev
+      return {
+        ...prev,
+        [fromStage]: prev[fromStage].filter((c) => c.id !== applicationId),
+        placed: [...prev.placed, { ...card, stage: 'placed' as PipelineStage }],
+      }
+    })
+    setPlacementTarget(null)
   }
 
   function handleRemove(card: PipelineCardData) {
@@ -179,6 +208,22 @@ export function PipelineMobileList({ initial, jobId }: PipelineMobileListProps) 
             if (!open) setDeclineTarget(null)
           }}
           onDeclined={handleDeclined}
+        />
+      ) : null}
+
+      {/* UAT-260523-PLACEMENT-CAPTURE: PlacementModal for "Move to → Placed"
+          on mobile. No optimistic move until onPlaced fires. */}
+      {placementTarget ? (
+        <PlacementModal
+          applicationId={placementTarget.id}
+          candidateName={placementTarget.candidate_name}
+          jobId={jobId ?? null}
+          open={true}
+          onOpenChange={(open) => {
+            if (!open) setPlacementTarget(null)
+          }}
+          onPlaced={handlePlaced}
+          onError={() => setPlacementTarget(null)}
         />
       ) : null}
     </>

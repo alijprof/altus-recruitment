@@ -7,6 +7,7 @@ import { Loader2, MoreHorizontal } from 'lucide-react'
 import { toast } from 'sonner'
 
 import { DeclineModal } from '@/components/app/decline-modal'
+import { PlacementModal } from '@/components/app/placement-modal'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
@@ -71,10 +72,20 @@ export function CandidateApplications({
 }: CandidateApplicationsProps) {
   const router = useRouter()
   const [declineTarget, setDeclineTarget] = useState<PipelineCardData | null>(null)
+  // UAT-260523-PLACEMENT-CAPTURE: intercept placed-stage moves before action call.
+  const [placementTarget, setPlacementTarget] = useState<PipelineCardData | null>(null)
   const [pendingId, setPendingId] = useState<string | null>(null)
   const [, startTransition] = useTransition()
 
   function performMove(application: PipelineCardData, toStage: PipelineStage) {
+    // UAT-260523-PLACEMENT-CAPTURE: intercept placed stage — open modal instead
+    // of calling action directly. jobId is per-row so the modal can pass it
+    // for accurate revalidatePath on the job's pipeline page.
+    if (toStage === 'placed') {
+      setPlacementTarget(application)
+      return
+    }
+
     setPendingId(application.id)
     startTransition(async () => {
       const res = await moveApplicationAction({
@@ -240,6 +251,30 @@ export function CandidateApplications({
           open={true}
           onOpenChange={(open) => {
             if (!open) setDeclineTarget(null)
+          }}
+        />
+      ) : null}
+
+      {/* UAT-260523-PLACEMENT-CAPTURE: PlacementModal for "Move to → Placed"
+          from the candidate detail page applications panel. job_id is per-row
+          so the modal passes it through for accurate revalidatePath on the
+          job's pipeline page. router.refresh() picks up the new stage badge. */}
+      {placementTarget ? (
+        <PlacementModal
+          applicationId={placementTarget.id}
+          candidateName={placementTarget.candidate_name}
+          jobId={placementTarget.job_id ?? null}
+          candidateId={candidateId}
+          open={true}
+          onOpenChange={(open) => {
+            if (!open) setPlacementTarget(null)
+          }}
+          onPlaced={() => {
+            setPlacementTarget(null)
+            router.refresh()
+          }}
+          onError={() => {
+            setPlacementTarget(null)
           }}
         />
       ) : null}
