@@ -18,10 +18,9 @@ deferred-item: UAT Test 12 — Outlook Mail.Send incremental consent (partial)
   Outstanding: full send via Microsoft Graph + Mail.Send consent prompt on first click.
   Blocked by: Microsoft Outlook OAuth handshake (Phase 2 wiring not completed by anchor).
 
-deferred-item: Outreach email body too long
-  AI-drafted dormant check-in emails run long during UAT 2026-05-23.
-  Tighten the Sonnet prompt (target ~150 words) in the dormant-outreach drafter.
-  Phase 4.
+deferred-item: Outreach email body too long [RESOLVED 2026-05-23 / 4f739b2]
+  Sonnet prompt + tool schema tightened to target 70-100 words across
+  3-4 short sentences. Re-verify on next Send check-in run.
 
 deferred-item: No placement-fee capture modal
   Moving a candidate to `placed` does not prompt for fee amount / placement date / type.
@@ -39,7 +38,9 @@ deferred-item: Generated types regeneration
   the dashboard; full regeneration is a tidy-up item that should be done before any
   type-sensitive change in Phase 4.
 
-deferred-item: PWA installability
-  Make Altus installable as a phone app icon. Requires `public/manifest.json`
-  (name, icons, theme), apple-touch-icons in `app/layout.tsx`, optional service
-  worker for offline. Estimated 2h. Flagged by user during 2026-05-23 UAT Test 4.
+deferred-item: PWA installability [RESOLVED 2026-05-23 / cd9962a]
+  Shipped via Next.js App Router convention files: app/manifest.ts,
+  app/icon.tsx (512x512), app/apple-icon.tsx (180x180 maskable),
+  appleWebApp metadata + viewport.themeColor in app/layout.tsx.
+  Placeholder "A" wordmark — swap with a designed icon by replacing the
+  two .tsx files. Optional service worker for offline is still deferred.
