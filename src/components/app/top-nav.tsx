@@ -1,5 +1,6 @@
 import Link from 'next/link'
 
+import { MobileNavDrawer } from '@/components/app/mobile-nav-drawer'
 import { SignOutButton } from '@/components/app/sign-out-button'
 
 const NAV_ITEMS = [
@@ -43,16 +44,24 @@ export function TopNav({ userEmail, userName, organizationName }: TopNavProps) {
   return (
     <header className="border-b border-[#0f1a26] bg-[#1a2738] text-slate-100">
       <div className="mx-auto flex w-full max-w-6xl items-center justify-between gap-6 px-4 py-3 sm:px-6">
-        <div className="flex items-center gap-6">
+        <div className="flex items-center gap-3 md:gap-6">
+          {/* Hamburger — only visible below md; renders the mobile nav drawer */}
+          <MobileNavDrawer
+            userEmail={userEmail}
+            userName={userName}
+            organizationName={organizationName}
+          />
           <Link
             href="/"
             className="flex items-center gap-3 transition-opacity hover:opacity-90"
             aria-label="Altus Recruit — home"
           >
-            <span className="flex h-10 w-10 items-center justify-center rounded-md bg-slate-50 shadow-sm">
-              <AltusMonogram className="h-6 w-6" />
+            {/* Monogram: condensed on mobile (h-8 w-8), full size at md+ */}
+            <span className="flex h-8 w-8 items-center justify-center rounded-md bg-slate-50 shadow-sm md:h-10 md:w-10">
+              <AltusMonogram className="h-5 w-5 md:h-6 md:w-6" />
             </span>
             <span className="hidden h-9 w-px bg-slate-100/15 sm:block" aria-hidden="true" />
+            {/* Wordmark — hidden on mobile (sm:flex keeps it off phones, which are < 640px) */}
             <span className="hidden flex-col leading-tight sm:flex">
               <span className="text-[10px] font-medium tracking-[0.18em] text-slate-400 uppercase">
                 Recruitment CRM
@@ -76,11 +85,15 @@ export function TopNav({ userEmail, userName, organizationName }: TopNavProps) {
           </nav>
         </div>
         <div className="flex items-center gap-3">
-          <div className="hidden text-right text-xs leading-tight sm:block">
+          {/* Email/org chip — hidden below md; available in the drawer footer on mobile */}
+          <div className="hidden text-right text-xs leading-tight md:block">
             <div className="font-medium text-slate-100">{userName ?? userEmail}</div>
             {organizationName && <div className="text-slate-400">{organizationName}</div>}
           </div>
-          <SignOutButton />
+          {/* SignOutButton — desktop only; mobile uses the one in the drawer footer */}
+          <div className="hidden md:block">
+            <SignOutButton />
+          </div>
         </div>
       </div>
     </header>
