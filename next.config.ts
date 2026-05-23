@@ -21,22 +21,6 @@ const nextConfig: NextConfig = {
     '@ffmpeg-installer/ffmpeg',
     '@ffprobe-installer/ffprobe',
   ],
-  // Narrowly trace ONLY the Linux x64 ffprobe binary into /api/inngest. The
-  // broader `./node_modules/@ffprobe-installer/**` glob bundles every
-  // platform's binary (darwin-arm64, linux-arm64, win32-x64, etc.) and
-  // overflows Vercel's 250 MB function size, breaking the deploy step
-  // after compile success.
-  //
-  // @ffmpeg-installer is handled automatically by Vercel's tracer — the
-  // path is referenced as `installer.path` in src/lib/ai/ffmpeg.ts and the
-  // tracer follows it. @ffprobe-installer needs the same path coverage;
-  // listing the linux-x64 binary explicitly is the smallest fix that ships
-  // it without pulling in every platform.
-  outputFileTracingIncludes: {
-    '/api/inngest': [
-      './node_modules/.pnpm/@ffprobe-installer+linux-x64@*/node_modules/@ffprobe-installer/linux-x64/ffprobe',
-    ],
-  },
 }
 
 // Source-map upload only runs when SENTRY_AUTH_TOKEN is set (CI / deploy);

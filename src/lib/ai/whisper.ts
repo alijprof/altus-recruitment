@@ -70,15 +70,17 @@ export type TranscribeArgs = {
   purpose: TranscribePurpose
   audioBuffer: Buffer | Uint8Array
   mimeType: string
-  // Duration in seconds. Caller probes with ffmpeg's probeDurationSeconds()
-  // BEFORE this call so we can log accurate cost even if the SDK doesn't
-  // return duration metadata (Whisper-1's response only includes `text`
-  // by default — verbose_json returns segments but adds latency).
-  durationSeconds: number
 }
 
 export type TranscribeResult = {
   text: string
+  // Duration in seconds, as reported by Whisper itself in its verbose_json
+  // response. This was previously probed via ffmpeg/ffprobe BEFORE the
+  // call, but ffprobe doesn't work reliably with stream input on Vercel
+  // serverless (well-known fluent-ffmpeg limitation — ffprobe needs to seek
+  // for the moov atom). Whisper already knows the duration after decoding
+  // the file, so we get it for free without a second binary call.
+  durationSeconds: number
   costPence: number
 }
 
@@ -103,9 +105,6 @@ export async function transcribe(args: TranscribeArgs): Promise<TranscribeResult
   if (args.audioBuffer.byteLength === 0) {
     throw new Error('whisper: empty audio buffer')
   }
-  if (args.durationSeconds <= 0) {
-    throw new Error('whisper: durationSeconds must be > 0')
-  }
 
   const started = Date.now()
   // Pick a filename hint matching the mime type — OpenAI uses the extension
@@ -129,10 +128,15 @@ export async function transcribe(args: TranscribeArgs): Promise<TranscribeResult
           : 'audio.webm'
 
   const file = await toFile(args.audioBuffer, filename, { type: args.mimeType })
+  // response_format: 'verbose_json' returns `duration` (seconds, float)
+  // alongside the text. We use this as the source of truth for ai_usage
+  // cost-tracking and any caller that needs it. The latency overhead vs
+  // default 'json' is negligible compared to the transcribe step itself.
   const response = await openaiClient.audio.transcriptions.create({
     file,
     model: 'whisper-1',
     language: 'en',
+    response_format: 'verbose_json',
     // Treat untrusted user audio as data, not instructions — the prompt
     // here ONLY influences Whisper's lexicon (not a Claude-style system
     // prompt). Locked vocabulary covers the most-frequent UK recruitment
@@ -141,7 +145,14 @@ export async function transcribe(args: TranscribeArgs): Promise<TranscribeResult
       'UK recruitment spec call. Roles, salaries in GBP £. Limited company, IR35, perm/contract.',
   })
 
-  const costPence = calcTranscribeCostPence('whisper-1', args.durationSeconds)
+  // reason: the OpenAI SDK's transcriptions.create() return type is a
+  // discriminated union by response_format; verbose_json adds `duration`
+  // and `segments` but the typed return narrows only when the format is a
+  // literal at the call site. Cast here so we can read duration without
+  // fighting the union.
+  const verbose = response as unknown as { text: string; duration?: number }
+  const durationSeconds = Math.max(1, Math.round(verbose.duration ?? 0))
+  const costPence = calcTranscribeCostPence('whisper-1', durationSeconds)
 
   // Fire-and-forget cost log. Never let a logging failure break the
   // transcribe write — the caller still gets the transcript back.
@@ -153,7 +164,7 @@ export async function transcribe(args: TranscribeArgs): Promise<TranscribeResult
       p_purpose: args.purpose,
       // Whisper is priced per audio minute. We store SECONDS here (rounded
       // up by the caller); /settings/usage divides by 60 for display.
-      p_input_tokens: Math.ceil(args.durationSeconds),
+      p_input_tokens: durationSeconds,
       p_output_tokens: 0,
       p_cost_pence: costPence,
       p_latency_ms: Date.now() - started,
@@ -169,5 +180,5 @@ export async function transcribe(args: TranscribeArgs): Promise<TranscribeResult
     })
   }
 
-  return { text: response.text ?? '', costPence }
+  return { text: verbose.text ?? '', durationSeconds, costPence }
 }

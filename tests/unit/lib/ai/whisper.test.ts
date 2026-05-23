@@ -22,9 +22,13 @@ vi.mock('@/lib/supabase/service', () => ({
 }))
 
 // Mock the OpenAI SDK so transcribe() doesn't hit the network. Whisper's
-// SDK returns `{ text: string }` from audio.transcriptions.create — that's
-// all the wrapper consumes.
-const createTranscription = vi.fn(async () => ({ text: 'Hello world, this is a spec call.' }))
+// verbose_json response returns `{ text, duration, language, segments }`;
+// the wrapper reads `text` + `duration`. Tests can override the resolved
+// value per-case to assert different duration behaviours.
+const createTranscription = vi.fn(async () => ({
+  text: 'Hello world, this is a spec call.',
+  duration: 123,
+}))
 
 vi.mock('openai', () => {
   return {
@@ -58,7 +62,7 @@ afterEach(() => {
 })
 
 describe('transcribe()', () => {
-  it('logs ai_usage with purpose=spec_transcribe, p_input_tokens=duration_seconds, p_output_tokens=0', async () => {
+  it('logs ai_usage with purpose=spec_transcribe and the Whisper-reported duration', async () => {
     const { transcribe } = await import('@/lib/ai/whisper')
     const buffer = Buffer.from('fake-audio-bytes', 'utf8')
     const result = await transcribe({
@@ -67,10 +71,10 @@ describe('transcribe()', () => {
       purpose: 'spec_transcribe',
       audioBuffer: buffer,
       mimeType: 'audio/webm',
-      durationSeconds: 123,
     })
 
     expect(result.text).toContain('spec call')
+    expect(result.durationSeconds).toBe(123)
     expect(recordedRpcCalls).toHaveLength(1)
     expect(recordedRpcCalls[0]?.fn).toBe('record_ai_usage')
 
@@ -83,22 +87,35 @@ describe('transcribe()', () => {
     expect(rpcArgs.p_model).toBe('whisper-1')
   })
 
-  it('rounds duration UP for cost logging (123.4s -> 124 input tokens)', async () => {
+  it('rounds the Whisper duration to the nearest second for cost logging', async () => {
+    createTranscription.mockResolvedValueOnce({
+      text: 'hi',
+      duration: 123.4,
+    })
     const { transcribe } = await import('@/lib/ai/whisper')
-    const buffer = Buffer.from('x', 'utf8')
-    await transcribe({
+    const result = await transcribe({
       organizationId: 'org',
       purpose: 'spec_transcribe',
-      audioBuffer: buffer,
+      audioBuffer: Buffer.from('x', 'utf8'),
       mimeType: 'audio/webm',
-      // Whisper wrapper expects an already-rounded integer (caller probes
-      // with ffmpeg's probeDurationSeconds which uses Math.ceil). Verify
-      // Math.ceil is still applied defensively inside the wrapper so a
-      // non-integer doesn't slip into ai_usage.
-      durationSeconds: 123.4,
     })
+    expect(result.durationSeconds).toBe(123)
     const rpcArgs = recordedRpcCalls[0]?.args as Record<string, unknown>
-    expect(rpcArgs.p_input_tokens).toBe(124)
+    expect(rpcArgs.p_input_tokens).toBe(123)
+  })
+
+  it('clamps a missing/zero duration to 1 so cost logging never writes 0', async () => {
+    // Defensive: if Whisper ever returns a malformed verbose_json without
+    // duration, we'd rather log 1s than skip the row entirely.
+    createTranscription.mockResolvedValueOnce({ text: 'hi', duration: 0 })
+    const { transcribe } = await import('@/lib/ai/whisper')
+    const result = await transcribe({
+      organizationId: 'org',
+      purpose: 'spec_transcribe',
+      audioBuffer: Buffer.from('x', 'utf8'),
+      mimeType: 'audio/webm',
+    })
+    expect(result.durationSeconds).toBe(1)
   })
 
   it('throws on empty audio buffer', async () => {
@@ -109,40 +126,24 @@ describe('transcribe()', () => {
         purpose: 'spec_transcribe',
         audioBuffer: Buffer.alloc(0),
         mimeType: 'audio/webm',
-        durationSeconds: 10,
       }),
     ).rejects.toThrow('empty audio buffer')
   })
 
-  it('throws on durationSeconds <= 0', async () => {
-    const { transcribe } = await import('@/lib/ai/whisper')
-    await expect(
-      transcribe({
-        organizationId: 'org',
-        purpose: 'spec_transcribe',
-        audioBuffer: Buffer.from('x'),
-        mimeType: 'audio/webm',
-        durationSeconds: 0,
-      }),
-    ).rejects.toThrow('durationSeconds must be > 0')
-  })
-
-  it('passes UK English prompt to the SDK for accent + currency anchoring', async () => {
+  it('passes UK English prompt + verbose_json to the SDK', async () => {
     const { transcribe } = await import('@/lib/ai/whisper')
     await transcribe({
       organizationId: 'org',
       purpose: 'spec_transcribe',
       audioBuffer: Buffer.from('x'),
       mimeType: 'audio/webm',
-      durationSeconds: 10,
     })
     expect(createTranscription).toHaveBeenCalledOnce()
-    // mock.calls is `[][]` — index in via unknown so the empty-tuple
-    // overload doesn't trip noUncheckedIndexedAccess.
     const allCalls = createTranscription.mock.calls as unknown as Array<Array<Record<string, unknown>>>
     const callArgs = allCalls[0]?.[0]
     if (!callArgs) throw new Error('createTranscription was not called')
     expect(callArgs.language).toBe('en')
+    expect(callArgs.response_format).toBe('verbose_json')
     expect((callArgs.prompt as string).toLowerCase()).toContain('uk')
     expect(callArgs.prompt).toContain('GBP')
   })

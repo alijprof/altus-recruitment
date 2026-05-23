@@ -90,12 +90,17 @@ export async function recompressToOpus(
       .audioBitrate(opts.bitrate)
       .audioChannels(opts.channels)
       .format('ogg')
-      .on('error', (err: { name?: string }) => {
+      .on('error', (err: { name?: string; message?: string }) => {
+        // Surface the underlying message (truncated) so future Vercel
+        // failures aren't opaque. ffmpeg/ffprobe error strings don't echo
+        // user prompts the way LLM SDKs do — they're library internals
+        // ("ENOENT", "moov atom not found", etc.) and safe to log.
+        const detail = (err?.message ?? err?.name ?? 'UnknownError').slice(0, 300)
         Sentry.captureException(
-          new Error(`ffmpeg.recompressToOpus: ${err?.name ?? 'UnknownError'}`),
+          new Error(`ffmpeg.recompressToOpus: ${detail}`),
           { tags: { phase: 'p3', layer: 'ai-wrapper', helper: 'recompressToOpus' } },
         )
-        reject(new Error('ffmpeg recompress failed'))
+        reject(new Error(`ffmpeg recompress failed: ${detail}`))
       })
       .on('end', () => {
         // sink resolves once `finish` fires after `end()` propagates

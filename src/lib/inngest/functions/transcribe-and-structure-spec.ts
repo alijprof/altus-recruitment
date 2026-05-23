@@ -1,7 +1,7 @@
 import * as Sentry from '@sentry/nextjs'
 import { NonRetriableError } from 'inngest'
 
-import { recompressToOpus, probeDurationSeconds } from '@/lib/ai/ffmpeg'
+import { recompressToOpus } from '@/lib/ai/ffmpeg'
 import { extractJdFromTranscript } from '@/lib/ai/jd-extract'
 import { transcribe } from '@/lib/ai/whisper'
 import { inngest } from '@/lib/inngest/client'
@@ -180,18 +180,11 @@ export const transcribeAndStructureSpec = inngest.createFunction(
             bitrate: '32k',
             channels: 1,
           })
-          const probed = await probeDurationSeconds(compressed)
-          if (probed <= 0) {
-            // Sentinel — outer code interprets a negative duration as a
-            // re-upload prompt and marks the draft failed. We can't call
-            // markSpecFailed from inside step.run because the failure path
-            // wants to happen on the orchestrator side (with retry semantics
-            // and audit). Surface the failure as -1 + empty transcript.
-            return { transcriptText: '', durationSeconds: -1, whisperCostPence: 0 }
-          }
-          if (probed > MAX_DURATION_SECONDS) {
-            return { transcriptText: '', durationSeconds: -2, whisperCostPence: 0 }
-          }
+          // Whisper's verbose_json response carries the real audio duration —
+          // we don't need ffprobe at all. fluent-ffmpeg's .ffprobe() on a
+          // stream is unreliable on Vercel (ffprobe needs seekable input for
+          // the moov atom; streams aren't seekable), so eliminating the
+          // probe step removes a whole class of failures.
           const transcript = await transcribe({
             organizationId: organization_id,
             userId: user_id,
@@ -199,11 +192,16 @@ export const transcribeAndStructureSpec = inngest.createFunction(
             audioBuffer: compressed,
             // After recompress the container is WebM/Opus — match it.
             mimeType: 'audio/webm',
-            durationSeconds: probed,
           })
+          if (transcript.durationSeconds <= 0) {
+            return { transcriptText: '', durationSeconds: -1, whisperCostPence: 0 }
+          }
+          if (transcript.durationSeconds > MAX_DURATION_SECONDS) {
+            return { transcriptText: '', durationSeconds: -2, whisperCostPence: 0 }
+          }
           return {
             transcriptText: transcript.text ?? '',
-            durationSeconds: probed,
+            durationSeconds: transcript.durationSeconds,
             whisperCostPence: transcript.costPence,
           }
         },

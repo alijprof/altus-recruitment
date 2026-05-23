@@ -30,6 +30,10 @@ The PDF pivot is far more reliable because LinkedIn's PDF export format is stabl
 
 See `.claude/projects/-Users-aj-mac-altus-recruitment/memory/phase3-linkedin-pdf-pivot.md` for full context.
 
+## Follow-ups queued (not blocking UAT)
+
+- **PWA installability** — Make Altus installable as a phone app icon. Requires `public/manifest.json` (name, icons, theme), apple-touch-icons in `app/layout.tsx`, optional service worker for offline. Estimated 2h. Important enough that the user explicitly flagged it during Test 4 — surface this on the next session if not done by then.
+
 ## What's left
 
 ### 1. Continue UAT tests 1, 4-15 — variable time
