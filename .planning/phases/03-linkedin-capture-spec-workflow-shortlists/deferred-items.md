@@ -22,11 +22,14 @@ deferred-item: Outreach email body too long [RESOLVED 2026-05-23 / 4f739b2]
   Sonnet prompt + tool schema tightened to target 70-100 words across
   3-4 short sentences. Re-verify on next Send check-in run.
 
-deferred-item: No placement-fee capture modal
-  Moving a candidate to `placed` does not prompt for fee amount / placement date / type.
-  Result: source-attribution report shows placement count without revenue.
-  Mirror DeclineModal's reason capture pattern but for placements.
-  Phase 4.
+deferred-item: No placement-fee capture modal [RESOLVED 2026-05-23 / quick-260523-qyc]
+  Shipped via /gsd-quick:
+  - Migration 20260523160000: placement_type enum + placement_type/placement_currency columns + NOT VALID CHECK
+  - Migration 20260523160100: recreated move_application RPC with 5 placement params + pre-flight guard
+  - src/components/app/placement-modal.tsx — mirror of DeclineModal for placed stage
+  - Wired into all four move-to-placed surfaces (pipeline desktop + mobile, jobs table row, candidate apps panel)
+  - moveApplicationAction guard returns "Capture fee, date, and type before placing." when fields missing
+  Commits: e996e0d, ac4df51.
 
 deferred-item: `ad_generate` post-save UX
   Saving an ad to `job_ads` leaves the recruiter at a partial ad render with no
