@@ -1275,6 +1275,7 @@ export type Database = {
         | "note"
         | "call"
         | "email"
+        | "email_draft"
         | "meeting"
         | "stage_change"
         | "system"
@@ -1458,6 +1459,7 @@ export const Constants = {
         "note",
         "call",
         "email",
+        "email_draft",
         "meeting",
         "stage_change",
         "system",

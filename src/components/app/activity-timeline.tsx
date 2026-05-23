@@ -1,4 +1,4 @@
-import { ArrowRight, MessageSquare, Phone, Sparkles, Users } from 'lucide-react'
+import { ArrowRight, Mail, MessageSquare, Phone, Sparkles, Users } from 'lucide-react'
 import type { ComponentType } from 'react'
 
 import { formatTimeAgo } from '@/lib/date'
@@ -66,7 +66,12 @@ type KindMeta = {
 const KIND_META: Record<Enums<'activity_kind'>, KindMeta> = {
   note: { icon: MessageSquare, label: 'Added a note' },
   call: { icon: Phone, label: 'Logged a call' },
-  email: { icon: MessageSquare, label: 'Logged an email' },
+  email: { icon: Mail, label: 'Logged an email' },
+  email_draft: {
+    icon: Mail,
+    label: 'Drafted an email',
+    iconClass: 'text-muted-foreground',
+  },
   meeting: { icon: Users, label: 'Logged a meeting' },
   stage_change: { icon: ArrowRight, label: 'Moved stages' },
   system: { icon: Sparkles, label: 'System update', iconClass: 'text-muted-foreground' },
