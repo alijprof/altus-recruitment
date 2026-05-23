@@ -156,6 +156,31 @@ export async function updateSpecDraftAudioPath(
 }
 
 /**
+ * Persist the client picker selection back to the row. Called from the
+ * approve action so the create-job-from-spec Inngest function has a
+ * company_id to insert into jobs.
+ */
+export async function updateSpecDraftCompanyId(
+  supabase: SupabaseClient<Database>,
+  args: { id: string; companyId: string | null },
+): Promise<DbResult<{ id: string }>> {
+  const patch: TablesUpdate<'spec_drafts'> = { company_id: args.companyId }
+  const { error } = await supabase
+    .from('spec_drafts')
+    .update(patch)
+    .eq('id', args.id)
+    .select('id')
+    .single()
+  if (error) {
+    Sentry.captureException(error, {
+      tags: { layer: 'db', helper: 'updateSpecDraftCompanyId' },
+    })
+    return { ok: false, code: 'internal' }
+  }
+  return { ok: true, data: { id: args.id } }
+}
+
+/**
  * Persist the recruiter-edited structured JD back to the row at approval
  * time. The Inngest createJobFromSpec function reads this on its trigger.
  */

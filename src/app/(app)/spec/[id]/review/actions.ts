@@ -8,6 +8,7 @@ import {
   getSpecDraft,
   markSpecDraftApproved,
   markSpecDraftRejected,
+  updateSpecDraftCompanyId,
   updateSpecDraftStructuredData,
 } from '@/lib/db/spec-drafts'
 import { inngest } from '@/lib/inngest/client'
@@ -54,6 +55,7 @@ export type SpecJdInput = z.infer<typeof structuredJdSchema>
 
 const approveSchema = z.object({
   specDraftId: z.string().uuid('Invalid draft id.'),
+  companyId: z.string().uuid('Pick a client before approving.').nullable().optional(),
   structuredData: structuredJdSchema,
 })
 
@@ -77,19 +79,32 @@ export async function approveSpecDraftAction(rawInput: unknown): Promise<ActionR
     return { ok: false, error: 'Draft not found.' }
   }
 
-  // Guard: jobs require a company_id at the schema level, and the
-  // create-job-from-spec Inngest function refuses to create a row without
-  // one. Catch this BEFORE the async fire-and-forget so the recruiter sees
-  // a clear error rather than getting silently redirected to /jobs with no
-  // new row appearing.
-  if (!draftResult.data.company_id) {
+  // Resolve the company_id to use: the form-supplied selection wins, falling
+  // back to whatever was already on the row (e.g., picked at /spec/new). The
+  // create-job-from-spec Inngest function refuses to create a job without
+  // one, so block here for a clear inline error.
+  const effectiveCompanyId =
+    parsed.data.companyId ?? draftResult.data.company_id ?? null
+  if (!effectiveCompanyId) {
     return {
       ok: false,
       error: 'Pick a client below before approving — jobs need to be linked to a company.',
     }
   }
 
-  // 1) Persist the recruiter-edited structured JD back to the row.
+  // 1) Persist the client selection if it changed (covers both first-time
+  // approval and retry-from-failed flows).
+  if (effectiveCompanyId !== draftResult.data.company_id) {
+    const companyResult = await updateSpecDraftCompanyId(supabase, {
+      id: parsed.data.specDraftId,
+      companyId: effectiveCompanyId,
+    })
+    if (!companyResult.ok) {
+      return { ok: false, error: 'Could not save client selection.' }
+    }
+  }
+
+  // 2) Persist the recruiter-edited structured JD back to the row.
   const structuredResult = await updateSpecDraftStructuredData(supabase, {
     id: parsed.data.specDraftId,
     structuredData: parsed.data.structuredData,
@@ -98,7 +113,7 @@ export async function approveSpecDraftAction(rawInput: unknown): Promise<ActionR
     return { ok: false, error: 'Could not save edits.' }
   }
 
-  // 2) Mark approved (the create-job-from-spec Inngest function patches
+  // 3) Mark approved (the create-job-from-spec Inngest function patches
   // created_job_id once the jobs row exists).
   const approvedResult = await markSpecDraftApproved(supabase, {
     id: parsed.data.specDraftId,
@@ -107,7 +122,7 @@ export async function approveSpecDraftAction(rawInput: unknown): Promise<ActionR
     return { ok: false, error: 'Could not approve draft.' }
   }
 
-  // 3) Fire the event to create the jobs row asynchronously. Same Sentry-
+  // 4) Fire the event to create the jobs row asynchronously. Same Sentry-
   // on-failure pattern as submitSpecCallAction.
   try {
     await inngest.send({

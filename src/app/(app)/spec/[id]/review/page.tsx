@@ -46,6 +46,13 @@ export default async function SpecReviewPage({
     redirect(`/spec/${id}`)
   }
 
+  // Companies list for the client picker. RLS scopes to the tenant.
+  const { data: companies } = await supabase
+    .from('companies')
+    .select('id, name')
+    .order('name', { ascending: true })
+    .limit(200)
+
   const structured = (draft.structured_data ?? {}) as StructuredJd
   const ambiguities = structured.ambiguities ?? []
 
@@ -76,6 +83,8 @@ export default async function SpecReviewPage({
             <CardContent>
               <SpecReviewForm
                 draftId={draft.id}
+                clients={companies ?? []}
+                initialCompanyId={draft.company_id}
                 initial={{
                   title: structured.title ?? '',
                   seniority_level: structured.seniority_level ?? null,

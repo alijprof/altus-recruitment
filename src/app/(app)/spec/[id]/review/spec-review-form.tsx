@@ -32,6 +32,8 @@ type StructuredJd = {
 type Props = {
   draftId: string
   initial: StructuredJd
+  clients: Array<{ id: string; name: string }>
+  initialCompanyId: string | null
 }
 
 function ConfidenceBadge({ level }: { level?: 'high' | 'medium' | 'low' }) {
@@ -43,9 +45,10 @@ function ConfidenceBadge({ level }: { level?: 'high' | 'medium' | 'low' }) {
   )
 }
 
-export function SpecReviewForm({ draftId, initial }: Props) {
+export function SpecReviewForm({ draftId, initial, clients, initialCompanyId }: Props) {
   const router = useRouter()
   const [form, setForm] = useState<StructuredJd>(initial)
+  const [companyId, setCompanyId] = useState<string>(initialCompanyId ?? '')
   const [isApproving, startApproveTransition] = useTransition()
   const [isRejecting, startRejectTransition] = useTransition()
   const confidence = initial.confidence_per_field ?? {}
@@ -58,6 +61,7 @@ export function SpecReviewForm({ draftId, initial }: Props) {
     startApproveTransition(async () => {
       const result = await approveSpecDraftAction({
         specDraftId: draftId,
+        companyId: companyId || null,
         structuredData: {
           title: form.title,
           seniority_level: form.seniority_level || null,
@@ -122,6 +126,32 @@ export function SpecReviewForm({ draftId, initial }: Props) {
           required
           disabled={busy}
         />
+      </div>
+
+      <div className="space-y-2">
+        <Label htmlFor="company">
+          Client <span className="text-destructive">*</span>
+        </Label>
+        <select
+          id="company"
+          value={companyId}
+          onChange={(e) => setCompanyId(e.target.value)}
+          required
+          disabled={busy}
+          className="border-input bg-background focus-visible:ring-ring h-9 w-full rounded-md border px-3 text-sm focus-visible:ring-1 focus-visible:outline-none"
+        >
+          <option value="">— Select a client —</option>
+          {clients.map((c) => (
+            <option key={c.id} value={c.id}>
+              {c.name}
+            </option>
+          ))}
+        </select>
+        {clients.length === 0 ? (
+          <p className="text-muted-foreground text-xs">
+            No clients yet — add one in Clients first, then return here.
+          </p>
+        ) : null}
       </div>
 
       <div className="grid gap-4 sm:grid-cols-2">
@@ -290,7 +320,7 @@ export function SpecReviewForm({ draftId, initial }: Props) {
         >
           {isRejecting ? 'Rejecting…' : 'Reject draft'}
         </Button>
-        <Button type="submit" disabled={busy || !form.title.trim()}>
+        <Button type="submit" disabled={busy || !form.title.trim() || !companyId}>
           {isApproving ? 'Approving…' : 'Approve & create job'}
         </Button>
       </div>
