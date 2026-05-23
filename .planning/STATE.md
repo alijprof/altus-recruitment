@@ -126,6 +126,7 @@ None currently. Tasks 3–7 can proceed in order.
 | Quick ID | Description | Date | Commits | Summary |
 |---|---|---|---|---|
 | 260523-qyc | Placement-fee capture modal — prompt for fee/date/type on move-to-placed; persist via new applications columns; surface revenue in source-attribution | 2026-05-23 | e996e0d, ac4df51 | [SUMMARY](quick/260523-qyc-add-placement-fee-capture-modal-prompt-f/260523-qyc-SUMMARY.md) |
+| 260523-ret | Mobile UX overhaul — hamburger drawer nav + condensed mobile header + table-to-card transformations on /candidates, /clients, /jobs, /floats | 2026-05-23 | af56ac4, b556468, 5060e4c | [SUMMARY](quick/260523-ret-mobile-ux-overhaul-phone-navigation-betw/260523-ret-SUMMARY.md) |
 
 ---
 
