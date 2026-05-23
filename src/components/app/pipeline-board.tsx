@@ -27,7 +27,10 @@ import {
   type PipelineStage,
 } from '@/lib/db/pipeline-stages'
 
-import { moveApplicationAction } from '@/app/(app)/jobs/[id]/actions'
+import {
+  moveApplicationAction,
+  removeApplicationAction,
+} from '@/app/(app)/jobs/[id]/actions'
 
 // UI-SPEC §4: stage column titles.
 function stageLabel(stage: PipelineStage): string {
@@ -167,6 +170,37 @@ export function PipelineBoard({ initial, jobId }: PipelineBoardProps) {
     performMove(card, fromStage, toStage)
   }
 
+  function handleRemove(card: PipelineCardData) {
+    if (
+      !window.confirm(
+        `Remove ${card.candidate_name} from this job? Their candidate record will remain — only the application is deleted.`,
+      )
+    ) {
+      return
+    }
+    const fromStage = findStageOf(card.id)
+    if (!fromStage) return
+
+    // Optimistic: drop the card immediately. Restore on failure.
+    setColumns(removeCardLocal(card.id, fromStage))
+
+    startTransition(async () => {
+      const res = await removeApplicationAction({
+        applicationId: card.id,
+        jobId: jobId ?? null,
+      })
+      if (!res.ok) {
+        setColumns((prev) => ({
+          ...prev,
+          [fromStage]: [...prev[fromStage], card],
+        }))
+        toast.error(res.error)
+        return
+      }
+      toast.success(`${card.candidate_name} removed from job.`)
+    })
+  }
+
   return (
     <>
       <DndContext sensors={sensors} onDragEnd={handleDragEnd}>
@@ -184,6 +218,7 @@ export function PipelineBoard({ initial, jobId }: PipelineBoardProps) {
                 pendingIds={pendingIds}
                 onMoveTo={handleDropdownMove}
                 onReject={(card) => setDeclineTarget(card)}
+                onRemove={handleRemove}
               />
             ))}
           </div>
@@ -216,9 +251,17 @@ type ColumnProps = {
   pendingIds: Set<string>
   onMoveTo: (card: PipelineCardData, toStage: PipelineStage) => void
   onReject: (card: PipelineCardData) => void
+  onRemove: (card: PipelineCardData) => void
 }
 
-function Column({ stage, cards, pendingIds, onMoveTo, onReject }: ColumnProps) {
+function Column({
+  stage,
+  cards,
+  pendingIds,
+  onMoveTo,
+  onReject,
+  onRemove,
+}: ColumnProps) {
   const { setNodeRef, isOver } = useDroppable({ id: stage })
 
   return (
@@ -255,6 +298,7 @@ function Column({ stage, cards, pendingIds, onMoveTo, onReject }: ColumnProps) {
                 isPending={pendingIds.has(c.id)}
                 onMoveTo={(toStage) => onMoveTo(c, toStage)}
                 onReject={() => onReject(c)}
+                onRemove={() => onRemove(c)}
               />
             ))
           )}

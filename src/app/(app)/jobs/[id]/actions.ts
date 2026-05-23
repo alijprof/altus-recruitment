@@ -4,7 +4,11 @@ import * as Sentry from '@sentry/nextjs'
 import { revalidatePath } from 'next/cache'
 import { z } from 'zod'
 
-import { createApplication, moveApplication } from '@/lib/db/applications'
+import {
+  createApplication,
+  deleteApplication,
+  moveApplication,
+} from '@/lib/db/applications'
 import { createClient as createSupabaseClient } from '@/lib/supabase/server'
 import type { Enums } from '@/types/database'
 
@@ -218,5 +222,84 @@ export async function moveApplicationAction(
   if (candidateId) {
     revalidatePath(`/candidates/${candidateId}`)
   }
+  return { ok: true }
+}
+
+// ---------------------------------------------------------------------------
+// removeApplicationAction — hard-delete the candidate↔job junction row.
+//
+// Distinct from moveApplicationAction(toStage='rejected'): this is the
+// "added by mistake" affordance, used by the pipeline card dropdown's
+// "Remove from job" item. No decline_reason is required because no
+// rejection is recorded — the row is simply gone.
+//
+// Audit trail is preserved via record_audit (action='delete',
+// entity_type='application') so the compliance picture stays intact.
+// ---------------------------------------------------------------------------
+
+const removeSchema = z.object({
+  applicationId: idSchema,
+  jobId: idSchema.optional().nullable(),
+})
+
+export type RemoveApplicationResult =
+  | { ok: true }
+  | { ok: false; error: string }
+
+export async function removeApplicationAction(
+  rawInput: unknown,
+): Promise<RemoveApplicationResult> {
+  const parsed = removeSchema.safeParse(rawInput)
+  if (!parsed.success) {
+    return { ok: false, error: 'Invalid remove payload.' }
+  }
+
+  const supabase = await createSupabaseClient()
+  const {
+    data: { user },
+  } = await supabase.auth.getUser()
+  if (!user) return { ok: false, error: 'Not signed in.' }
+
+  const res = await deleteApplication(supabase, {
+    applicationId: parsed.data.applicationId,
+  })
+  if (!res.ok) {
+    return { ok: false, error: 'Could not remove candidate from job.' }
+  }
+
+  // Write an audit_log row so the compliance picture survives the hard-
+  // delete. record_audit is security definer + reads org from session,
+  // so no org needs to be passed.
+  const supabaseUntyped = supabase as unknown as {
+    rpc: (
+      fn: string,
+      args: Record<string, unknown>,
+    ) => Promise<{ data: unknown; error: unknown }>
+  }
+  const { error: auditErr } = await supabaseUntyped.rpc('record_audit', {
+    p_action: 'delete',
+    p_entity_type: 'application',
+    p_entity_id: res.data.id,
+    p_metadata: {
+      candidate_id: res.data.candidate_id,
+      job_id: res.data.job_id,
+      via: 'pipeline_remove_from_job',
+    },
+  })
+  if (auditErr) {
+    Sentry.captureException(auditErr, {
+      tags: { layer: 'action', helper: 'removeApplicationAction', subop: 'audit' },
+    })
+    // Don't block on audit failure — the application is already deleted
+    // and the request was authorised. Log to Sentry and continue.
+  }
+
+  revalidatePath('/pipeline')
+  if (parsed.data.jobId) {
+    revalidatePath(`/jobs/${parsed.data.jobId}`)
+    revalidatePath(`/jobs/${parsed.data.jobId}/pipeline`)
+    revalidatePath(`/jobs/${parsed.data.jobId}/shortlist`)
+  }
+  revalidatePath(`/candidates/${res.data.candidate_id}`)
   return { ok: true }
 }

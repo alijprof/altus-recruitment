@@ -298,6 +298,46 @@ export async function createApplication(
 }
 
 // ---------------------------------------------------------------------------
+// Hard-delete an application row. Distinct from move-to-rejected — that
+// path requires a decline_reason (compliance). This is the "added by
+// mistake" affordance: candidate + job records survive, only the
+// junction row is removed. The caller is responsible for writing an
+// audit_log entry (record_audit) before/after.
+// ---------------------------------------------------------------------------
+
+export async function deleteApplication(
+  supabase: SupabaseClient<Database>,
+  args: { applicationId: string },
+): Promise<DbResult<{ id: string; candidate_id: string; job_id: string | null }>> {
+  // Select first so the action can revalidate the candidate page and write
+  // a meaningful audit row even after the row is gone.
+  const { data: existing, error: readErr } = await supabase
+    .from('applications')
+    .select('id, candidate_id, job_id')
+    .eq('id', args.applicationId)
+    .maybeSingle()
+  if (readErr) {
+    Sentry.captureException(readErr, {
+      tags: { layer: 'db', helper: 'deleteApplication', subop: 'read' },
+    })
+    return { ok: false, code: 'internal' }
+  }
+  if (!existing) return { ok: false, code: 'not_found' }
+
+  const { error: delErr } = await supabase
+    .from('applications')
+    .delete()
+    .eq('id', args.applicationId)
+  if (delErr) {
+    Sentry.captureException(delErr, {
+      tags: { layer: 'db', helper: 'deleteApplication', subop: 'delete' },
+    })
+    return { ok: false, code: 'internal' }
+  }
+  return { ok: true, data: existing }
+}
+
+// ---------------------------------------------------------------------------
 // move_application RPC wrapper. The actual UPDATE + activity INSERT happen
 // atomically inside the Postgres function created by
 // 20260518201900_move_application_function.sql. This helper is the only

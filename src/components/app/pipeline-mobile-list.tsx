@@ -25,7 +25,10 @@ import {
   type PipelineStage,
 } from '@/lib/db/pipeline-stages'
 
-import { moveApplicationAction } from '@/app/(app)/jobs/[id]/actions'
+import {
+  moveApplicationAction,
+  removeApplicationAction,
+} from '@/app/(app)/jobs/[id]/actions'
 
 // UI-SPEC §4 D-11: below md breakpoint, kanban becomes a stacked Accordion.
 // Tapping a card opens a bottom Sheet with "Move to..." buttons + Reject.
@@ -95,6 +98,39 @@ export function PipelineMobileList({ initial, jobId }: PipelineMobileListProps) 
     }))
   }
 
+  function handleRemove(card: PipelineCardData) {
+    if (
+      !window.confirm(
+        `Remove ${card.candidate_name} from this job? Their candidate record will remain — only the application is deleted.`,
+      )
+    ) {
+      return
+    }
+    const fromStage = findStageOf(card.id)
+    if (!fromStage) return
+
+    setColumns((prev) => ({
+      ...prev,
+      [fromStage]: prev[fromStage].filter((c) => c.id !== card.id),
+    }))
+
+    startTransition(async () => {
+      const res = await removeApplicationAction({
+        applicationId: card.id,
+        jobId: jobId ?? null,
+      })
+      if (!res.ok) {
+        setColumns((prev) => ({
+          ...prev,
+          [fromStage]: [...prev[fromStage], card],
+        }))
+        toast.error(res.error)
+        return
+      }
+      toast.success(`${card.candidate_name} removed from job.`)
+    })
+  }
+
   return (
     <>
       <Accordion
@@ -124,6 +160,7 @@ export function PipelineMobileList({ initial, jobId }: PipelineMobileListProps) 
                     card={c}
                     onMoveTo={(toStage) => performMove(c, toStage)}
                     onReject={() => setDeclineTarget(c)}
+                    onRemove={() => handleRemove(c)}
                   />
                 ))
               )}
@@ -152,9 +189,10 @@ type MobileCardRowProps = {
   card: PipelineCardData
   onMoveTo: (stage: PipelineStage) => void
   onReject: () => void
+  onRemove: () => void
 }
 
-function MobileCardRow({ card, onMoveTo, onReject }: MobileCardRowProps) {
+function MobileCardRow({ card, onMoveTo, onReject, onRemove }: MobileCardRowProps) {
   const [open, setOpen] = useState(false)
 
   return (
@@ -197,8 +235,18 @@ function MobileCardRow({ card, onMoveTo, onReject }: MobileCardRowProps) {
             </Button>
           ))}
           <Button
-            variant="destructive"
+            variant="outline"
             className="mt-4 h-11"
+            onClick={() => {
+              setOpen(false)
+              onRemove()
+            }}
+          >
+            Remove from job
+          </Button>
+          <Button
+            variant="destructive"
+            className="h-11"
             onClick={() => {
               setOpen(false)
               onReject()

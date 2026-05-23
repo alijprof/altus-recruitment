@@ -50,9 +50,16 @@ export type PipelineCardProps = {
   isPending: boolean
   onMoveTo: (toStage: PipelineStage) => void
   onReject: () => void
+  onRemove: () => void
 }
 
-export function PipelineCard({ card, isPending, onMoveTo, onReject }: PipelineCardProps) {
+export function PipelineCard({
+  card,
+  isPending,
+  onMoveTo,
+  onReject,
+  onRemove,
+}: PipelineCardProps) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
     useSortable({ id: card.id })
 
@@ -122,6 +129,9 @@ export function PipelineCard({ card, isPending, onMoveTo, onReject }: PipelineCa
                 </DropdownMenuSubContent>
               </DropdownMenuSub>
               <DropdownMenuSeparator />
+              <DropdownMenuItem onSelect={onRemove}>
+                Remove from job
+              </DropdownMenuItem>
               <DropdownMenuItem
                 onSelect={onReject}
                 className="text-destructive focus:text-destructive"
