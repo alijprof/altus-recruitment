@@ -198,6 +198,8 @@ export type Database = {
           decline_notes: string | null
           decline_reason: Database["public"]["Enums"]["decline_reason"] | null
           declined_at: string | null
+          // Phase 3 / REPEAT-02: placement revenue fields (20260520023100)
+          fee_pence: number | null
           id: string
           // Phase 3 / Plan 03-03 / D3-18: float rows have job_id IS NULL.
           // standard / shortlist / spec rows still require job_id (enforced
@@ -205,6 +207,11 @@ export type Database = {
           job_id: string | null
           organization_id: string
           owner_user_id: string | null
+          // Phase 3 / REPEAT-02: explicit placement timestamp (20260520023100)
+          placed_at: string | null
+          // UAT-260523-PLACEMENT-CAPTURE: placement type + currency (20260523160000)
+          placement_currency: string
+          placement_type: Database["public"]["Enums"]["placement_type"] | null
           stage: Database["public"]["Enums"]["application_stage"]
           stage_changed_at: string
           updated_at: string
@@ -217,11 +224,15 @@ export type Database = {
           decline_notes?: string | null
           decline_reason?: Database["public"]["Enums"]["decline_reason"] | null
           declined_at?: string | null
+          fee_pence?: number | null
           id?: string
           // Phase 3 / Plan 03-03 / D3-18: nullable for floats.
           job_id?: string | null
           organization_id: string
           owner_user_id?: string | null
+          placed_at?: string | null
+          placement_currency?: string
+          placement_type?: Database["public"]["Enums"]["placement_type"] | null
           stage?: Database["public"]["Enums"]["application_stage"]
           stage_changed_at?: string
           updated_at?: string
@@ -234,10 +245,14 @@ export type Database = {
           decline_notes?: string | null
           decline_reason?: Database["public"]["Enums"]["decline_reason"] | null
           declined_at?: string | null
+          fee_pence?: number | null
           id?: string
           job_id?: string
           organization_id?: string
           owner_user_id?: string | null
+          placed_at?: string | null
+          placement_currency?: string
+          placement_type?: Database["public"]["Enums"]["placement_type"] | null
           stage?: Database["public"]["Enums"]["application_stage"]
           stage_changed_at?: string
           updated_at?: string
@@ -1314,6 +1329,7 @@ export type Database = {
       hiring_context: "new_role" | "backfill"
       job_status: "draft" | "open" | "on_hold" | "filled" | "cancelled"
       job_type: "perm" | "contract" | "temp"
+      placement_type: "perm" | "contract" | "temp" | "fixed_term"
       market_status:
         | "actively_looking"
         | "passively_looking"

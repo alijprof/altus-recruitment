@@ -351,6 +351,11 @@ export type MoveApplicationArgs = {
   declineReason?: Enums<'decline_reason'> | null
   declineNotes?: string | null
   actorUserId?: string | null
+  // UAT-260523-PLACEMENT-CAPTURE: required when toStage === 'placed'.
+  placementFeePence?: number | null
+  placementDate?: string | null // ISO 8601 timestamptz string
+  placementType?: Enums<'placement_type'> | null
+  placementCurrency?: string | null // ISO 4217, defaults to 'GBP'
 }
 
 export async function moveApplication(
@@ -358,8 +363,9 @@ export async function moveApplication(
   args: MoveApplicationArgs,
 ): Promise<DbResult<{ applicationId: string }>> {
   // reason: move_application is added by 20260518201900_move_application_function.sql
-  // and not yet in the generated Database['public']['Functions'] map. Cast
-  // through unknown to avoid hand-rolling the entire RPC schema.
+  // (recreated with placement params in 20260523160100) and not yet in the
+  // generated Database['public']['Functions'] map. Cast through unknown to
+  // avoid hand-rolling the entire RPC schema.
   const supabaseUntyped = supabase as unknown as {
     rpc: (
       fn: string,
@@ -368,11 +374,15 @@ export async function moveApplication(
   }
 
   const { error } = await supabaseUntyped.rpc('move_application', {
-    p_application_id: args.applicationId,
-    p_to_stage: args.toStage,
-    p_decline_reason: args.declineReason ?? null,
-    p_decline_notes: args.declineNotes ?? null,
-    p_actor_user_id: args.actorUserId ?? null,
+    p_application_id:      args.applicationId,
+    p_to_stage:            args.toStage,
+    p_decline_reason:      args.declineReason ?? null,
+    p_decline_notes:       args.declineNotes ?? null,
+    p_actor_user_id:       args.actorUserId ?? null,
+    p_placement_fee_pence: args.placementFeePence ?? null,
+    p_placement_date:      args.placementDate ?? null,
+    p_placement_type:      args.placementType ?? null,
+    p_placement_currency:  args.placementCurrency ?? null,
   })
 
   if (error) {

@@ -172,6 +172,17 @@ const moveSchema = z.object({
   // immediately after an inline stage change. Pipeline + per-job callers
   // leave it null.
   candidateId: idSchema.optional().nullable(),
+  // UAT-260523-PLACEMENT-CAPTURE: required when toStage === 'placed'.
+  // Fee in pence (integer). Max ~£1M to guard against input errors.
+  placementFeePence: z.number().int().min(0).max(100_000_000).optional().nullable(),
+  // ISO 8601 datetime with offset, e.g. "2026-05-23T00:00:00Z"
+  placementDate: z.string().datetime({ offset: true }).optional().nullable(),
+  placementType: z
+    .enum(['perm', 'contract', 'temp', 'fixed_term'])
+    .optional()
+    .nullable(),
+  // ISO 4217 currency code, e.g. "GBP"
+  placementCurrency: z.string().length(3).optional().nullable(),
 })
 
 export type MoveApplicationResult =
@@ -185,14 +196,31 @@ export async function moveApplicationAction(
   if (!parsed.success) {
     return { ok: false, error: 'Invalid move payload.' }
   }
-  const { applicationId, toStage, declineReason, declineNotes, jobId, candidateId } =
-    parsed.data
+  const {
+    applicationId,
+    toStage,
+    declineReason,
+    declineNotes,
+    jobId,
+    candidateId,
+    placementFeePence,
+    placementDate,
+    placementType,
+    placementCurrency,
+  } = parsed.data
 
   // UI-SPEC error state: terminal stages require a decline reason. The
   // server function will reject this too, but failing fast here gives the
   // DeclineModal a clearer error to show.
   if ((toStage === 'rejected' || toStage === 'withdrawn') && !declineReason) {
     return { ok: false, error: 'Please select a decline reason.' }
+  }
+
+  // UAT-260523-PLACEMENT-CAPTURE: placed stage requires fee, date, and type.
+  // Mirrors the decline guard above and the DB-level CHECK constraint
+  // `placement_fields_present_when_placed` (20260523160000).
+  if (toStage === 'placed' && (placementFeePence == null || !placementDate || !placementType)) {
+    return { ok: false, error: 'Capture fee, date, and type before placing.' }
   }
 
   const supabase = await createSupabaseClient()
@@ -205,6 +233,10 @@ export async function moveApplicationAction(
     declineReason: declineReason ?? null,
     declineNotes: declineNotes ?? null,
     actorUserId: userId,
+    placementFeePence: placementFeePence ?? null,
+    placementDate: placementDate ?? null,
+    placementType: (placementType ?? null) as Enums<'placement_type'> | null,
+    placementCurrency: placementCurrency ?? null,
   })
 
   if (!res.ok) {
