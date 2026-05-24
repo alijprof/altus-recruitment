@@ -132,6 +132,46 @@ None currently. Tasks 3–7 can proceed in order.
 | 260524-b6v | In-app feedback widget — floating MessageSquarePlus FAB on authenticated pages, shadcn Dialog with required Textarea (max 2000 chars), server action persists to new `feedback` table with RLS + `_set_org` trigger, best-effort Resend email to alasdairj8@gmail.com (fails open if RESEND_API_KEY unset) | 2026-05-24 | a9e105b, e06f9c8, 3eedd96 | [SUMMARY](quick/260524-b6v-in-app-feedback-widget-floating-button-d/260524-b6v-SUMMARY.md) |
 | 260524-bpy | Org member invitation flow — `org_invitations` table + atomic `accept_invitation` RPC + Settings → Team page with InviteMemberDialog + per-row Revoke/Resend; `/accept-invite/[token]` route handler sets host-only invite cookie; `/auth/callback` short-circuits org-bootstrap when invite cookie present (fresh-org invariant preserved for non-invited sign-ups) | 2026-05-24 | 87f055f, bf4536c, 4d4a5db, 8ef2bac | [SUMMARY](quick/260524-bpy-org-member-invitation-flow-magic-link-to/260524-bpy-SUMMARY.md) |
 | 260524-cjl | Empty-state polish across 8 index pages — extended EmptyState with optional secondaryCta prop; richer heading/body/primary+secondary CTAs on candidates, clients, jobs, pipeline, floats, spec, reports/source-attribution, dashboard. Bespoke empty divs on floats/spec collapsed onto shared EmptyState. `/jobs/new` route absent — flagged as Phase 4 follow-up. | 2026-05-24 | 5699230, 6e50a41 | [SUMMARY](quick/260524-cjl-empty-state-polish-across-8-index-pages/260524-cjl-SUMMARY.md) |
+| 260524-cwd | Buyer-value dashboards (REPORT-02) at `/reports/buyer-value` — 5 acquirer-due-diligence metrics (placements per recruiter per quarter, time-to-fill, source ROI, pipeline value + sparkline, commission summary) via Recharts `^3.8.1`, 4 net-new security-invoker RPCs, URL-param date filter (preset 30/90/365 + custom, default 90), mobile-responsive shells, Methodology `<details>` appendix. Source ROI reuses existing `source_attribution_summary` RPC. | 2026-05-24 | d2eb202, f13fa5c, 5bfb6d0, c3156d8 | [SUMMARY](quick/260524-cwd-buyer-value-dashboards-report-02-rechart/260524-cwd-SUMMARY.md) |
+
+---
+
+## Session 2026-05-24 autonomous run
+
+Goal: round off v1.0 for handover to anchor friend's recruitment agency. Four `/gsd-quick` tasks executed in strict order with worktree isolation, plan-check + verify gates, supabase db push + types regen out-of-band, and push-to-main after each.
+
+| # | Task | Quick ID | Source commits | Docs / types commits | Verifier verdict |
+|---|------|----------|----------------|----------------------|------------------|
+| 1 | In-app feedback widget | 260524-b6v | a9e105b, e06f9c8 | 3eedd96, 36e51fd | human_needed (8/8 truths verified at code level; 9 UAT items remain) |
+| 2 | Org member invitation flow | 260524-bpy | 87f055f, bf4536c, 4d4a5db | 8ef2bac, fd66db3 | human_needed (11/11 truths verified at code level; 6 runtime checks remain) |
+| 3 | Empty-state polish across 8 index pages | 260524-cjl | 5699230, 6e50a41 | a7630f0 | human_needed (7/7 truths verified at code level; 2 browser checks remain) |
+| 4 | Buyer-value dashboards (REPORT-02) | 260524-cwd | d2eb202, f13fa5c, 5bfb6d0 | c3156d8 | human_needed (12/12 truths verified at code level; 5 browser/runtime checks remain) |
+
+### What ran successfully without intervention
+- All four `/gsd-quick` invocations: planner → plan-checker (1 revision loop on 260524-bpy for orphan-org atomicity; passed on second iteration) → executor (worktree isolation) → worktree merge → migration push + types regen → verifier → STATE update → push to main.
+- Three Supabase migrations pushed to linked DB: `20260524000000_feedback`, `20260524000100_org_invitations`, `20260524000200_buyer_value_rpcs`. All applied cleanly; types regenerated cleanly via `pnpm db:types` (each regen replaced the executor's hand-patched stub with canonical introspection output).
+- `pnpm typecheck` passes after every task. `pnpm lint` clean on all touched files; one pre-existing error in `src/app/(app)/candidates/[id]/cv-review-panel.tsx:98` ("Cannot call impure function during render") logged across deferred-items.md in 260524-b6v, 260524-cjl, 260524-cwd — noted but out of scope for every task in this run.
+
+### Autonomous decisions worth user review
+- **260524-bpy revision loop:** Plan-checker flagged Task 1 over-scope, missing null-email guard, and orphan-org cleanup TOCTOU. Decided autonomously to (a) fold cookie.ts + lookup.ts into Task 3, (b) add explicit null-email guard before any service-role work, (c) replace ad-hoc orphan cleanup with a single SECURITY DEFINER RPC `public.accept_invitation(p_token, p_user_id, p_user_email)` using SELECT...FOR UPDATE for atomicity. Granted EXECUTE only to `service_role`.
+- **260524-b6v Resend `from` address:** Used `Altus <feedback@updates.altus.app>` as fallback `RESEND_FROM`. Anchor will need to verify `updates.altus.app` in the Resend dashboard before the bonus email fires (DB row writes succeed regardless). Same domain assumption applies to invitation emails in 260524-bpy.
+- **260524-cwd dependency add:** Pinned `recharts ^3.8.1` per RESEARCH.md (React 19 peer support shipped in Recharts 3.x; 2.x required `pnpm.overrides`). Only net-new dep across the run.
+- **260524-cwd sector bucket:** `jobs` table has no `industry` or `sector` column, so time-to-fill renders into a single `'Unspecified'` bucket with a Methodology caveat. Adding `jobs.sector` was explicitly out of scope per the orchestrator brief.
+- **260524-cjl jobs CTA:** `/jobs/new` route does not exist on the schema. Wired the primary CTA to `/spec/new` (AI-first) and secondary to `/clients` instead; flagged the missing route as a Phase 4 follow-up in SUMMARY.md.
+
+### Skipped / excluded
+- **Task 5 (Outlook Mail.Send)** — explicitly excluded by orchestrator; needs user in a browser for OAuth consent. Still on the deferred backlog; the OAuth scaffolding from D3-20 is in place.
+
+### Outstanding manual UAT
+1. **260524-b6v** (9 items): visual FAB placement on each authenticated route; route-group negative test on `/sign-in`, `/sign-up`, `/apply/*`; empty-body inline error UX; success state + 1.5s auto-close; live DB row inspection; multi-tenant RLS isolation; fail-open with RESEND_API_KEY unset; real email delivery (requires Resend domain verification); server-side Zod rejection of 2001-char body.
+2. **260524-bpy** (6 items): Resend email delivery; magic-link PKCE round-trip end-to-end; DB state inspection after acceptance; plain sign-up regression (fresh-org invariant); adversarial cookie tamper with Sentry breadcrumb visibility; /settings/team layout + non-owner redirect.
+3. **260524-cjl** (2 items): visual + responsive layout of the 8 empty states; runtime CTA navigation.
+4. **260524-cwd** (5 items): date-filter UI behaviour (preset + custom); Recharts hydration (zero console warnings); mobile 375px stack; cross-tenant RLS via two real org sessions; Methodology `<details>` toggle.
+
+### Recommended next action
+- Wire `RESEND_API_KEY` + verify the sending domain (`updates.altus.app`) in the Resend dashboard so 260524-b6v and 260524-bpy emails actually leave. Once that's done, click through the four UAT batches above (probably 30-40 mins total). After that, the v1.0 handover bundle is ready for the anchor friend's agency.
+- Optional cleanup: fix the lingering `cv-review-panel.tsx:98` impure-function-during-render lint error (`React 19 react-hooks/set-state-in-effect` rule). Pattern fix is the same one used in `sign-in-form.tsx` during 260524-bpy (replace `useEffect` URL→state sync with adjust-state-during-render).
+- Task 5 (Outlook Mail.Send end-to-end) when you're at a browser — D3-20 OAuth scaffolding already wired, just needs the live consent click + first send.
 
 ---
 
