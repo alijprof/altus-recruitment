@@ -25,7 +25,11 @@ import {
   YAxis,
 } from 'recharts'
 
-export type StackedBarDatum = { category: string } & Record<string, string | number>
+// Datum is intentionally open — `categoryKey` selects the label column, and
+// `keys` selects the numeric stack columns. We do not require a literal
+// `category` property because callers (e.g. the buyer-value pivot helper)
+// emit `{ quarter: '...', [recruiterName]: count }` shapes.
+export type StackedBarDatum = Record<string, string | number>
 
 export type StackedBarProps = {
   data: Array<StackedBarDatum>
