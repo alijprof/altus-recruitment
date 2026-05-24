@@ -98,6 +98,30 @@ export default async function SettingsPage() {
         </Card>
       ) : null}
 
+      {/* Quick task 260524-bpy — owner-only link to the full Team page (list +
+          revoke + resend). Legacy inline Team card above stays for now so we
+          don't break ongoing flows; cleanup deferred to a follow-up. */}
+      {isOwner ? (
+        <>
+          <Separator />
+          <Link href="/settings/team" className="block">
+            <Card className="hover:bg-accent/40 transition-colors">
+              <CardHeader>
+                <div className="flex items-center justify-between">
+                  <div className="space-y-1">
+                    <CardTitle className="text-base font-semibold">Team</CardTitle>
+                    <CardDescription>
+                      Invite teammates, revoke pending invitations, and see who&apos;s joined.
+                    </CardDescription>
+                  </div>
+                  <ChevronRight className="text-muted-foreground size-5" aria-hidden="true" />
+                </div>
+              </CardHeader>
+            </Card>
+          </Link>
+        </>
+      ) : null}
+
       <Separator />
 
       {/* Plan 3 Task 3.3 — public apply form discoverability + owner toggle. */}
