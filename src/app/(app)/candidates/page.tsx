@@ -91,9 +91,8 @@ export default async function CandidatesPage({
       {isEmptyDatabase ? (
         <EmptyState
           heading="Add your first candidate"
-          body="Candidates are the heart of the CRM. Add one manually, or upload a CV and we'll auto-extract their details."
+          body="Candidates are the heart of the CRM. Add one manually first — you can upload a CV to auto-extract details once the candidate exists."
           cta={{ href: '/candidates/new', label: 'Add candidate' }}
-          secondaryCta={{ href: '/candidates/new', label: 'Or upload a CV to auto-extract' }}
         />
       ) : (
         <>

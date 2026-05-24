@@ -23,7 +23,7 @@ import {
   getSourceAttribution,
   type SourceAttributionRow,
 } from '@/lib/db/source-attribution'
-import { formatPence } from '@/lib/format'
+import { formatGbpRound } from '@/lib/format'
 import { resolveBuyerValueRange } from '@/lib/reports/buyer-value-range'
 import { createClient } from '@/lib/supabase/server'
 
@@ -284,7 +284,7 @@ export default async function BuyerValuePage({ searchParams }: PageProps) {
           ) : (
             <>
               <div className="text-4xl font-semibold tabular-nums">
-                {formatPence(currentPipelineValuePence)}
+                {formatGbpRound(currentPipelineValuePence)}
               </div>
               <Sparkline data={sparkChartData} />
             </>
