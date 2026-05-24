@@ -7,13 +7,24 @@ export type EmptyStateProps = {
   heading: string
   body?: string
   cta?: { href: string; label: string } | null
+  // Optional outline-variant secondary action shown alongside (or instead of)
+  // the primary CTA. Rendered as a sibling Button to keep the empty state
+  // self-contained — callers don't need to know about button variants.
+  secondaryCta?: { href: string; label: string } | null
   className?: string
 }
 
-// UI-SPEC empty-state pattern: heading + body + (optional) CTA, centered
+// UI-SPEC empty-state pattern: heading + body + (optional) CTA(s), centered
 // inside a bordered container that matches the table shell width so the empty
 // state visually replaces the would-be list without layout jank.
-export function EmptyState({ heading, body, cta, className }: EmptyStateProps) {
+export function EmptyState({
+  heading,
+  body,
+  cta,
+  secondaryCta,
+  className,
+}: EmptyStateProps) {
+  const hasAnyCta = Boolean(cta || secondaryCta)
   return (
     <div
       className={cn(
@@ -25,10 +36,19 @@ export function EmptyState({ heading, body, cta, className }: EmptyStateProps) {
       {body ? (
         <p className="text-muted-foreground mt-2 max-w-md text-sm font-normal">{body}</p>
       ) : null}
-      {cta ? (
-        <Button asChild className="mt-6">
-          <Link href={cta.href}>{cta.label}</Link>
-        </Button>
+      {hasAnyCta ? (
+        <div className="mt-6 flex flex-col items-center gap-2 sm:flex-row">
+          {cta ? (
+            <Button asChild>
+              <Link href={cta.href}>{cta.label}</Link>
+            </Button>
+          ) : null}
+          {secondaryCta ? (
+            <Button asChild variant="outline">
+              <Link href={secondaryCta.href}>{secondaryCta.label}</Link>
+            </Button>
+          ) : null}
+        </div>
       ) : null}
     </div>
   )
