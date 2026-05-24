@@ -73,15 +73,20 @@ export default async function GlobalPipelinePage({
       </header>
 
       {totalCards === 0 ? (
-        <EmptyState
-          heading="No candidates in pipeline"
-          body={
-            ownerId || jobId || clientId
-              ? 'No applications match the active filters.'
-              : 'Add candidates to your open jobs to start tracking them.'
-          }
-          cta={ownerId || jobId || clientId ? null : { href: '/jobs', label: 'View jobs' }}
-        />
+        ownerId || jobId || clientId ? (
+          <EmptyState
+            heading="No candidates in pipeline"
+            body="No applications match the active filters."
+            cta={null}
+          />
+        ) : (
+          <EmptyState
+            heading="No candidates in pipeline yet"
+            body="The pipeline shows every active application across your open jobs. Once you add candidates to a job, they appear here as draggable cards."
+            cta={{ href: '/jobs', label: 'View jobs' }}
+            secondaryCta={{ href: '/candidates', label: 'Browse candidates' }}
+          />
+        )
       ) : (
         // No jobId on the global view — moves still write activity rows
         // and revalidate /pipeline.

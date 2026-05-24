@@ -2,6 +2,7 @@ import Link from 'next/link'
 import { redirect } from 'next/navigation'
 import { ChevronLeft } from 'lucide-react'
 
+import { EmptyState } from '@/components/app/empty-state'
 import { Badge } from '@/components/ui/badge'
 import {
   Card,
@@ -181,9 +182,11 @@ export default async function SourceAttributionPage({ searchParams }: PageProps)
         </CardHeader>
         <CardContent>
           {rows.length === 0 ? (
-            <p className="text-muted-foreground text-sm">
-              No placements in this date range.
-            </p>
+            <EmptyState
+              heading="No placements in this date range"
+              body="Move candidates into the Placed stage on a job to see them attributed back to their source channel."
+              cta={{ href: '/pipeline', label: 'Open pipeline' }}
+            />
           ) : (
             <Table>
               <TableHeader>
