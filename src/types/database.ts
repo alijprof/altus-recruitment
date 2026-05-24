@@ -1303,6 +1303,16 @@ export type Database = {
         }
         Returns: undefined
       }
+      commission_summary_by_recruiter: {
+        Args: { p_from?: string; p_to?: string }
+        Returns: {
+          estimated_commission_pence: number
+          placements_count: number
+          recruiter_id: string
+          recruiter_name: string
+          total_fee_pence: number
+        }[]
+      }
       current_organization_id: { Args: never; Returns: string }
       dormant_clients: {
         Args: { p_dormant_days?: number; p_long_dormant_days?: number }
@@ -1388,6 +1398,22 @@ export type Database = {
           p_to_stage: Database["public"]["Enums"]["application_stage"]
         }
         Returns: undefined
+      }
+      pipeline_value_sparkline: {
+        Args: { p_from?: string; p_to?: string }
+        Returns: {
+          bucket_date: string
+          pipeline_value_pence: number
+        }[]
+      }
+      placements_by_recruiter_quarter: {
+        Args: { p_from?: string; p_to?: string }
+        Returns: {
+          placements_count: number
+          quarter: string
+          recruiter_id: string
+          recruiter_name: string
+        }[]
       }
       record_ai_usage: {
         Args: {
@@ -1475,15 +1501,6 @@ export type Database = {
           total_fee_pence: number
         }[]
       }
-      placements_by_recruiter_quarter: {
-        Args: { p_from?: string; p_to?: string }
-        Returns: {
-          placements_count: number
-          quarter: string
-          recruiter_id: string
-          recruiter_name: string
-        }[]
-      }
       time_to_fill_by_sector: {
         Args: { p_from?: string; p_to?: string }
         Returns: {
@@ -1491,23 +1508,6 @@ export type Database = {
           p90_days: number
           placements_count: number
           sector: string
-        }[]
-      }
-      pipeline_value_sparkline: {
-        Args: { p_from?: string; p_to?: string }
-        Returns: {
-          bucket_date: string
-          pipeline_value_pence: number
-        }[]
-      }
-      commission_summary_by_recruiter: {
-        Args: { p_from?: string; p_to?: string }
-        Returns: {
-          estimated_commission_pence: number
-          placements_count: number
-          recruiter_id: string
-          recruiter_name: string
-          total_fee_pence: number
         }[]
       }
     }
