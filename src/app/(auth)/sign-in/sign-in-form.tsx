@@ -39,20 +39,27 @@ function errorBannerMessage(errorParam: string | null): string | null {
   return null
 }
 
-export function SignInForm() {
+interface SignInFormProps {
+  inviteMode: boolean
+}
+
+export function SignInForm({ inviteMode }: SignInFormProps) {
   const router = useRouter()
   const searchParams = useSearchParams()
   const passwordMode = PASSWORD_AUTH_AVAILABLE && searchParams.get('password') === '1'
 
-  // Quick task 260524-bpy: read ?email= for pre-fill and ?invite=1 to flip
-  // shouldCreateUser. The invite banner is rendered unconditionally when
-  // ?invite=1 is present — the cookie set by /accept-invite is the defence
-  // in depth; the banner here is purely a UX nudge.
+  // Quick task 260524-iav (B2): inviteMode is supplied as a prop by the
+  // parent server component, which reads the httpOnly altus_invite_token
+  // cookie via next/headers. The URL ?invite=1 query parameter is no longer
+  // honoured. This closes the spam / junk-org vector documented in
+  // REVIEW.md B2 (quick task 260524-iav). The ?email= pre-fill from
+  // searchParams is preserved — it's harmless on its own (cannot create an
+  // account without also flipping shouldCreateUser, which is now strictly
+  // gated by the server-side cookie).
   const prefilledEmail = useMemo(
     () => decodeEmailParam(searchParams.get('email')),
     [searchParams],
   )
-  const inviteMode = searchParams.get('invite') === '1'
   const errorBanner = errorBannerMessage(searchParams.get('error'))
 
   // React-19 idiom: derive state from changing props by tracking the previous
@@ -84,15 +91,14 @@ export function SignInForm() {
       return
     }
 
-    // Quick task 260524-bpy: when in invite mode the user might not exist in
-    // auth.users yet (the inviter typed their email; they have never signed
-    // in). Set shouldCreateUser:true ONLY when ?invite=1 is present — never
-    // for plain /sign-in. Defence in depth: the /auth/callback handler
-    // re-verifies the cookie's token against the invitation row's email
-    // server-side inside the public.accept_invitation() RPC, so a forged
-    // ?invite=1 URL without a matching signed cookie cannot escalate
-    // privilege beyond "create a fresh-org account" (which the regular
-    // /sign-up flow already permits).
+    // Quick task 260524-iav (B2): inviteMode comes from the server-derived
+    // cookie check in the parent page; the URL cannot influence it. When in
+    // invite mode the user might not exist in auth.users yet (the inviter
+    // typed their email; they have never signed in), so we set
+    // shouldCreateUser:true. Defence in depth: /auth/callback re-verifies
+    // the cookie's token against the invitation row inside the
+    // public.accept_invitation() RPC, so even if the cookie is somehow
+    // forged the worst case is the same as a regular /sign-up.
     const { error } = await supabase.auth.signInWithOtp({
       email,
       options: {
