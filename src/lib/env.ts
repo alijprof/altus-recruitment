@@ -114,6 +114,14 @@ export const env = createEnv({
     NEXT_PUBLIC_SENTRY_DSN: z.string().url().optional(),
     // Public Turnstile widget site-key. Optional in Plan 0.
     NEXT_PUBLIC_TURNSTILE_SITE_KEY: z.string().min(1).optional(),
+
+    // Quick task 260524-iav (B3): authoritative origin used by server actions
+    // when building absolute accept-invite URLs. MUST be set in production
+    // (e.g. `https://app.altus.example.com`). When unset,
+    // src/app/(app)/settings/team/actions.ts falls back to request-header
+    // detection, which is safe on Vercel but vulnerable to X-Forwarded-Host
+    // injection on other proxies.
+    NEXT_PUBLIC_SITE_URL: z.string().url().optional(),
   },
   // Next.js does not expose all NEXT_PUBLIC_* vars on the client automatically;
   // each must be referenced statically here so it ships with the client bundle.
@@ -122,6 +130,8 @@ export const env = createEnv({
     NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY,
     NEXT_PUBLIC_SENTRY_DSN: process.env.NEXT_PUBLIC_SENTRY_DSN,
     NEXT_PUBLIC_TURNSTILE_SITE_KEY: process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY,
+    // Quick task 260524-iav (B3): see client schema comment above.
+    NEXT_PUBLIC_SITE_URL: process.env.NEXT_PUBLIC_SITE_URL,
   },
   emptyStringAsUndefined: true,
 })

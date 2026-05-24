@@ -18,6 +18,7 @@ import { revalidatePath } from 'next/cache'
 import { headers } from 'next/headers'
 
 import { sendResendEmail } from '@/lib/email/resend'
+import { env } from '@/lib/env'
 import { setRequestScope } from '@/lib/observability/sentry'
 import { createClient } from '@/lib/supabase/server'
 import { createServiceClient } from '@/lib/supabase/service'
@@ -34,13 +35,27 @@ type ActionResult =
   | { ok: false; fieldErrors: Record<string, string[] | undefined> }
   | { ok: false; formError: string }
 
-// Resolves the request origin for building absolute accept-invite URLs. Next 16
-// server actions can read the inbound request headers via `headers()`. We
-// prefer `origin` (always present from the browser fetch), then fall back to
-// `x-forwarded-host` + `x-forwarded-proto` for proxied environments. If
-// neither is available we return null and the caller skips email but still
-// returns ok (the DB row is canonical — see CONTRACT in resend.ts).
+// Resolves the request origin for building absolute accept-invite URLs.
+//
+// Quick task 260524-iav (B3): precedence is env → origin → forwarded-host.
+// env.NEXT_PUBLIC_SITE_URL is the trusted source in production — it is
+// server-controlled at deploy time and cannot be spoofed by an upstream
+// proxy attaching a malicious X-Forwarded-Host (which would otherwise be
+// echoed verbatim into the outbound accept-invite email and turn a benign
+// owner-driven invite into a phishing link pointing at attacker.example).
+// When unset (dev or single-env Vercel where the env is naturally correct),
+// we fall back to the browser-supplied `origin` header (set by every
+// same-origin fetch from a real browser; not present on cross-origin or
+// non-browser callers), and finally to forwarded-host as a last resort.
+// Operators MUST set NEXT_PUBLIC_SITE_URL in production. If none of these
+// produce a value, the caller skips the email but still returns ok (the DB
+// row is canonical — see CONTRACT in resend.ts).
 async function resolveOrigin(): Promise<string | null> {
+  if (env.NEXT_PUBLIC_SITE_URL) {
+    // Strip any trailing slash so caller's `${origin}/accept-invite/...`
+    // doesn't double up into `https://app.example.com//accept-invite/...`.
+    return env.NEXT_PUBLIC_SITE_URL.replace(/\/$/, '')
+  }
   const h = await headers()
   const origin = h.get('origin')
   if (origin) return origin
