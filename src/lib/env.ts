@@ -96,6 +96,17 @@ export const env = createEnv({
     // extensions get a 426 Upgrade Required with a link to update. Defaults
     // to '0.1.0' (the initial Plan 03-01 release).
     LINKEDIN_EXTENSION_MIN_VERSION: z.string().regex(/^\d+(\.\d+){0,2}$/).default('0.1.0'),
+
+    // --- Quick 260524-b6v: Resend (in-app feedback notification email) ----
+    // Used by src/lib/email/resend.ts to email alasdairj8@gmail.com when a
+    // user submits feedback via the floating widget. Both vars optional in
+    // dev so the app boots without them; src/lib/email/resend.ts fails open
+    // (returns { ok: false, reason: 'no_api_key' } without throwing) and the
+    // server action still persists the DB row + returns success to the user.
+    // Production deployments MUST set RESEND_API_KEY for the bonus email to
+    // fire; the DB row is canonical regardless.
+    RESEND_API_KEY: z.string().min(1).optional(),
+    RESEND_FROM: z.string().email().optional(),
   },
   client: {
     NEXT_PUBLIC_SUPABASE_URL: z.string().url(),
