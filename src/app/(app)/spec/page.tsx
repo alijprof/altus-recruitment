@@ -1,5 +1,6 @@
 import Link from 'next/link'
 
+import { EmptyState } from '@/components/app/empty-state'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -70,13 +71,11 @@ export default async function SpecListPage() {
       </div>
 
       {drafts.length === 0 ? (
-        <Card>
-          <CardContent className="pt-6 text-sm">
-            <p className="text-muted-foreground font-normal">
-              No spec calls yet. <Link className="underline" href="/spec/new">Upload your first recording</Link>.
-            </p>
-          </CardContent>
-        </Card>
+        <EmptyState
+          heading="Record your first spec call"
+          body="Upload an audio recording of your spec call and we'll transcribe it, extract a structured job description, and drop it here for review."
+          cta={{ href: '/spec/new', label: 'New spec call' }}
+        />
       ) : (
         <div className="space-y-3">
           {drafts.map((draft) => (

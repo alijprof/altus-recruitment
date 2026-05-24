@@ -1,3 +1,4 @@
+import { EmptyState } from '@/components/app/empty-state'
 import { listAllFloats } from '@/lib/db/shortlists'
 import { createClient as createSupabaseClient } from '@/lib/supabase/server'
 
@@ -26,10 +27,11 @@ export default async function FloatsPage() {
       </div>
 
       {rows.length === 0 ? (
-        <div className="bg-card text-muted-foreground rounded-md border p-6 text-sm">
-          No floats yet. From a candidate&apos;s page, click <strong>Floats</strong> to
-          record a speculative submission.
-        </div>
+        <EmptyState
+          heading="No floats yet"
+          body="A float is a speculative candidate submission with no specific job — 'you should meet this person'. From any candidate's page, click Floats to record one."
+          cta={{ href: '/candidates', label: 'Browse candidates' }}
+        />
       ) : (
         <FloatsShell rows={rows} />
       )}

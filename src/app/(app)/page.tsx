@@ -37,16 +37,11 @@ export default async function DashboardPage() {
   if (isEmpty) {
     return (
       <div className="space-y-8">
-        <header className="space-y-1">
-          <h1 className="text-2xl font-semibold tracking-tight">Welcome to Altus</h1>
-          <p className="text-muted-foreground text-sm font-normal">
-            Add your first candidate or client to get the pipeline moving.
-          </p>
-        </header>
         <EmptyState
-          heading="Nothing here yet"
-          body="Start by adding a candidate. CV uploads, semantic search, and pipeline tracking all build from there."
+          heading="Welcome to Altus"
+          body="Start with a candidate or a client — CV uploads, semantic search, and pipeline tracking all build from there."
           cta={{ href: '/candidates/new', label: 'Add your first candidate' }}
+          secondaryCta={{ href: '/clients/new', label: 'Or add your first client' }}
         />
       </div>
     )

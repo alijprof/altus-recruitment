@@ -51,8 +51,10 @@ export default async function JobsPage({
   }
 
   const { rows, total } = result.data
-  // Empty-state CTA per UI-SPEC Copywriting Contract: directs to /clients
-  // because jobs are always created against a client.
+  // Empty-state primary CTA points at /spec/new (AI-first path); secondary
+  // routes via /clients because `/jobs/new` is not yet implemented — jobs
+  // currently have to be created against a client. See plan 260524-cjl
+  // SUMMARY.md for the Phase 4 follow-up.
   const isEmpty = total === 0
 
   return (
@@ -63,9 +65,10 @@ export default async function JobsPage({
 
       {isEmpty ? (
         <EmptyState
-          heading="No jobs yet"
-          body="Create a job against a client to start building your pipeline."
-          cta={{ href: '/clients', label: 'View clients' }}
+          heading="Add your first job"
+          body="Jobs hang off a client. Pick a client and create a job against them — or record a spec call and we'll extract the JD for you."
+          cta={{ href: '/spec/new', label: 'Record a spec call' }}
+          secondaryCta={{ href: '/clients', label: 'Pick a client' }}
         />
       ) : (
         <JobsShell rows={rows} total={total} page={page} pageSize={PAGE_SIZE} />

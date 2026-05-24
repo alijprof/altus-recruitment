@@ -1,6 +1,7 @@
 import Link from 'next/link'
 import { Plus } from 'lucide-react'
 
+import { EmptyState } from '@/components/app/empty-state'
 import { isListView, ViewToggle } from '@/components/app/view-toggle'
 import { Button } from '@/components/ui/button'
 import { listClients, type ClientListSort, type ListDir } from '@/lib/db/clients'
@@ -75,18 +76,11 @@ export default async function ClientsPage({
         <header className="flex flex-wrap items-center justify-between gap-3">
           <h1 className="text-2xl font-semibold tracking-tight">Clients</h1>
         </header>
-        <div className="bg-card flex flex-col items-center gap-3 rounded-md border p-12 text-center">
-          <h2 className="text-lg font-semibold">No clients yet</h2>
-          <p className="text-muted-foreground max-w-md text-sm">
-            Add a client to track jobs and contacts.
-          </p>
-          <Button asChild className="mt-2 h-11">
-            <Link href="/clients/new">
-              <Plus className="mr-1 size-4" />
-              Add your first client
-            </Link>
-          </Button>
-        </div>
+        <EmptyState
+          heading="Add your first client"
+          body="Clients are the companies you place candidates into. Add one to start logging contacts, jobs, and revenue against them."
+          cta={{ href: '/clients/new', label: 'Add client' }}
+        />
       </div>
     )
   }
