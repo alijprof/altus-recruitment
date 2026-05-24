@@ -1,5 +1,6 @@
 import { redirect } from 'next/navigation'
 
+import { FloatingFeedbackButton } from '@/components/app/floating-feedback-button'
 import { TopNav } from '@/components/app/top-nav'
 import { getOrganization } from '@/lib/db/organizations'
 import { getProfile } from '@/lib/db/profiles'
@@ -35,6 +36,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
         organizationName={organization.ok ? organization.data.name : null}
       />
       <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-8 sm:px-6">{children}</main>
+      <FloatingFeedbackButton />
     </div>
   )
 }
