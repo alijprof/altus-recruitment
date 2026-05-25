@@ -1,4 +1,3 @@
-import dynamic from 'next/dynamic'
 import Link from 'next/link'
 import { redirect } from 'next/navigation'
 import { ChevronLeft } from 'lucide-react'
@@ -27,6 +26,7 @@ import { formatGbpRound } from '@/lib/format'
 import { resolveBuyerValueRange } from '@/lib/reports/buyer-value-range'
 import { createClient } from '@/lib/supabase/server'
 
+import { HorizontalBar, Sparkline, StackedBar } from './_components/charts-bundle'
 import { CommissionShell } from './_components/commission-shell'
 import { SourceRoiShell } from './_components/source-roi-shell'
 import { DateFilter } from './date-filter'
@@ -45,41 +45,13 @@ import { DateFilter } from './date-filter'
 //
 // Then a native <details> Methodology block at the bottom.
 //
-// Chart components are loaded via `next/dynamic({ ssr: false })` to avoid
-// the Recharts ResponsiveContainer hydration mismatch (RESEARCH §Pitfall 2).
-// Each loading placeholder matches the eventual fixed-height parent
-// (h-72 for full charts, h-20 for sparkline) to prevent CLS.
+// Chart components are loaded via `next/dynamic({ ssr: false })` from
+// `./_components/charts-bundle.tsx` (a Client Component) because Next.js 15+
+// disallows `ssr: false` from RSCs. The skip-SSR behaviour avoids the
+// Recharts ResponsiveContainer hydration mismatch (RESEARCH §Pitfall 2);
+// loading placeholders match the eventual fixed-height parent (h-72 for full
+// charts, h-20 for sparkline) to prevent CLS.
 // ---------------------------------------------------------------------------
-
-const StackedBar = dynamic(
-  () => import('@/components/charts/stacked-bar').then((m) => m.StackedBar),
-  {
-    ssr: false,
-    loading: () => (
-      <div className="h-72 w-full animate-pulse rounded-md bg-muted/40" />
-    ),
-  },
-)
-
-const HorizontalBar = dynamic(
-  () => import('@/components/charts/horizontal-bar').then((m) => m.HorizontalBar),
-  {
-    ssr: false,
-    loading: () => (
-      <div className="h-72 w-full animate-pulse rounded-md bg-muted/40" />
-    ),
-  },
-)
-
-const Sparkline = dynamic(
-  () => import('@/components/charts/sparkline').then((m) => m.Sparkline),
-  {
-    ssr: false,
-    loading: () => (
-      <div className="h-20 w-full animate-pulse rounded-md bg-muted/40" />
-    ),
-  },
-)
 
 type PageProps = {
   searchParams: Promise<{ preset?: string; from?: string; to?: string }>
