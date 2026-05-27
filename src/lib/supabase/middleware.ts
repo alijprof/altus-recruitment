@@ -22,6 +22,15 @@ const PUBLIC_PATHS = [
   // Microsoft Graph change-notification webhook (Plan 4) — guarded by the
   // `clientState` echoed in every notification, NOT by Supabase auth.
   '/api/outlook/webhook',
+  // Org invitation accept route (Quick 260524-bpy + 260527-x2q P0 fix) —
+  // invitees are by definition unauthenticated when they first click the
+  // emailed link. The route validates the token via service-role lookup,
+  // sets the `altus_invite_token` httpOnly cookie, and redirects to
+  // /sign-in?email=... so the magic-link round-trip can complete and
+  // /auth/callback can attach the invitee to the inviter's org instead
+  // of bootstrapping a fresh one. Gating this behind auth here would
+  // create the bug it was added to fix.
+  '/accept-invite',
 ]
 
 export async function updateSession(request: NextRequest) {
