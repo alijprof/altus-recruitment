@@ -94,7 +94,7 @@ export function FloatingFeedbackButton() {
           <MessageSquarePlus className="h-5 w-5" />
         </Button>
       </DialogTrigger>
-      <DialogContent className="sm:max-w-md">
+      <DialogContent className="flex max-h-[85vh] flex-col sm:max-w-md">
         <DialogHeader>
           <DialogTitle>Send feedback</DialogTitle>
           <DialogDescription>
@@ -104,8 +104,8 @@ export function FloatingFeedbackButton() {
         {status.kind === 'success' ? (
           <div className="py-8 text-center text-sm">Thanks — sent.</div>
         ) : (
-          <form onSubmit={onSubmit} className="space-y-4" noValidate>
-            <div className="space-y-2">
+          <form onSubmit={onSubmit} className="flex min-h-0 flex-1 flex-col space-y-4" noValidate>
+            <div className="flex min-h-0 flex-1 flex-col space-y-2">
               <Label htmlFor="feedback-body">Your feedback</Label>
               <Textarea
                 id="feedback-body"
@@ -116,6 +116,11 @@ export function FloatingFeedbackButton() {
                 onChange={(e) => setBody(e.target.value)}
                 disabled={isBusy}
                 rows={6}
+                // Quick 260528-p4w: cap auto-grow so a 2000-char paste keeps
+                // the dialog inside the viewport. The textarea scrolls
+                // internally; the wrapping form + DialogContent stay capped
+                // at 85vh as defence-in-depth.
+                className="max-h-[40vh] min-h-[9rem] resize-none"
               />
               <p className="text-muted-foreground text-xs">
                 {body.length} / {MAX_BODY_LENGTH}
