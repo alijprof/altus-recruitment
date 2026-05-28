@@ -24,9 +24,13 @@ import type { TablesInsert } from '@/types/database'
 // (e.g. `altus-consultancy.com` -> `feedback@altus-consultancy.com`), this
 // must match the Resend account email or sends will silently 403.
 //
-// TODO: once a sending domain is verified in Resend, switch this to
-// aj@altus-consultancy.com (or make it RESEND_FEEDBACK_RECIPIENT env var).
-const FEEDBACK_RECIPIENT = 'professorparpinsons@outlook.com'
+// User's Resend account email is aj@altus-consultancy.com, so
+// onboarding@resend.dev can deliver to this recipient under Resend's
+// testing-sender rules.
+// TODO: once a real sending domain is verified in Resend, make this
+// configurable via a RESEND_FEEDBACK_RECIPIENT env var so the value can
+// change without code commits.
+const FEEDBACK_RECIPIENT = 'aj@altus-consultancy.com'
 
 const submitFeedbackSchema = z.object({
   body: z
