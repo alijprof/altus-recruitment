@@ -19,7 +19,7 @@ import { getProfile } from '@/lib/db/profiles'
 import { createClient } from '@/lib/supabase/server'
 import type { TablesInsert } from '@/types/database'
 
-const FEEDBACK_RECIPIENT = 'alasdairj8@gmail.com'
+const FEEDBACK_RECIPIENT = 'aj@altus-consultancy.com'
 
 const submitFeedbackSchema = z.object({
   body: z
