@@ -10,11 +10,20 @@
 //
 // PII guard (CLAUDE.md): we NEVER pass the feedback `body` text into Sentry.
 // Only the error object + a static `feature: 'feedback'` tag are captured.
+//
+// 260528-wdz: emails now sent as multipart HTML+text via
+// renderTransactionalEmail. HTML interpolation safety guaranteed by escapeHtml
+// inside the renderer.
 
 import * as Sentry from '@sentry/nextjs'
 import { z } from 'zod'
 
 import { sendResendEmail } from '@/lib/email/resend'
+import {
+  renderTransactionalEmail,
+  renderTransactionalEmailText,
+  type TransactionalEmail,
+} from '@/lib/email/render'
 import { getProfile } from '@/lib/db/profiles'
 import { env } from '@/lib/env'
 import { createClient } from '@/lib/supabase/server'
@@ -102,17 +111,23 @@ export async function submitFeedbackAction(input: unknown): Promise<SubmitFeedba
     const userEmail = profileData?.email ?? user.email ?? '(no email)'
     const pageUrl = parsed.data.page_url ?? '(no page url)'
 
-    // Plaintext only — never populate `html` with user-controlled strings.
-    // T-260524-b6v-05: HTML injection mitigation.
-    const text = [
-      `From: ${fullName} <${userEmail}>`,
-      `Org: ${orgName ?? '(unknown)'}`,
-      `Page: ${pageUrl}`,
-      '',
-      '----------------------------------------',
-      '',
-      parsed.data.body,
-    ].join('\n')
+    // HTML payload is safe: every interpolated field (fullName, orgName,
+    // userEmail, pageUrl, parsed.data.body) passes through escapeHtml inside
+    // renderTransactionalEmail. T-260524-b6v-05 mitigation upgraded for
+    // branded HTML (260528-wdz).
+    const emailInput: TransactionalEmail = {
+      preheader: `New feedback from ${fullName} (${orgName ?? 'unknown org'})`,
+      heading: 'New feedback',
+      paragraphs: [
+        `From: ${fullName} <${userEmail}>`,
+        `Org: ${orgName ?? '(unknown)'}`,
+        `Page: ${pageUrl}`,
+        '',
+        ...parsed.data.body.split('\n'),
+      ],
+    }
+    const html = renderTransactionalEmail(emailInput)
+    const text = renderTransactionalEmailText(emailInput)
 
     if (!env.RESEND_FEEDBACK_RECIPIENT) {
       // Fail open: DB row is canonical and the user still sees ok:true. The
@@ -127,6 +142,7 @@ export async function submitFeedbackAction(input: unknown): Promise<SubmitFeedba
       const result = await sendResendEmail({
         to: env.RESEND_FEEDBACK_RECIPIENT,
         subject: `Altus feedback — ${orgName ?? 'unknown org'}`,
+        html,
         text,
       })
 

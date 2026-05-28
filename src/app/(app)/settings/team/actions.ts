@@ -18,6 +18,11 @@ import { revalidatePath } from 'next/cache'
 import { headers } from 'next/headers'
 
 import { sendResendEmail } from '@/lib/email/resend'
+import {
+  renderTransactionalEmail,
+  renderTransactionalEmailText,
+  type TransactionalEmail,
+} from '@/lib/email/render'
 import { env } from '@/lib/env'
 import { setRequestScope } from '@/lib/observability/sentry'
 import { createClient } from '@/lib/supabase/server'
@@ -63,6 +68,13 @@ async function resolveOrigin(): Promise<string | null> {
   if (!host) return null
   const proto = h.get('x-forwarded-proto') ?? 'https'
   return `${proto}://${host}`
+}
+
+// 260528-wdz: keep preheader text under ~90 chars so Gmail / Apple Mail show
+// the full preview without truncation. Truncates with an ellipsis if longer.
+function buildInvitePreheader(inviterName: string, orgName: string): string {
+  const raw = `${inviterName} invited you to ${orgName} on Altus Recruit`
+  return raw.length > 90 ? raw.slice(0, 89) + '…' : raw
 }
 
 export async function inviteMemberAction(rawInput: unknown): Promise<ActionResult> {
@@ -154,19 +166,25 @@ export async function inviteMemberAction(rawInput: unknown): Promise<ActionResul
 
     const acceptUrl = `${origin}/accept-invite/${inserted.token}`
 
-    // Plaintext only — never populate `html` with user-controlled strings
-    // (inviter full_name, org name). T-260524-bpy-06 mitigation.
-    const text = [
-      `${inviterName} invited you to join ${orgName} on Altus.`,
-      '',
-      `Accept the invitation: ${acceptUrl}`,
-      '',
-      "Link expires in 7 days. Ignore this email if you weren't expecting it.",
-    ].join('\n')
+    // HTML payload is safe: inviterName + orgName + acceptUrl pass through
+    // escapeHtml/sanitiseUrl inside renderTransactionalEmail.
+    // T-260524-bpy-06 mitigation upgraded for branded HTML (260528-wdz).
+    const emailInput: TransactionalEmail = {
+      preheader: buildInvitePreheader(inviterName, orgName),
+      heading: `You're invited to ${orgName}`,
+      paragraphs: [
+        `${inviterName} invited you to join their team on Altus Recruit — the AI-first recruitment CRM.`,
+      ],
+      button: { label: 'Accept invitation', url: acceptUrl },
+      footerNote: "Link expires in 7 days. If you weren't expecting this, you can ignore it.",
+    }
+    const html = renderTransactionalEmail(emailInput)
+    const text = renderTransactionalEmailText(emailInput)
 
     const result = await sendResendEmail({
       to: inserted.email,
-      subject: `${inviterName} invited you to Altus on ${orgName}`,
+      subject: `${inviterName} invited you to Altus Recruit`,
+      html,
       text,
     })
 
@@ -323,17 +341,25 @@ export async function resendInviteAction(rawInput: unknown): Promise<ActionResul
 
     const acceptUrl = `${origin}/accept-invite/${existing.token}`
 
-    const text = [
-      `${inviterName} invited you to join ${orgName} on Altus.`,
-      '',
-      `Accept the invitation: ${acceptUrl}`,
-      '',
-      "Link expires in 7 days. Ignore this email if you weren't expecting it.",
-    ].join('\n')
+    // HTML payload is safe: inviterName + orgName + acceptUrl pass through
+    // escapeHtml/sanitiseUrl inside renderTransactionalEmail.
+    // T-260524-bpy-06 mitigation upgraded for branded HTML (260528-wdz).
+    const emailInput: TransactionalEmail = {
+      preheader: buildInvitePreheader(inviterName, orgName),
+      heading: `You're invited to ${orgName}`,
+      paragraphs: [
+        `${inviterName} invited you to join their team on Altus Recruit — the AI-first recruitment CRM.`,
+      ],
+      button: { label: 'Accept invitation', url: acceptUrl },
+      footerNote: "Link expires in 7 days. If you weren't expecting this, you can ignore it.",
+    }
+    const html = renderTransactionalEmail(emailInput)
+    const text = renderTransactionalEmailText(emailInput)
 
     const result = await sendResendEmail({
       to: existing.email,
-      subject: `${inviterName} invited you to Altus on ${orgName}`,
+      subject: `${inviterName} invited you to Altus Recruit`,
+      html,
       text,
     })
 
