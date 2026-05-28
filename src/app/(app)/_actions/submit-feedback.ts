@@ -16,21 +16,9 @@ import { z } from 'zod'
 
 import { sendResendEmail } from '@/lib/email/resend'
 import { getProfile } from '@/lib/db/profiles'
+import { env } from '@/lib/env'
 import { createClient } from '@/lib/supabase/server'
 import type { TablesInsert } from '@/types/database'
-
-// Resend's `onboarding@resend.dev` sender can only deliver to the email
-// registered on the Resend account. Until a real sending domain is verified
-// (e.g. `altus-consultancy.com` -> `feedback@altus-consultancy.com`), this
-// must match the Resend account email or sends will silently 403.
-//
-// User's Resend account email is aj@altus-consultancy.com, so
-// onboarding@resend.dev can deliver to this recipient under Resend's
-// testing-sender rules.
-// TODO: once a real sending domain is verified in Resend, make this
-// configurable via a RESEND_FEEDBACK_RECIPIENT env var so the value can
-// change without code commits.
-const FEEDBACK_RECIPIENT = 'aj@altus-consultancy.com'
 
 const submitFeedbackSchema = z.object({
   body: z
@@ -126,19 +114,30 @@ export async function submitFeedbackAction(input: unknown): Promise<SubmitFeedba
       parsed.data.body,
     ].join('\n')
 
-    const result = await sendResendEmail({
-      to: FEEDBACK_RECIPIENT,
-      subject: `Altus feedback — ${orgName ?? 'unknown org'}`,
-      text,
-    })
-
-    if (!result.ok && result.reason === 'http_error') {
-      // no_api_key is expected in dev — don't log it. Only log real failures.
-      Sentry.captureMessage('resend_send_failed', {
+    if (!env.RESEND_FEEDBACK_RECIPIENT) {
+      // Fail open: DB row is canonical and the user still sees ok:true. The
+      // recipient is configured via Vercel env vars so it can change without
+      // code commits.
+      Sentry.captureMessage('resend_send_skipped', {
         level: 'warning',
         tags: { feature: 'feedback', step: 'resend' },
-        extra: { status: result.status, message: result.message },
+        extra: { reason: 'no_recipient_configured' },
       })
+    } else {
+      const result = await sendResendEmail({
+        to: env.RESEND_FEEDBACK_RECIPIENT,
+        subject: `Altus feedback — ${orgName ?? 'unknown org'}`,
+        text,
+      })
+
+      if (!result.ok && result.reason === 'http_error') {
+        // no_api_key is expected in dev — don't log it. Only log real failures.
+        Sentry.captureMessage('resend_send_failed', {
+          level: 'warning',
+          tags: { feature: 'feedback', step: 'resend' },
+          extra: { status: result.status, message: result.message },
+        })
+      }
     }
   } catch (emailErr) {
     Sentry.captureException(emailErr, {
