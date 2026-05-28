@@ -107,6 +107,12 @@ export const env = createEnv({
     // fire; the DB row is canonical regardless.
     RESEND_API_KEY: z.string().min(1).optional(),
     RESEND_FROM: z.string().email().optional(),
+
+    // Where in-app feedback emails are delivered TO. Optional in dev (same
+    // fail-open pattern as RESEND_API_KEY). submit-feedback.ts skips the
+    // outbound email and logs a `no_recipient_configured` Sentry warning
+    // when unset. The DB row is still canonical.
+    RESEND_FEEDBACK_RECIPIENT: z.string().email().optional(),
   },
   client: {
     NEXT_PUBLIC_SUPABASE_URL: z.string().url(),
