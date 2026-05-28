@@ -19,7 +19,14 @@ import { getProfile } from '@/lib/db/profiles'
 import { createClient } from '@/lib/supabase/server'
 import type { TablesInsert } from '@/types/database'
 
-const FEEDBACK_RECIPIENT = 'aj@altus-consultancy.com'
+// Resend's `onboarding@resend.dev` sender can only deliver to the email
+// registered on the Resend account. Until a real sending domain is verified
+// (e.g. `altus-consultancy.com` -> `feedback@altus-consultancy.com`), this
+// must match the Resend account email or sends will silently 403.
+//
+// TODO: once a sending domain is verified in Resend, switch this to
+// aj@altus-consultancy.com (or make it RESEND_FEEDBACK_RECIPIENT env var).
+const FEEDBACK_RECIPIENT = 'professorparpinsons@outlook.com'
 
 const submitFeedbackSchema = z.object({
   body: z
@@ -119,21 +126,6 @@ export async function submitFeedbackAction(input: unknown): Promise<SubmitFeedba
       to: FEEDBACK_RECIPIENT,
       subject: `Altus feedback — ${orgName ?? 'unknown org'}`,
       text,
-    })
-
-    // TEMP diagnostic (260528-tmp): surface Resend result to Vercel runtime
-    // logs while debugging delivery during UAT. Remove once email is confirmed
-    // working. Logs no PII — only the API response status + first 200 chars
-    // of error message + the recipient we attempted.
-    console.log('[feedback] resend attempt', {
-      ok: result.ok,
-      reason: 'reason' in result ? result.reason : undefined,
-      status: 'status' in result ? result.status : undefined,
-      message:
-        'message' in result && typeof result.message === 'string'
-          ? result.message.slice(0, 200)
-          : undefined,
-      recipient: FEEDBACK_RECIPIENT,
     })
 
     if (!result.ok && result.reason === 'http_error') {
