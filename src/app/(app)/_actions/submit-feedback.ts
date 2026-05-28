@@ -121,6 +121,21 @@ export async function submitFeedbackAction(input: unknown): Promise<SubmitFeedba
       text,
     })
 
+    // TEMP diagnostic (260528-tmp): surface Resend result to Vercel runtime
+    // logs while debugging delivery during UAT. Remove once email is confirmed
+    // working. Logs no PII — only the API response status + first 200 chars
+    // of error message + the recipient we attempted.
+    console.log('[feedback] resend attempt', {
+      ok: result.ok,
+      reason: 'reason' in result ? result.reason : undefined,
+      status: 'status' in result ? result.status : undefined,
+      message:
+        'message' in result && typeof result.message === 'string'
+          ? result.message.slice(0, 200)
+          : undefined,
+      recipient: FEEDBACK_RECIPIENT,
+    })
+
     if (!result.ok && result.reason === 'http_error') {
       // no_api_key is expected in dev — don't log it. Only log real failures.
       Sentry.captureMessage('resend_send_failed', {
