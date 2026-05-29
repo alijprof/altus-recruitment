@@ -106,7 +106,12 @@ export const env = createEnv({
     // Production deployments MUST set RESEND_API_KEY for the bonus email to
     // fire; the DB row is canonical regardless.
     RESEND_API_KEY: z.string().min(1).optional(),
-    RESEND_FROM: z.string().email().optional(),
+    // Accepts either a bare email (`noreply@altusmove.com`) OR the RFC 5322
+    // mailbox format (`Altus <noreply@altusmove.com>`) — both are valid
+    // Resend `from` values. `z.string().email()` would reject the mailbox
+    // form and crash page-data collection at build time. Downstream Resend
+    // API validates the exact format and returns a clean 4xx if malformed.
+    RESEND_FROM: z.string().min(1).optional(),
 
     // Where in-app feedback emails are delivered TO. Optional in dev (same
     // fail-open pattern as RESEND_API_KEY). submit-feedback.ts skips the
