@@ -146,7 +146,7 @@ Plans:
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Internal ATS | 0/7 | In progress | - |
+| 1. Internal ATS | 6/6 | Complete | 2026-05-18 |
 | 2. Search, Match & Intake | 5/5 | Complete | 2026-05-19 |
 | 3. LinkedIn, Spec Workflow & Shortlists | 7/7 | Complete   | 2026-05-20 |
 | 4. Voice, Marketing & Reporting | 0/0 | Not started | - |
