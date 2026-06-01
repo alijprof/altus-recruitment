@@ -58,13 +58,14 @@ Phases 1–3 are **genuinely implemented end-to-end** — all 15 success criteri
 
 ## 🟢 LOW — tidy-up
 
-- **`pnpm lint` is red because it lints `chrome-extension/dist/` (minified build output).** Add `chrome-extension/dist/**` (and `**/dist/**`) to the ESLint ignore list so lint reflects real source. *(This is why CI lint looks alarming — most of it is warnings on bundled JS.)*
+- ~~ESLint lints `chrome-extension/dist/` (minified build output)~~ ✅ **done 2026-06-01** — added `**/dist/**` + `chrome-extension/dist/**` to the ESLint ignore list. `pnpm lint` now reports **0 errors, 17 warnings** (was 248); the 17 are intentional `_`-prefixed mock params in test files (could be silenced with `argsIgnorePattern: '^_'` if ever desired).
 - ~~Regenerate `pnpm db:types` after migrations push~~ ✅ done 2026-06-01 (regenerated after the M-3/M-5 push; remote history in sync).
-- Empty-state copy nits (dashboard missing `<h1>`; jobs mixed-signal CTA; source-attribution empty CTA).
-- Wire or delete unused `getInviteAcceptUrl` helper (dead export).
-- Confirm `INNGEST_SIGNING_KEY` set (the unsigned-PUT note from `260528-0rd` is likely expected).
-- Confirm Phase 3 CR-01/CR-02 (advisory-lock removed; `linkedin_url` regex-validated) shipped.
-- Close PR #2 (Phase 3 retro review) after UAT; its failing Vercel check = orphaned project (see `03-HANDOFF.md` §1a).
+- ~~Empty-state copy nits~~ ✅ **non-issues 2026-06-01** — dashboard `<h1>` already present (`(app)/page.tsx:53`); source-attribution already has a CTA (`page.tsx:188`); jobs mixed-signal CTA resolved by M-8. Notes were stale.
+- ~~Wire or delete unused `getInviteAcceptUrl` helper~~ ✅ **deleted 2026-06-01** — confirmed dead (no callers); removed from `lib/invitations/cookie.ts`.
+- ~~Confirm Phase 3 CR-01/CR-02 shipped~~ ✅ **confirmed 2026-06-01** — CR-01 advisory-lock removed (replaced by the unique constraint in `20260520065652`; documented at `linkedin/ingest/route.ts:147`); CR-02 `linkedin_url` regex-validated (`linkedin-ingest-schema.ts:49`). *(Minor: the stale flow-comment at `route.ts:25` still mentions the old advisory lock — cosmetic, left as-is.)*
+- Confirm `INNGEST_SIGNING_KEY` set in Vercel (the unsigned-PUT note from `260528-0rd` is likely expected). **← env/dashboard, yours.**
+- Close PR #2 (Phase 3 retro review) after UAT; its failing Vercel check = orphaned project (see `03-HANDOFF.md` §1a). **← after UAT.**
+- **M-7 finding (2026-06-01):** the extension source (`chrome-extension/src/content/scrape-profile.ts`) does the thin name+URL DOM scrape with **no PDF handling** — the "PDF pivot" is the separate Save-to-PDF → CV-upload → Haiku path, matching the documented design. M-7 stays a live/operational confirmation (not a code fix).
 
 ---
 
