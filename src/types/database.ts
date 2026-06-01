@@ -1447,6 +1447,17 @@ export type Database = {
         }
         Returns: undefined
       }
+      record_audit_explicit: {
+        Args: {
+          p_action: Database["public"]["Enums"]["audit_action"]
+          p_actor_user_id: string
+          p_entity_id: string
+          p_entity_type: string
+          p_metadata?: Json
+          p_organization_id: string
+        }
+        Returns: undefined
+      }
       search_candidates: {
         Args: { p_limit?: number; p_offset?: number; p_query: string }
         Returns: {

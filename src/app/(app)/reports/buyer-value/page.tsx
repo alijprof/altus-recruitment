@@ -304,10 +304,14 @@ export default async function BuyerValuePage({ searchParams }: PageProps) {
             supports them.
           </p>
           <p>
-            <strong>Pipeline sparkline.</strong> &quot;Open as of date X&quot;
-            = jobs with <code>status=&apos;open&apos;</code> and{' '}
-            <code>created_at ≤ X</code>. We lack a historical status table,
-            so the trend is indicative only.
+            <strong>Pipeline sparkline.</strong> Each day plots the{' '}
+            <em>back-projected current pipeline</em>, not historical pipeline:
+            the sum of jobs with today&apos;s{' '}
+            <code>status=&apos;open&apos;</code> and{' '}
+            <code>created_at ≤</code> that day. Without a historical status
+            table it can&apos;t reflect jobs that closed mid-window or were
+            drafted before they opened, so read it as cumulative open-req
+            volume — use the headline figure for point-in-time pipeline.
           </p>
           <p>
             <strong>Currency.</strong> Commission and pipeline aggregations
@@ -320,8 +324,17 @@ export default async function BuyerValuePage({ searchParams }: PageProps) {
             &quot;Unspecified&quot; bucket until a sector field is added.
           </p>
           <p>
+            <strong>Time-to-fill.</strong> Measured from job{' '}
+            <code>created_at</code> to placement (<code>placed_at</code>,
+            falling back to <code>stage_changed_at</code>). Placements dated
+            before their job was created are excluded as data-entry anomalies.
+          </p>
+          <p>
             <strong>Recruiter attribution.</strong> Placements credit{' '}
             <code>owner_user_id</code>, falling back to <code>created_by</code>.
+            Placements with neither set are grouped under{' '}
+            <strong>Unattributed</strong> rather than dropped, so the totals
+            reconcile against the raw placement count.
           </p>
         </div>
       </details>
