@@ -56,7 +56,11 @@ export function FloatingFeedbackButton() {
 
     const result = await submitFeedbackAction({
       body: body.trim(),
-      page_url: window.location.pathname + window.location.search,
+      // Pathname only — NEVER the query string. Search params can carry
+      // candidate PII (e.g. /candidates?q=Jane%20Doe%20+447...) which would
+      // otherwise be persisted to public.feedback AND emailed to a personal
+      // mailbox, breaching the CLAUDE.md "never log PII" rule. (Audit H-1.)
+      page_url: window.location.pathname,
       user_agent: navigator.userAgent,
     })
 

@@ -21,6 +21,30 @@ const nextConfig: NextConfig = {
     '@ffmpeg-installer/ffmpeg',
     '@ffprobe-installer/ffprobe',
   ],
+  // Strip the framework-fingerprinting header (pre-UAT HTTP smoke H3).
+  poweredByHeader: false,
+  // Baseline security response headers (pre-UAT smoke H2). Intentionally
+  // conservative:
+  //   - NO Content-Security-Policy yet — it needs a report-only rollout first
+  //     (Turnstile, Supabase, Sentry and Recharts origins must be allowlisted;
+  //     a blind blocking CSP would break the app). Tracked in LAUNCH-READINESS.
+  //   - NO Permissions-Policy restricting microphone/camera — spec-call audio
+  //     capture would break.
+  //   - X-Frame-Options SAMEORIGIN is safe today; revisit if/when the public
+  //     /apply form needs to be embeddable in a client's careers site (Phase 5).
+  async headers() {
+    return [
+      {
+        source: '/:path*',
+        headers: [
+          { key: 'X-Content-Type-Options', value: 'nosniff' },
+          { key: 'X-Frame-Options', value: 'SAMEORIGIN' },
+          { key: 'Referrer-Policy', value: 'strict-origin-when-cross-origin' },
+          { key: 'X-DNS-Prefetch-Control', value: 'on' },
+        ],
+      },
+    ]
+  },
 }
 
 // Source-map upload only runs when SENTRY_AUTH_TOKEN is set (CI / deploy);

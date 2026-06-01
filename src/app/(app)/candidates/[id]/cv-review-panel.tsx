@@ -2,7 +2,7 @@
 
 import { AlertTriangle, Loader2 } from 'lucide-react'
 import { useRouter } from 'next/navigation'
-import { useEffect, useRef, useState, useTransition } from 'react'
+import { useEffect, useState, useTransition } from 'react'
 import { toast } from 'sonner'
 
 import { ConfidenceBadge, type ConfidenceLevel } from '@/components/app/confidence-badge'
@@ -95,7 +95,9 @@ function ReviewSheetBody({ extracted }: { extracted: ExtractedShape }) {
 
 function PendingState() {
   const router = useRouter()
-  const startedAtRef = useRef(Date.now())
+  // Lazy useState initializer runs once on mount — keeps the impure Date.now()
+  // out of the render body (calling it during render trips react-hooks/purity).
+  const [startedAt] = useState(() => Date.now())
 
   // Poll the route every 3s while the CV is still parsing. router.refresh()
   // re-fetches the RSC tree, so when the Inngest job marks the row
@@ -108,14 +110,14 @@ function PendingState() {
     const MAX_DURATION_MS = 5 * 60_000
     const INTERVAL_MS = 3_000
     const id = setInterval(() => {
-      if (Date.now() - startedAtRef.current > MAX_DURATION_MS) {
+      if (Date.now() - startedAt > MAX_DURATION_MS) {
         clearInterval(id)
         return
       }
       router.refresh()
     }, INTERVAL_MS)
     return () => clearInterval(id)
-  }, [router])
+  }, [router, startedAt])
 
   return (
     <div className="bg-card space-y-3 rounded-md border p-4">
