@@ -30,7 +30,3 @@ export const INVITE_COOKIE_CLEAR_OPTIONS = {
   ...INVITE_COOKIE_OPTIONS,
   maxAge: 0,
 }
-
-export function getInviteAcceptUrl(origin: string, token: string): string {
-  return `${origin}/accept-invite/${token}`
-}
