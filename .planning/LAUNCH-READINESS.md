@@ -47,19 +47,19 @@ Phases 1–3 are **genuinely implemented end-to-end** — all 15 success criteri
 |----|------|--------------------|
 | ~~M-1~~ ✅ | **DONE 2026-05-30** — added `poweredByHeader:false` + `headers()` (`X-Content-Type-Options`, `X-Frame-Options: SAMEORIGIN`, `Referrer-Policy`, `X-DNS-Prefetch-Control`) to `next.config.ts`. Deliberately omitted: CSP (needs report-only rollout) and `Permissions-Policy` mic/camera (would break spec-call audio). Verified green. |
 | ~~M-2~~ ✅ | **DONE 2026-05-30** — `useRef(Date.now())` → `useState(() => Date.now())` in `cv-review-panel.tsx`. This was the **only** thing making `pnpm lint` red; lint is now **0 errors**. Verified green. |
-| M-3 | Buyer-value RPC correctness (acquirer-facing) | HI-01 `placements_by_recruiter_quarter` + `commission_summary` inner-join drops rows where owner+creator both NULL (under-counts). HI-02 pipeline-value sparkline back-projects today's `open` status. HI-03 time-to-fill doesn't filter `placed_at < created_at`. Fix SQL (append-only migration) or correct Methodology copy. |
-| M-4 | Legacy dual Team UI | `settings/page.tsx` still renders `<InviteForm/>` + `<InvitationsList/>` (legacy, writes via Supabase Auth admin invite — bypasses `org_invitations`) alongside a link to the new `/settings/team`. Legacy invites never appear on the new page. Remove the legacy components. |
-| M-5 | `accept_invitation` RPC writes no `audit_log` | Org-transfer + role-demote + orphan-org-delete happen silently. Violates "audit-ready by default." Add `record_audit(...)` (append-only migration → **ask before schema change**). |
-| M-6 | Phase 3 WR follow-ups | `sendOutreachAction` service-role activity update lacks an `organization_id` predicate (fix before first real outreach); shortlist/float adds don't set `owner_user_id`; shortlist remove hard-deletes with no audit; unsound cast in `draft-outreach-email.ts`; ffmpeg probe lacks inner timeout. |
-| M-7 | LinkedIn one-click capture is DOM-fragile | Extension IS in repo (`chrome-extension/`). LinkedIn rebuilt the profile DOM so raw scrape gets only name+url; rest relies on the **PDF pivot** (validated workaround — do NOT reintroduce DOM scraping, per memory). Confirm the live extension uses the PDF path before relying on it. |
-| M-8 | No standalone `/jobs/new` route | Jobs can only be created via spec-call or client-first flow; empty-state CTA points elsewhere. Add the route. |
+| ~~M-3~~ ✅ | **DONE 2026-06-01** — migration `20260601000000_buyer_value_rpc_fixes.sql` (applied to linked DB). HI-01: `placements_by_recruiter_quarter` + `commission_summary_by_recruiter` now LEFT JOIN with a nil-UUID **Unattributed** bucket (no placement dropped). HI-03: `time_to_fill_by_sector` excludes placements dated before job creation. HI-02 (sparkline back-projection): no historical-status table to fix it properly, so the page Methodology copy is reworded to describe it honestly. Reviewed clean. |
+| ~~M-4~~ ✅ | **DONE 2026-06-01** — deleted `invite-form.tsx` + `invitations-list.tsx`, removed the legacy Team `<Card>` from `settings/page.tsx`, and removed `inviteTeammateAction`/`inviteTeammateSchema`. `/settings/team` (org_invitations-backed, audited) is now the single Team entry point. Reviewed clean — no dangling refs. |
+| ~~M-5~~ ✅ | **DONE 2026-06-01** — migration `20260601000100_accept_invitation_audit.sql` (applied). Added `record_audit_explicit(org, actor, …)` (service_role only) and `CREATE OR REPLACE accept_invitation` (FOR UPDATE lock preserved verbatim) with audit rows for the org transfer + role change, the invitation accept, and the orphan-org delete (logged before delete, against the inviting org). Reviewed clean. |
+| ~~M-6~~ ✅ | **DONE 2026-06-01** — (a) `sendOutreachAction` resolves caller org up-front + scopes the service-role activity read/update with an `organization_id` predicate; (b) shortlist + float adds set `owner_user_id`; (c) shortlist remove logs a `note` to the candidate timeline before the hard delete (no schema change — chosen over a soft-delete column); (d) unsound cast removed in `draft-outreach-email.ts`; (e) ffmpeg probe gets a 30s `execFile` timeout. Reviewed clean. |
+| M-7 | LinkedIn one-click capture is DOM-fragile | Extension IS in repo (`chrome-extension/`). LinkedIn rebuilt the profile DOM so raw scrape gets only name+url; rest relies on the **PDF pivot** (validated workaround — do NOT reintroduce DOM scraping, per memory). Confirm the live extension uses the PDF path before relying on it. *(Not a code fix — left for live confirmation.)* |
+| ~~M-8~~ ✅ | **DONE 2026-06-01** — added `/jobs/new` (`page.tsx` + `job-form.tsx` + `actions.ts` + `schema.ts`) with a client picker, `listClientOptions` helper in `db/clients.ts`, and a "New job" header button + reworked empty-state CTAs on `/jobs`. Mirrors `clients/[id]/jobs/new`. **Needs inclusion in the post-B1–B3 browser pre-smoke** (new form — HARD RULE #1). |
 
 ---
 
 ## 🟢 LOW — tidy-up
 
 - **`pnpm lint` is red because it lints `chrome-extension/dist/` (minified build output).** Add `chrome-extension/dist/**` (and `**/dist/**`) to the ESLint ignore list so lint reflects real source. *(This is why CI lint looks alarming — most of it is warnings on bundled JS.)*
-- Regenerate `pnpm db:types` after migrations push (clears ~108-line drift).
+- ~~Regenerate `pnpm db:types` after migrations push~~ ✅ done 2026-06-01 (regenerated after the M-3/M-5 push; remote history in sync).
 - Empty-state copy nits (dashboard missing `<h1>`; jobs mixed-signal CTA; source-attribution empty CTA).
 - Wire or delete unused `getInviteAcceptUrl` helper (dead export).
 - Confirm `INNGEST_SIGNING_KEY` set (the unsigned-PUT note from `260528-0rd` is likely expected).
@@ -81,12 +81,23 @@ Phases 1–3 are **genuinely implemented end-to-end** — all 15 success criteri
 
 ---
 
+## ✅ Done 2026-06-01 — M-tier clear-down
+
+- [x] **Committed** the orphaned 2026-05-30 work (H-1 PII, M-1 headers, M-2 lint + planning reconciliation) — 2 commits.
+- [x] **M-3 / M-4 / M-5 / M-6 / M-8 all fixed** (see MEDIUM table). Two migrations applied to the linked DB via `supabase db push --linked`; `database.ts` regenerated; remote migration history back in sync.
+- [x] **Gates green** — `pnpm typecheck` exit 0; `pnpm lint` 0 errors on every changed file.
+- [x] **Adversarial code review** — 4-area multi-agent review + per-finding verification returned **0 confirmed issues**.
+- [ ] **Browser pre-smoke of `/jobs/new`** — deferred to the post-B1–B3 `vercel:verification` pass (needs a live deploy; it's a new form).
+- Remaining MEDIUM: only **M-7** (confirm the live LinkedIn extension uses the PDF path — not a code fix).
+
+---
+
 ## ✅ Your minimal path to live (do these in order)
 
 1. **Vercel env vars** (Production + Preview): `RESEND_FROM=Altus <noreply@altusmove.com>`, `NEXT_PUBLIC_SITE_URL=<prod URL>`, `RESEND_FEEDBACK_RECIPIENT=alasdairj8@gmail.com`. Confirm the rest are present: `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `ANTHROPIC_API_KEY`, `VOYAGE_API_KEY`, `OPENAI_API_KEY`, `INNGEST_EVENT_KEY`, `INNGEST_SIGNING_KEY`, `EMAIL_TOKEN_ENCRYPTION_KEY`, Turnstile + Outlook + Sentry keys (see `.env.example`).
 2. **Supabase → Auth → SMTP** (B1) + **raise email rate limit**.
 3. **Supabase → Auth → Email Templates** paste 5 from `260528-wdz`; **URL Config** = prod URL.
-4. **Tell me when 1–3 are done** — I'll run the browser pre-smoke (`vercel:verification`) against the live deploy (incl. confirming the H-1 PII fix end-to-end) and knock out the remaining M-tier code fixes, then fix anything the smoke surfaces *before* you UAT.
+4. **Tell me when 1–3 are done** — the M-tier code fixes are already in (M-3/4/5/6/8). I'll run the browser pre-smoke (`vercel:verification`) against the live deploy — confirming the H-1 PII fix end-to-end **and the new `/jobs/new` form** — then fix anything the smoke surfaces *before* you UAT.
 5. **Final UAT click-through** (~30–45 min): `03-UAT.md` Tests 2 & 12 + the ~22 residual items from the 2026-05-24 autonomous run.
 
 ---
