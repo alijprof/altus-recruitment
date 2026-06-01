@@ -177,6 +177,26 @@ export async function getClient(
   return { ok: true, data: row }
 }
 
+// Lightweight options helper for client pickers (e.g. the standalone
+// /jobs/new client dropdown — M-8). Returns all companies for the tenant,
+// id + name only, sorted by name. RLS scopes the read to the caller's org.
+export type ClientOption = { id: string; name: string }
+
+export async function listClientOptions(
+  supabase: SupabaseClient<Database>,
+): Promise<DbResult<ClientOption[]>> {
+  const { data, error } = await supabase
+    .from('companies')
+    .select('id, name')
+    .order('name', { ascending: true })
+
+  if (error) {
+    Sentry.captureException(error, { tags: { layer: 'db', helper: 'listClientOptions' } })
+    return { ok: false, code: 'internal' }
+  }
+  return { ok: true, data: data ?? [] }
+}
+
 export type CreateClientInput = Pick<
   TablesInsert<'companies'>,
   'name' | 'industry' | 'website' | 'notes'

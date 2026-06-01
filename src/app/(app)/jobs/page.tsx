@@ -1,3 +1,6 @@
+import Link from 'next/link'
+
+import { Button } from '@/components/ui/button'
 import { EmptyState } from '@/components/app/empty-state'
 import { listJobs } from '@/lib/db/jobs'
 import { createClient } from '@/lib/supabase/server'
@@ -51,24 +54,26 @@ export default async function JobsPage({
   }
 
   const { rows, total } = result.data
-  // Empty-state primary CTA points at /spec/new (AI-first path); secondary
-  // routes via /clients because `/jobs/new` is not yet implemented — jobs
-  // currently have to be created against a client. See plan 260524-cjl
-  // SUMMARY.md for the Phase 4 follow-up.
+  // M-8: jobs can now be created directly via /jobs/new (the form has its own
+  // client picker) as well as from a spec call. Empty-state primary CTA → the
+  // form; the spec-call path stays as the AI-first secondary option.
   const isEmpty = total === 0
 
   return (
     <div className="space-y-6">
       <header className="flex flex-wrap items-center justify-between gap-3">
         <h1 className="text-2xl font-semibold tracking-tight">Jobs</h1>
+        <Button asChild className="h-11 md:h-10">
+          <Link href="/jobs/new">New job</Link>
+        </Button>
       </header>
 
       {isEmpty ? (
         <EmptyState
           heading="Add your first job"
-          body="Jobs hang off a client. Pick a client and create a job against them — or record a spec call and we'll extract the JD for you."
-          cta={{ href: '/spec/new', label: 'Record a spec call' }}
-          secondaryCta={{ href: '/clients', label: 'Pick a client' }}
+          body="Create a job from scratch and assign it to a client — or record a spec call and we'll draft the JD for you."
+          cta={{ href: '/jobs/new', label: 'Create a job' }}
+          secondaryCta={{ href: '/spec/new', label: 'Record a spec call' }}
         />
       ) : (
         <JobsShell rows={rows} total={total} page={page} pageSize={PAGE_SIZE} />
