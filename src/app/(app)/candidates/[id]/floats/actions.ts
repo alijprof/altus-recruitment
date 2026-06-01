@@ -53,6 +53,9 @@ export async function addFloatAction(
     candidate_id: parsed.data.candidateId,
     job_id: null,
     application_type: 'float' as Enums<'application_type'>,
+    // Attribute the float to the recruiter who created it (M-6b — mirrors the
+    // shortlist add).
+    owner_user_id: userData.user.id,
     // stage defaults to 'applied' from the schema; floats don't progress
     // through stages but the column is NOT NULL, so we accept the default.
   } as unknown as TablesInsert<'applications'>

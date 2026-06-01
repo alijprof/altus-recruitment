@@ -9,8 +9,6 @@ import { getProfile } from '@/lib/db/profiles'
 import { createClient } from '@/lib/supabase/server'
 
 import { ApplyFormToggle } from './apply-form-toggle'
-import { InvitationsList } from './invitations-list'
-import { InviteForm } from './invite-form'
 import { OrganizationForm } from './organization-form'
 import { ProfileForm } from './profile-form'
 
@@ -79,47 +77,27 @@ export default async function SettingsPage() {
 
       <Separator />
 
+      {/* Owner-only entry to the Team page: invite (via the audited
+          org_invitations table), revoke, resend, and see who's joined. The
+          legacy inline invite form that used Supabase Auth admin-invite
+          (bypassing org_invitations) was removed in the launch-readiness
+          cleanup — /settings/team is now the single source of truth. */}
       {isOwner ? (
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base font-semibold">Team</CardTitle>
-            <CardDescription>
-              Invite teammates by email. They&apos;ll join with the recruiter role.
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-6">
-            <InviteForm />
-            <Separator />
-            <div className="space-y-3">
-              <h3 className="text-sm font-semibold">Current team</h3>
-              <InvitationsList />
-            </div>
-          </CardContent>
-        </Card>
-      ) : null}
-
-      {/* Quick task 260524-bpy — owner-only link to the full Team page (list +
-          revoke + resend). Legacy inline Team card above stays for now so we
-          don't break ongoing flows; cleanup deferred to a follow-up. */}
-      {isOwner ? (
-        <>
-          <Separator />
-          <Link href="/settings/team" className="block">
-            <Card className="hover:bg-accent/40 transition-colors">
-              <CardHeader>
-                <div className="flex items-center justify-between">
-                  <div className="space-y-1">
-                    <CardTitle className="text-base font-semibold">Team</CardTitle>
-                    <CardDescription>
-                      Invite teammates, revoke pending invitations, and see who&apos;s joined.
-                    </CardDescription>
-                  </div>
-                  <ChevronRight className="text-muted-foreground size-5" aria-hidden="true" />
+        <Link href="/settings/team" className="block">
+          <Card className="hover:bg-accent/40 transition-colors">
+            <CardHeader>
+              <div className="flex items-center justify-between">
+                <div className="space-y-1">
+                  <CardTitle className="text-base font-semibold">Team</CardTitle>
+                  <CardDescription>
+                    Invite teammates, revoke pending invitations, and see who&apos;s joined.
+                  </CardDescription>
                 </div>
-              </CardHeader>
-            </Card>
-          </Link>
-        </>
+                <ChevronRight className="text-muted-foreground size-5" aria-hidden="true" />
+              </div>
+            </CardHeader>
+          </Card>
+        </Link>
       ) : null}
 
       <Separator />

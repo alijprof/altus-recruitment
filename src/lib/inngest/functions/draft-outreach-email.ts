@@ -101,14 +101,14 @@ export const draftOutreachEmailFn = inngest.createFunction(
       }
 
       let lastPlacementSummary: string | null = null
-      const top = placements?.[0] as
-        | {
-            stage_changed_at: string
-            jobs: { title: string } | { title: string }[] | null
-          }
-        | undefined
+      const top = placements?.[0]
       if (top) {
-        const job = Array.isArray(top.jobs) ? top.jobs[0] : top.jobs
+        // Supabase infers an embedded to-one relation as either a single
+        // object or a one-element array depending on the join shape; normalise
+        // at runtime instead of asserting the whole row type (M-6d — replaces
+        // the prior blanket `as` cast that lied about stage_changed_at).
+        const jobsRel = top.jobs
+        const job = Array.isArray(jobsRel) ? jobsRel[0] : jobsRel
         const title = job?.title?.trim()
         const when = new Date(top.stage_changed_at)
         if (title && !Number.isNaN(when.getTime())) {

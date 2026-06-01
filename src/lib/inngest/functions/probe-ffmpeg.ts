@@ -35,7 +35,11 @@ export const probeFfmpeg = inngest.createFunction(
   async ({ step }) => {
     const versionLine = await step.run('probe', async () => {
       const binaryPath = getFfmpegBinaryPath()
-      const { stdout } = await execFileP(binaryPath, ['-version'])
+      // Cap the probe so a stalled/missing binary can't wedge the Inngest step
+      // indefinitely (M-6e). 30s is generous for `ffmpeg -version`; on timeout
+      // execFile kills the process and the promise rejects (step then retries
+      // per the function's retry policy).
+      const { stdout } = await execFileP(binaryPath, ['-version'], { timeout: 30_000 })
       // The first line of `ffmpeg -version` output looks like:
       //   ffmpeg version N-0.0.0-static https://...
       // We log only that line so the probe payload stays small.

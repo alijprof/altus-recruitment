@@ -214,6 +214,22 @@ export async function sendOutreachAction(rawInput: unknown): Promise<SendOutreac
     return { ok: false, error: 'Not signed in.' }
   }
 
+  // Resolve the caller's org up-front so the service-role activity write below
+  // can be scoped to it. Service-role bypasses RLS, so without an
+  // organization_id predicate a forged activity id could touch another
+  // tenant's row (M-6a).
+  const { data: profile, error: profileErr } = await supabase
+    .from('users')
+    .select('organization_id')
+    .eq('id', user.id)
+    .maybeSingle()
+  if (profileErr || !profile) {
+    Sentry.captureException(profileErr, {
+      tags: { phase: 'p3', layer: 'action', helper: 'sendOutreachAction', subop: 'resolve-profile' },
+    })
+    return { ok: false, error: 'Could not resolve your organization.' }
+  }
+
   // Resolve recipient email — first contact on the company with a non-null
   // email. The /clients/[id] page already enforces contacts must exist for
   // dormant outreach to be meaningful; we surface a friendly error if the
@@ -272,6 +288,7 @@ export async function sendOutreachAction(rawInput: unknown): Promise<SendOutreac
       .eq('entity_type', 'company')
       .eq('entity_id', clientId)
       .eq('kind', filterKind)
+      .eq('organization_id', profile.organization_id)
       .order('occurred_at', { ascending: false })
       .limit(1)
       .maybeSingle()
@@ -291,30 +308,24 @@ export async function sendOutreachAction(rawInput: unknown): Promise<SendOutreac
             sent_to: contact.email,
           },
         })
+        // Defence-in-depth: scope the service-role write to the caller's org
+        // (resolved up-front) so a forged id can't cross tenants (M-6a).
         .eq('id', existing.id)
+        .eq('organization_id', profile.organization_id)
     } else {
       // No prior draft row — create a fresh email activity so the timeline
       // reflects the send. This branch only triggers if the recruiter sent
-      // before the draft row landed (unlikely but defensive).
-      const {
-        data: { user: u },
-      } = await supabase.auth.getUser()
-      const { data: profile } = await supabase
-        .from('users')
-        .select('organization_id')
-        .eq('id', u?.id ?? '')
-        .maybeSingle()
-      if (profile) {
-        await service.from('activities').insert({
-          organization_id: profile.organization_id,
-          kind: 'email',
-          entity_type: 'company',
-          entity_id: clientId,
-          body: subject,
-          actor_user_id: u?.id ?? null,
-          metadata: { subject, body_html, sent_at: new Date().toISOString(), sent_to: contact.email },
-        })
-      }
+      // before the draft row landed (unlikely but defensive). Reuse the org +
+      // user already resolved above rather than re-fetching.
+      await service.from('activities').insert({
+        organization_id: profile.organization_id,
+        kind: 'email',
+        entity_type: 'company',
+        entity_id: clientId,
+        body: subject,
+        actor_user_id: user.id,
+        metadata: { subject, body_html, sent_at: new Date().toISOString(), sent_to: contact.email },
+      })
     }
   } catch (err) {
     const name = err instanceof Error ? err.name : 'UnknownError'

@@ -57,6 +57,10 @@ export async function addToShortlistAction(
     job_id: parsed.data.jobId,
     candidate_id: parsed.data.candidateId,
     application_type: 'shortlist' as Enums<'application_type'>,
+    // Attribute the shortlisting to the recruiter who added it so buyer-value
+    // recruiter rollups (coalesce(owner_user_id, created_by)) credit them
+    // explicitly (M-6b).
+    owner_user_id: userData.user.id,
   } as unknown as TablesInsert<'applications'>
 
   const { data, error } = await supabase
@@ -93,8 +97,9 @@ export async function addToShortlistAction(
 // ---------------------------------------------------------------------------
 // Remove from shortlist (delete row) — the recruiter may decide a candidate
 // shouldn't actually be on the shortlist. NOT the same as promoting (see
-// candidates/[id]/shortlist-actions.ts). Hard delete because shortlist rows
-// are working-set entries with no historical interest.
+// candidates/[id]/shortlist-actions.ts). Hard delete because the shortlist row
+// itself is a working-set entry with no historical value — but the removal is
+// recorded to the candidate timeline so the decision stays auditable (M-6c).
 // ---------------------------------------------------------------------------
 
 const removeFromShortlistSchema = z.object({
@@ -125,7 +130,7 @@ export async function removeFromShortlistAction(
   // the caller's org.
   const { data: row, error: readErr } = await supabase
     .from('applications')
-    .select('id, application_type')
+    .select('id, application_type, job_id, candidate_id')
     .eq('id', parsed.data.applicationId)
     .maybeSingle()
   if (readErr || !row) {
@@ -146,7 +151,32 @@ export async function removeFromShortlistAction(
     return { ok: false, error: 'Could not remove from shortlist.' }
   }
 
+  // Audit-ready by default (M-6c): the row is gone, but log the removal to the
+  // candidate timeline so the recruiter's decision stays traceable. The
+  // _set_org trigger fills organization_id from the session. Best-effort — the
+  // removal already committed, so a failed audit insert must not fail the call.
+  const audit = {
+    kind: 'note',
+    body: 'Removed from shortlist',
+    actor_user_id: userData.user.id,
+    entity_type: 'candidate',
+    entity_id: row.candidate_id,
+    metadata: {
+      action: 'remove_from_shortlist',
+      job_id: row.job_id,
+      candidate_id: row.candidate_id,
+      removed_application_id: parsed.data.applicationId,
+    },
+  } as unknown as TablesInsert<'activities'>
+  const { error: auditErr } = await supabase.from('activities').insert(audit)
+  if (auditErr) {
+    Sentry.captureException(auditErr, {
+      tags: { layer: 'action', helper: 'removeFromShortlistAction', step: 'audit' },
+    })
+  }
+
   revalidatePath(`/jobs/${parsed.data.jobId}`)
   revalidatePath(`/jobs/${parsed.data.jobId}/shortlist`)
+  revalidatePath(`/candidates/${row.candidate_id}`)
   return { ok: true }
 }
