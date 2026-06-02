@@ -104,9 +104,14 @@ None currently. Tasks 3–7 can proceed in order.
 
 ## Session Continuity
 
-**Resume prompt:** Continue Phase 3 UAT. Read .planning/phases/03-linkedin-capture-spec-workflow-shortlists/03-NEXT-SESSION.md first — top priority is G6 (LinkedIn DOM selector update for the chrome extension). After that, walk through tests 1, 4-15 in 03-UAT.md against the live preview.
+**Status (2026-06-02 EOD):** v1.0 is **LIVE** at https://altus-recruitment.vercel.app. Launch blockers B1/B2/B3 done + verified. All M-tier fixes (M-3/4/5/6/8) shipped, deployed, and **verified live via an autonomous Playwright + Gmail browser smoke** (see [[autonomous-smoke-playwright-gmail]] memory): M-8 create, H-1 PII strip, M-3 Unattributed bucket, M-5 audit, M-4 Team UI, M-6b shortlist add, M-6c remove-audit-note, Tests 1/14/15, and a clean 15-page render smoke (0 console/page errors). **No bugs found.**
 
-**Next action:** Run `/gsd:plan-phase 1` to generate the plan for Phase 1 Tasks 3–7.
+**Open for tomorrow:**
+1. **New domain** — buy it, then wire to Vercel (project `altus-recruitment`, ids in [[vercel-project-ids]]) + update `NEXT_PUBLIC_SITE_URL` (Vercel Prod+Preview) + Supabase Auth Site URL + Redirect URLs **together**, redeploy, verify.
+2. **Delete the smoke test job** `"UAT smoke — safe to delete…"` (id `549a5feb-1638-4ebd-9577-fda044efab45`) in org AJ. (Also harmless: a "Removed from shortlist" note on Dave Bassett + 1 H-1 feedback row — leave or clean.)
+3. **Residual 03-UAT** (need artifacts I can't supply): Tests 2/3 (LinkedIn extension), 4/5 (`.mp3` spec audio), 12 (Outlook OAuth+send). Tests 6/7/11/13 render clean — quick click-through.
+
+**Resume:** drive whatever's automatable via the Playwright+Gmail smoke path (alasdairj8@gmail.com / org AJ).
 
 ---
 
