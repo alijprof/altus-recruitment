@@ -12,17 +12,30 @@
 
 Phases 1–3 are **genuinely implemented end-to-end** — all 15 success criteria verified against real source, not just claimed. The product is feature-complete enough to onboard the anchor agency. What stands between here and "live" is **email/auth deliverability config + a PII fix + unrun UAT** — not missing features. Building Phase 4 now would gold-plate an un-launched product.
 
-**Go-live blockers: 3** (all human dashboard/config). The HIGH PII bug (H-1) is now **fixed + verified** this session.
+**Go-live blockers: 0 — ALL CLEARED & VERIFIED LIVE 2026-06-02.** B1 (custom SMTP), B2 (Vercel env), B3 (auth templates + Site URL) are all done; magic-link sign-in delivers branded from `noreply@altusmove.com`, the M-tier code fixes are all live-verified, and H-1 (PII) is fixed + DB-corroborated. The anchor agency can onboard. What remains is the **final UAT click-through** (not a blocker).
 
 ---
 
-## 🔴 The 3 launch blockers (HUMAN — only you can do these)
+## ✅ The 3 launch blockers — ALL CLEARED & VERIFIED 2026-06-02
 
-| # | Blocker | Where | Why it blocks launch |
-|---|---------|-------|----------------------|
-| **B1** | **Wire Supabase Auth → Resend custom SMTP + raise email rate limit** | Supabase Dashboard → Auth → SMTP + Rate Limits | Free-tier built-in SMTP throttles to **~4 emails/hour** (already hit during UAT). Magic-link sign-in + invites silently die past that during real onboarding. The single biggest blocker. SMTP: host `smtp.resend.com`, port `587`, user `resend`, password = a Resend API key, sender `noreply@altusmove.com`. |
-| **B2** | **Set env vars in Vercel** (Production + Preview) | Vercel → Settings → Env Vars | Without these, branded email leaves from `onboarding@resend.dev` and invite/magic links point at the wrong origin. (`RESEND_FROM` currently defaults to `onboarding@resend.dev` in `src/lib/email/resend.ts:16` when unset.) |
-| **B3** | **Paste 5 branded Auth email templates + set Supabase Site URL** | Supabase Dashboard → Auth → Email Templates + URL Config | Shipped by quick task `260528-wdz` (HTML + subject lines in its SUMMARY). Otherwise auth emails are unbranded and links may resolve to the wrong origin. |
+| # | Blocker | Status |
+|---|---------|--------|
+| **B1** | Supabase Auth → Resend custom SMTP + raised email rate limit | ✅ **DONE + VERIFIED** — magic-link sign-in email delivers, branded, from `noreply@altusmove.com`. User-confirmed live. The single biggest blocker is gone. |
+| **B2** | Vercel env vars (Prod + Preview): `RESEND_FROM`, `NEXT_PUBLIC_SITE_URL`, `RESEND_FEEDBACK_RECIPIENT` | ✅ **DONE + VERIFIED** — feedback email delivered to the configured recipient from the branded sender; redeploy `fba2125` applied them. |
+| **B3** | 5 branded Auth email templates + Supabase Site URL | ✅ **DONE + VERIFIED** — the magic-link email rendered branded with the correct origin. |
+
+### Live-verification scorecard (2026-06-02)
+
+| Item | How verified |
+|------|--------------|
+| M-1 security headers + `x-powered-by` removed | HTTP probe on `/sign-in` |
+| M-8 `/jobs/new` route + create-a-job flow | HTTP probe (gated) + user created a job live |
+| M-3 buyer-value RPC fixes (LEFT JOIN/Unattributed, negative-duration filter) | SQL against live DB (`pg_get_functiondef`) |
+| M-5 `accept_invitation` audit + `record_audit_explicit` | SQL against live DB |
+| H-1 feedback `page_url` PII | code+deploy + DB (`public.feedback` rows all query-string-free) |
+| B1 magic-link delivery (custom SMTP) | user-confirmed branded email from correct sender |
+| B2 app Resend path | feedback email delivered to recipient |
+| B3 branded auth template | user-confirmed magic-link render |
 
 ---
 

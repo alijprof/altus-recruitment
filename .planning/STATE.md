@@ -3,7 +3,7 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: launch-readiness
-last_updated: "2026-05-30T00:00:00.000Z"
+last_updated: "2026-06-02T00:00:00.000Z"
 progress:
   total_phases: 5
   completed_phases: 3
@@ -23,7 +23,7 @@ progress:
 
 **Core value:** A recruiter can find the right candidate for a job in seconds using natural language — backed by AI parsing of every CV, semantic search across the database, and Sonnet-generated match explanations.
 
-**Current focus:** v1.0 launch-readiness — Phases 1–3 are complete and verified end-to-end in code (2026-05-30 audit). The work now is closing the launch blockers (auth-email SMTP, Vercel env vars, Supabase dashboard config) and clearing UAT so the anchor agency can go live. NOT new Phase 4 feature work. See [LAUNCH-READINESS.md](LAUNCH-READINESS.md) for the sequenced plan.
+**Current focus:** v1.0 launch — **all 3 launch blockers (B1 custom SMTP, B2 Vercel env, B3 auth templates) cleared & verified LIVE on 2026-06-02**, plus all M-tier hardening (M-3/4/5/6/8) shipped and verified (HTTP probes + live DB SQL + user click-through). Magic-link sign-in delivers branded from `noreply@altusmove.com`, `/jobs/new` creates jobs, and the buyer-value/audit migrations are live. The anchor agency can now onboard. Remaining = the **final UAT click-through** (03-UAT Tests 2 & 12 + the ~22 residual items from the 2026-05-24 run) — NOT new Phase 4 feature work. See [LAUNCH-READINESS.md](LAUNCH-READINESS.md).
 
 **Milestone:** Get anchor customer using the app internally, then demo Phase 2 AI capabilities.
 
@@ -35,7 +35,7 @@ progress:
 **Phase 4 (Voice, Marketing & Reporting): NOT STARTED** — but REPORT-02 (buyer-value dashboards) already shipped via quick task 260524-cwd, and REMIND-01 (stale-candidate / dormant-client reminders) is partially shipped via dashboard widgets. REPORT-01 (NL→SQL), VOICE-01/02, MARKET-01/02/03 are genuinely unbuilt.
 **Phase 5 (SaaS Shell): NOT STARTED.**
 
-**Track:** v1.0 launch-readiness — get the anchor agency live before any new phase work. 3 launch blockers remain, all human dashboard/config tasks (see LAUNCH-READINESS.md).
+**Track:** v1.0 launch — anchor agency can go live. **0 launch blockers remain (all cleared & verified 2026-06-02).** Remaining is the final UAT click-through (see LAUNCH-READINESS.md).
 
 ```
 Overall:  [============>        ] 3 of 5 phases complete (60%)
