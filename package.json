@@ -16,7 +16,10 @@
     "dev:all": "concurrently -n next,inngest 'pnpm dev' 'pnpm inngest:dev'",
     "test": "vitest",
     "test:e2e": "playwright test",
-    "test:e2e:reset": "pnpm exec supabase db reset && pnpm exec supabase db seed"
+    "test:e2e:reset": "pnpm exec supabase db reset && pnpm exec supabase db seed",
+    "smoke": "playwright test --config playwright.smoke.config.ts",
+    "smoke:headed": "playwright test --config playwright.smoke.config.ts --headed",
+    "smoke:chrome": "SMOKE_CHROME=1 playwright test --config playwright.smoke.config.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "~0.96.0",
