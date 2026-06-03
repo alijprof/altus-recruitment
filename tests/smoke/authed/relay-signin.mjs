@@ -23,7 +23,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node
 
 import { chromium } from '@playwright/test'
 
-const BASE = process.env.SMOKE_BASE_URL ?? 'https://altus-recruitment.vercel.app'
+const BASE = process.env.SMOKE_BASE_URL ?? 'https://altusrecruit.com'
 const EMAIL = process.env.SMOKE_AUTH_EMAIL
 const TIMEOUT_MS = Number(process.env.RELAY_TIMEOUT_MS ?? 300_000)
 

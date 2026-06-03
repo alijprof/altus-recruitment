@@ -46,7 +46,7 @@ pnpm smoke:headed                               # watch it in a browser
 pnpm smoke:chrome                               # drive the real installed Chrome (channel: chrome)
 ```
 
-Default target: `https://altus-recruitment.vercel.app`.
+Default target: `https://altusrecruit.com`.
 
 ---
 

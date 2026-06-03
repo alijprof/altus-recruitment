@@ -23,7 +23,7 @@ import {
   type ScrapedProfilePayload,
 } from '../shared/scraped-profile-schema'
 
-const DEFAULT_ALTUS_ORIGIN = 'https://altus-recruitment.vercel.app'
+const DEFAULT_ALTUS_ORIGIN = 'https://altusrecruit.com'
 
 const RATE_LIMIT_MS = 5_000
 const lastFiredAt = new Map<number, number>()

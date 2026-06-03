@@ -6,6 +6,8 @@
   "permissions": ["activeTab", "scripting", "storage"],
   "host_permissions": [
     "https://www.linkedin.com/*",
+    "https://altusrecruit.com/*",
+    "https://www.altusrecruit.com/*",
     "https://altus-recruitment.vercel.app/*",
     "http://localhost:3000/*"
   ],

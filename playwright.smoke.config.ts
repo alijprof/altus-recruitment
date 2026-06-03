@@ -13,7 +13,7 @@ import { defineConfig } from '@playwright/test'
 //   SMOKE_BASE_URL=https://<preview-url> pnpm smoke
 //   SMOKE_CHROME=1 pnpm smoke                     # drive the real installed Chrome
 //
-const BASE_URL = process.env.SMOKE_BASE_URL ?? 'https://altus-recruitment.vercel.app'
+const BASE_URL = process.env.SMOKE_BASE_URL ?? 'https://altusrecruit.com'
 const useChrome = process.env.SMOKE_CHROME === '1'
 
 export default defineConfig({

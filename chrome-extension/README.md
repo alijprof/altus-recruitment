@@ -45,7 +45,7 @@ Paste the base64 string into `manifest.json` → `"key"`. Commit BOTH the public
 
 ## Configure the Altus origin
 
-By default the extension targets the production origin (`https://altus-recruitment.vercel.app`). For local development:
+By default the extension targets the production origin (`https://altusrecruit.com`; `https://altus-recruitment.vercel.app` remains a working alias). For local development:
 
 1. Open the extension popup.
 2. Right-click → **Inspect** → **Service Worker** console.

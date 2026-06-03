@@ -16,7 +16,7 @@ on:
       base_url:
         description: URL to smoke (defaults to live production)
         required: false
-        default: https://altus-recruitment.vercel.app
+        default: https://altusrecruit.com
 
 concurrency:
   group: smoke-${{ github.event.deployment_status.environment_url || github.ref }}
@@ -47,7 +47,7 @@ jobs:
           DEPLOY_ENV: ${{ github.event.deployment_status.environment }}
           INPUT_URL: ${{ github.event.inputs.base_url }}
         run: |
-          PROD_URL="https://altus-recruitment.vercel.app"
+          PROD_URL="https://altusrecruit.com"
           URL=""
           if [ "$EVENT" = "deployment_status" ]; then
             case "$(printf '%s' "$DEPLOY_ENV" | tr '[:upper:]' '[:lower:]')" in

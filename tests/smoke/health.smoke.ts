@@ -9,7 +9,7 @@ import { ALL_GET_ROUTES } from './routes'
 // Security headers (HSTS in particular) only apply to https deployments. When
 // the suite is pointed at a local http dev server we skip that assertion rather
 // than report a false failure.
-const TARGET = process.env.SMOKE_BASE_URL ?? 'https://altus-recruitment.vercel.app'
+const TARGET = process.env.SMOKE_BASE_URL ?? 'https://altusrecruit.com'
 const IS_HTTPS = TARGET.startsWith('https://')
 
 test.describe('@smoke health', () => {
