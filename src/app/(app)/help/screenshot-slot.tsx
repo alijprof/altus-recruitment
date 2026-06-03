@@ -12,7 +12,11 @@ interface ScreenshotSlotProps {
 export function ScreenshotSlot({ name, caption }: ScreenshotSlotProps) {
   return (
     <figure className="mt-4 space-y-2">
-      <div className="flex aspect-video min-h-40 flex-col items-center justify-center gap-2 rounded-lg border border-dashed bg-muted/40">
+      <div
+        role="img"
+        aria-label={`Screenshot placeholder: ${caption}`}
+        className="flex aspect-video min-h-40 flex-col items-center justify-center gap-2 rounded-lg border border-dashed bg-muted/40"
+      >
         <ImageOff className="size-6 text-muted-foreground" aria-hidden="true" />
         <span className="text-muted-foreground text-xs">Screenshot coming</span>
         <code className="text-muted-foreground/70 rounded bg-muted px-1.5 py-0.5 font-mono text-[10px]">

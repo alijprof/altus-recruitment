@@ -16,7 +16,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 
 import { ScreenshotSlot } from './screenshot-slot'
 
-export default async function HelpPage() {
+export default function HelpPage() {
   return (
     <div className="mx-auto w-full max-w-3xl space-y-8">
       <header className="space-y-1">
