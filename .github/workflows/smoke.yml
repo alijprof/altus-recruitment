@@ -1,0 +1,92 @@
+name: Production smoke
+
+# Runs the non-destructive Layer A smoke suite (pnpm smoke) against a deployed
+# URL. Three triggers:
+#   - deployment_status: every successful Vercel deploy (preview + prod) is
+#     smoked right after it goes live, using that deployment's URL.
+#   - schedule: a daily run against live production catches drift / outages
+#     that happen between deploys.
+#   - workflow_dispatch: smoke any URL on demand.
+on:
+  deployment_status:
+  schedule:
+    - cron: '17 7 * * *' # daily ~07:17 UTC
+  workflow_dispatch:
+    inputs:
+      base_url:
+        description: URL to smoke (defaults to live production)
+        required: false
+        default: https://altus-recruitment.vercel.app
+
+concurrency:
+  group: smoke-${{ github.event.deployment_status.environment_url || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  smoke:
+    # On deploy events, only run for successful deployments — ignore
+    # pending/in-progress/error states.
+    if: ${{ github.event_name != 'deployment_status' || github.event.deployment_status.state == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      # Resolve the target URL from whichever event fired. Values are passed via
+      # env (not interpolated into the script) to avoid expression injection.
+      - name: Resolve smoke target
+        id: target
+        env:
+          EVENT: ${{ github.event_name }}
+          DEPLOY_URL: ${{ github.event.deployment_status.environment_url }}
+          INPUT_URL: ${{ github.event.inputs.base_url }}
+        run: |
+          if [ "$EVENT" = "deployment_status" ]; then
+            URL="$DEPLOY_URL"
+          elif [ "$EVENT" = "workflow_dispatch" ]; then
+            URL="$INPUT_URL"
+          else
+            URL="https://altus-recruitment.vercel.app"
+          fi
+          if [ -z "$URL" ]; then
+            echo "No deployment URL on this event; nothing to smoke."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "Smoking: $URL"
+            echo "url=$URL" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Setup pnpm
+        if: steps.target.outputs.skip != 'true'
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11
+
+      - name: Setup Node
+        if: steps.target.outputs.skip != 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        if: steps.target.outputs.skip != 'true'
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Playwright Chromium
+        if: steps.target.outputs.skip != 'true'
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Run production smoke
+        if: steps.target.outputs.skip != 'true'
+        env:
+          SMOKE_BASE_URL: ${{ steps.target.outputs.url }}
+        run: pnpm smoke
+
+      - name: Upload report on failure
+        if: ${{ failure() && steps.target.outputs.skip != 'true' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: smoke-report
+          path: playwright-report/smoke
+          retention-days: 7
