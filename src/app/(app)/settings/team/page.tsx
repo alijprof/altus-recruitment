@@ -8,9 +8,7 @@ import { getProfile } from '@/lib/db/profiles'
 import { setRequestScope } from '@/lib/observability/sentry'
 import { createClient } from '@/lib/supabase/server'
 
-import { InviteMemberDialog } from './invite-member-dialog'
-import { ResendInviteButton } from './resend-invite-button'
-import { RevokeInviteButton } from './revoke-invite-button'
+import { TeamInvites, type InviteView } from './team-invites'
 
 // Quick task 260524-bpy: Owner-facing Team settings page. Owner-only — non-owners
 // hitting this route are redirected to /settings (mirrors the existing inline
@@ -70,19 +68,27 @@ export default async function TeamSettingsPage() {
   const pending = (invitesResult.data ?? []) as PendingInvite[]
 
   // Inviter-name lookup via the members array we already fetched (saves a
-  // round-trip; same-org guarantee from RLS).
+  // round-trip; same-org guarantee from RLS). Resolve the inviter label here so
+  // the client TeamInvites component stays presentational.
   const memberById = new Map(members.map((m) => [m.id, m]))
+  const pendingViews: InviteView[] = pending.map((row) => {
+    const inviter = memberById.get(row.invited_by)
+    return {
+      id: row.id,
+      email: row.email,
+      expires_at: row.expires_at,
+      created_at: row.created_at,
+      inviterLabel: inviter?.full_name?.trim() || inviter?.email || 'a teammate',
+    }
+  })
 
   return (
     <div className="mx-auto w-full max-w-2xl space-y-8">
-      <header className="flex flex-wrap items-center justify-between gap-3">
-        <div className="space-y-1">
-          <h1 className="text-2xl font-semibold tracking-tight">Team</h1>
-          <p className="text-muted-foreground text-sm font-normal">
-            Invite teammates and manage pending invitations.
-          </p>
-        </div>
-        <InviteMemberDialog />
+      <header className="space-y-1">
+        <h1 className="text-2xl font-semibold tracking-tight">Team</h1>
+        <p className="text-muted-foreground text-sm font-normal">
+          Invite teammates and manage pending invitations.
+        </p>
       </header>
 
       <Card>
@@ -123,46 +129,7 @@ export default async function TeamSettingsPage() {
 
       <Separator />
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base font-semibold">Pending invitations</CardTitle>
-          <CardDescription>
-            Invitations awaiting acceptance. Links expire after 7 days.
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          {pending.length === 0 ? (
-            <p className="text-muted-foreground text-sm font-normal">No pending invitations.</p>
-          ) : (
-            <ul className="divide-y rounded-md border">
-              {pending.map((row) => {
-                const inviter = memberById.get(row.invited_by)
-                const inviterLabel = inviter?.full_name?.trim() || inviter?.email || 'a teammate'
-                return (
-                  <li
-                    key={row.id}
-                    className="flex flex-wrap items-center justify-between gap-3 px-4 py-3"
-                  >
-                    <div className="min-w-0 flex-1">
-                      <p className="truncate text-sm font-semibold">{row.email}</p>
-                      <p className="text-muted-foreground truncate text-xs font-normal">
-                        Invited by {inviterLabel} · {formatTimeAgo(row.created_at)}
-                      </p>
-                      <p className="text-muted-foreground text-xs font-normal">
-                        Expires {formatDateLong(row.expires_at)}
-                      </p>
-                    </div>
-                    <div className="flex flex-wrap items-center gap-2">
-                      <ResendInviteButton inviteId={row.id} />
-                      <RevokeInviteButton inviteId={row.id} email={row.email} />
-                    </div>
-                  </li>
-                )
-              })}
-            </ul>
-          )}
-        </CardContent>
-      </Card>
+      <TeamInvites initialInvites={pendingViews} />
     </div>
   )
 }
