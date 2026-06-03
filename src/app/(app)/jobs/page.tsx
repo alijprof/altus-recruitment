@@ -70,8 +70,8 @@ export default async function JobsPage({
 
       {isEmpty ? (
         <EmptyState
-          heading="Add your first job"
-          body="Create a job from scratch and assign it to a client — or record a spec call and we'll draft the JD for you."
+          heading="Jobs drive your pipeline"
+          body="Create a job and assign it to a client — candidates are matched against it with AI-generated explanations. Or record a spec call and we'll draft the JD for you."
           cta={{ href: '/jobs/new', label: 'Create a job' }}
           secondaryCta={{ href: '/spec/new', label: 'Record a spec call' }}
         />

@@ -100,6 +100,45 @@ export default async function SettingsPage() {
         </Link>
       ) : null}
 
+      {/* Owner-only nudge to invite colleagues — active call-to-action
+          distinct from the passive Team management card above. */}
+      {isOwner ? (
+        <Link href="/settings/team" className="block">
+          <Card className="hover:bg-accent/40 transition-colors">
+            <CardHeader>
+              <div className="flex items-center justify-between">
+                <div className="space-y-1">
+                  <CardTitle className="text-base font-semibold">Invite your team</CardTitle>
+                  <CardDescription>
+                    Bring your colleagues into Altus — send them an invite link so they can start
+                    adding candidates and working the pipeline straight away.
+                  </CardDescription>
+                </div>
+                <ChevronRight className="text-muted-foreground size-5" aria-hidden="true" />
+              </div>
+            </CardHeader>
+          </Card>
+        </Link>
+      ) : null}
+
+      <Separator />
+
+      {/* Role explainer — visible to all users (owners and recruiters).
+          Plain-English description so team members know what each role can do
+          without needing to read documentation. */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base font-semibold">Roles</CardTitle>
+          <CardDescription>
+            <strong className="text-foreground font-semibold">Owners</strong> manage organisation
+            settings and can invite or remove teammates.{' '}
+            <strong className="text-foreground font-semibold">Recruiters</strong> add candidates,
+            clients, and jobs, and work the pipeline — but can&apos;t change org settings or manage
+            the team.
+          </CardDescription>
+        </CardHeader>
+      </Card>
+
       <Separator />
 
       {/* Plan 3 Task 3.3 — public apply form discoverability + owner toggle. */}

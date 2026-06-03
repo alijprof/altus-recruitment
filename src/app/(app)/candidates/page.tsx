@@ -90,9 +90,9 @@ export default async function CandidatesPage({
 
       {isEmptyDatabase ? (
         <EmptyState
-          heading="Add your first candidate"
-          body="Candidates are the heart of the CRM. Add one manually first — you can upload a CV to auto-extract details once the candidate exists."
-          cta={{ href: '/candidates/new', label: 'Add candidate' }}
+          heading="Your talent pool starts here"
+          body="Add a candidate, then upload their CV — Altus auto-extracts skills, location, and experience so they're instantly searchable and ready to match against jobs."
+          cta={{ href: '/candidates/new', label: 'Add your first candidate' }}
         />
       ) : (
         <>

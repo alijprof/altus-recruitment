@@ -77,9 +77,9 @@ export default async function ClientsPage({
           <h1 className="text-2xl font-semibold tracking-tight">Clients</h1>
         </header>
         <EmptyState
-          heading="Add your first client"
-          body="Clients are the companies you place candidates into. Add one to start logging contacts, jobs, and revenue against them."
-          cta={{ href: '/clients/new', label: 'Add client' }}
+          heading="Clients are the companies you place into"
+          body="Add a client to log their contacts, post jobs against them, and track revenue from every placement you make."
+          cta={{ href: '/clients/new', label: 'Add your first client' }}
         />
       </div>
     )
