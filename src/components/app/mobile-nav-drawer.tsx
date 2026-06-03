@@ -48,6 +48,7 @@ const SECONDARY_NAV = [
   { href: '/spec', label: 'Spec calls' },
   { href: '/reports', label: 'Reports' },
   { href: '/settings', label: 'Settings' },
+  { href: '/help', label: 'Help' },
 ] as const
 
 interface NavItemProps {

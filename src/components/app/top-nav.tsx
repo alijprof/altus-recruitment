@@ -14,6 +14,7 @@ const NAV_ITEMS = [
   { href: '/pipeline', label: 'Pipeline' },
   { href: '/reports', label: 'Reports' },
   { href: '/settings', label: 'Settings' },
+  { href: '/help', label: 'Help' },
 ] as const
 
 // Altus monogram (matches the standalone SVG asset). Drawn with currentColor
