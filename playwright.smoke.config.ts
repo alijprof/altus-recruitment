@@ -19,6 +19,10 @@ const useChrome = process.env.SMOKE_CHROME === '1'
 export default defineConfig({
   testDir: './tests/smoke',
   testMatch: /.*\.smoke\.ts/,
+  // The authenticated suite (tests/smoke/authed) needs a stored session and has
+  // its own config (playwright.smoke-auth.config.ts). Keep it out of the
+  // anonymous Layer A run / CI, which has no session.
+  testIgnore: /authed\//,
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
   // Tolerate a single cold-start / transient network blip before failing.
