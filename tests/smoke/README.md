@@ -8,6 +8,7 @@ pinned to a throwaway database.
 | Layer | Command | Target | Auth | Writes data? | Needs Docker? |
 |-------|---------|--------|------|--------------|---------------|
 | **A — Production health smoke** | `pnpm smoke` | deployed URL (default: live prod) | none (anonymous) | **No** | No |
+| **A2 — Authenticated read-only smoke** | `pnpm smoke:auth` | deployed URL (default: live prod) | real user (magic-link relay) | **No** (read-only) | No |
 | **B — Local golden path** | `pnpm test:e2e` | local `pnpm dev` | seed owner (password) | **Yes** | Yes |
 
 ---
@@ -46,6 +47,38 @@ pnpm smoke:chrome                               # drive the real installed Chrom
 ```
 
 Default target: `https://altus-recruitment.vercel.app`.
+
+---
+
+## Layer A2 — authenticated read-only smoke (`pnpm smoke:auth`)
+
+Signs in as a **real user** and confirms the authenticated shell renders for
+every main section (dashboard, candidates/jobs/clients lists, pipeline board,
+search, reports, settings). Still **non-destructive**: it never creates or edits
+data, and deliberately avoids candidate *detail* pages (those write `audit_log`
+entries) — so a run leaves no meaningful trace in the customer's audit trail.
+
+Production sign-in is magic-link only (the password fallback is off in prod), so
+a session is captured once via a **magic-link relay**. Supabase magic-link is
+PKCE, so the link must be opened in the same browser context that requested it —
+`relay-signin.mjs` keeps that one context alive across the whole flow.
+
+```bash
+# 1. Request the link and wait (keeps the PKCE context open):
+SMOKE_AUTH_EMAIL=you@example.com node tests/smoke/authed/relay-signin.mjs
+
+# 2. From your inbox, copy the sign-in URL and hand it to the relay:
+echo 'https://…sign-in-link…' > tests/smoke/.auth/magic-link.txt
+#    (an agent with inbox access — or the Claude-in-Chrome extension — can do
+#     this step automatically; that is the "autonomous smoke" path)
+
+# 3. Run the authenticated smoke against the captured session:
+pnpm smoke:auth
+```
+
+The captured session lives at `tests/smoke/.auth/prod.json` and is **gitignored**
+(it holds live tokens — never commit it). Supabase refresh tokens keep it usable
+for repeat runs until they expire; re-run the relay to refresh.
 
 ---
 
