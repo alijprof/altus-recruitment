@@ -451,6 +451,61 @@ export async function getFollowUpCandidates(
   return { ok: true, data: sorted }
 }
 
+// -----------------------------------------------------------------------------
+// 5. Onboarding counts — checklist step completion
+// -----------------------------------------------------------------------------
+//
+// Four parallel head-count queries to drive the first-run welcome checklist.
+// RLS is the tenancy authority: no organization_id filter is appended here
+// (mirrors the comment at the top of this file). The client-scoped Supabase
+// JWT lets Postgres apply per-table RLS policies automatically.
+
+export type OnboardingCounts = {
+  candidates: number
+  clients: number
+  jobs: number
+  teamMembers: number
+}
+
+export async function getOnboardingCounts(
+  supabase: SupabaseClient<Database>,
+): Promise<OnboardingCounts> {
+  const [candidates, clients, jobs, teamMembers] = await Promise.all([
+    supabase.from('candidates').select('id', { count: 'exact', head: true }),
+    supabase.from('companies').select('id', { count: 'exact', head: true }),
+    supabase.from('jobs').select('id', { count: 'exact', head: true }),
+    supabase.from('users').select('id', { count: 'exact', head: true }),
+  ])
+
+  if (candidates.error) {
+    Sentry.captureException(candidates.error, {
+      tags: { layer: 'db', helper: 'getOnboardingCounts:candidates' },
+    })
+  }
+  if (clients.error) {
+    Sentry.captureException(clients.error, {
+      tags: { layer: 'db', helper: 'getOnboardingCounts:clients' },
+    })
+  }
+  if (jobs.error) {
+    Sentry.captureException(jobs.error, {
+      tags: { layer: 'db', helper: 'getOnboardingCounts:jobs' },
+    })
+  }
+  if (teamMembers.error) {
+    Sentry.captureException(teamMembers.error, {
+      tags: { layer: 'db', helper: 'getOnboardingCounts:teamMembers' },
+    })
+  }
+
+  return {
+    candidates: candidates.count ?? 0,
+    clients: clients.count ?? 0,
+    jobs: jobs.count ?? 0,
+    teamMembers: teamMembers.count ?? 0,
+  }
+}
+
 // re-export Json for callers that want to type metadata blobs without
 // re-importing from the generated types file.
 export type { Json }

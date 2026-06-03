@@ -3,6 +3,7 @@ import { MetricCard } from '@/components/app/metric-card'
 import {
   getDashboardMetrics,
   getFollowUpCandidates,
+  getOnboardingCounts,
   getRecentActivity,
   getStaleApplications,
 } from '@/lib/db/dashboard'
@@ -13,6 +14,7 @@ import { DormantClientsWidget } from './_dashboard/dormant-clients-widget'
 import { FollowUpWidget } from './_dashboard/follow-up-widget'
 import { RecentActivityFeed } from './_dashboard/recent-activity-feed'
 import { StaleApplicationsWidget } from './_dashboard/stale-applications-widget'
+import { WelcomeChecklist } from './_dashboard/welcome-checklist'
 
 // Plan 5 Task 5.1 — Dashboard. RSC fetches all four data sources in parallel
 // (each helper is a single round-trip / batched-IN set) and renders the
@@ -23,9 +25,10 @@ import { StaleApplicationsWidget } from './_dashboard/stale-applications-widget'
 export default async function DashboardPage() {
   const supabase = await createClient()
 
-  const [metrics, activityResult, staleResult, followUpResult, dormantResult] =
+  const [metrics, onboardingCounts, activityResult, staleResult, followUpResult, dormantResult] =
     await Promise.all([
       getDashboardMetrics(supabase),
+      getOnboardingCounts(supabase),
       getRecentActivity(supabase, 20),
       getStaleApplications(supabase, 20),
       getFollowUpCandidates(supabase, 10),
@@ -39,7 +42,7 @@ export default async function DashboardPage() {
       <div className="space-y-8">
         <EmptyState
           heading="Welcome to Altus"
-          body="Start with a candidate or a client — CV uploads, semantic search, and pipeline tracking all build from there."
+          body="Add candidates and jobs to drive the pipeline — Altus auto-parses CVs, runs AI match scoring across every candidate–job pair, and turns matches into placements."
           cta={{ href: '/candidates/new', label: 'Add your first candidate' }}
           secondaryCta={{ href: '/clients/new', label: 'Or add your first client' }}
         />
@@ -49,6 +52,13 @@ export default async function DashboardPage() {
 
   return (
     <div className="space-y-8">
+      <WelcomeChecklist
+        candidates={onboardingCounts.candidates}
+        clients={onboardingCounts.clients}
+        jobs={onboardingCounts.jobs}
+        teamMembers={onboardingCounts.teamMembers}
+      />
+
       <header className="space-y-1">
         <h1 className="text-2xl font-semibold tracking-tight">Dashboard</h1>
         <p className="text-muted-foreground text-sm font-normal">
