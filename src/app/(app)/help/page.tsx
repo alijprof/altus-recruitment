@@ -333,7 +333,7 @@ export default function HelpPage() {
               <span className="text-foreground font-medium">Public apply form</span> — each
               organisation gets a shareable URL (e.g.{' '}
               <code className="rounded bg-muted px-1 py-0.5 font-mono text-xs">
-                altusmove.com/apply/your-slug
+                altusrecruit.com/apply/your-slug
               </code>
               ) where candidates can submit their CV directly. Submissions are parsed by AI and land
               straight in your candidate database.
