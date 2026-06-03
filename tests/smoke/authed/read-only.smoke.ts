@@ -15,6 +15,7 @@ const SECTIONS: { path: string; label: string }[] = [
   { path: '/search', label: 'search' },
   { path: '/reports', label: 'reports' },
   { path: '/settings', label: 'settings' },
+  { path: '/help', label: 'help' },
 ]
 
 function trackPageErrors(page: Page): string[] {

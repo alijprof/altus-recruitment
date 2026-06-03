@@ -30,6 +30,7 @@ export const PROTECTED_ROUTES = [
   '/settings/team',
   '/settings/integrations',
   '/settings/usage',
+  '/help',
 ]
 
 // Routes reachable without authentication. These must render (2xx) for anyone.
