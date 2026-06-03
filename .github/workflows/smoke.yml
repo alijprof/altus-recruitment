@@ -34,22 +34,32 @@ jobs:
 
       # Resolve the target URL from whichever event fired. Values are passed via
       # env (not interpolated into the script) to avoid expression injection.
+      #
+      # NOTE: a deployment's per-deploy URL (environment_url) has Vercel
+      # Deployment Protection (anonymous -> 401), so we smoke the PUBLIC
+      # production alias instead — which a successful production deploy has just
+      # been promoted to. Preview/non-production deploys are auth-walled and are
+      # skipped (add a VERCEL_AUTOMATION_BYPASS_SECRET header to cover them).
       - name: Resolve smoke target
         id: target
         env:
           EVENT: ${{ github.event_name }}
-          DEPLOY_URL: ${{ github.event.deployment_status.environment_url }}
+          DEPLOY_ENV: ${{ github.event.deployment_status.environment }}
           INPUT_URL: ${{ github.event.inputs.base_url }}
         run: |
+          PROD_URL="https://altus-recruitment.vercel.app"
+          URL=""
           if [ "$EVENT" = "deployment_status" ]; then
-            URL="$DEPLOY_URL"
+            case "$(printf '%s' "$DEPLOY_ENV" | tr '[:upper:]' '[:lower:]')" in
+              *production*) URL="$PROD_URL" ;;
+              *) echo "Non-production deployment ($DEPLOY_ENV) — skipping anonymous smoke." ;;
+            esac
           elif [ "$EVENT" = "workflow_dispatch" ]; then
             URL="$INPUT_URL"
           else
-            URL="https://altus-recruitment.vercel.app"
+            URL="$PROD_URL"
           fi
           if [ -z "$URL" ]; then
-            echo "No deployment URL on this event; nothing to smoke."
             echo "skip=true" >> "$GITHUB_OUTPUT"
           else
             echo "Smoking: $URL"
