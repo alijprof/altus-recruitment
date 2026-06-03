@@ -77,31 +77,12 @@ export default async function SettingsPage() {
 
       <Separator />
 
-      {/* Owner-only entry to the Team page: invite (via the audited
-          org_invitations table), revoke, resend, and see who's joined. The
-          legacy inline invite form that used Supabase Auth admin-invite
-          (bypassing org_invitations) was removed in the launch-readiness
-          cleanup — /settings/team is now the single source of truth. */}
-      {isOwner ? (
-        <Link href="/settings/team" className="block">
-          <Card className="hover:bg-accent/40 transition-colors">
-            <CardHeader>
-              <div className="flex items-center justify-between">
-                <div className="space-y-1">
-                  <CardTitle className="text-base font-semibold">Team</CardTitle>
-                  <CardDescription>
-                    Invite teammates, revoke pending invitations, and see who&apos;s joined.
-                  </CardDescription>
-                </div>
-                <ChevronRight className="text-muted-foreground size-5" aria-hidden="true" />
-              </div>
-            </CardHeader>
-          </Card>
-        </Link>
-      ) : null}
-
-      {/* Owner-only nudge to invite colleagues — active call-to-action
-          distinct from the passive Team management card above. */}
+      {/* Owner-only entry to the Team page: invite colleagues (via the audited
+          org_invitations table), revoke/resend pending invites, and see who's
+          joined. The legacy inline invite form that used Supabase Auth
+          admin-invite (bypassing org_invitations) was removed in the
+          launch-readiness cleanup — /settings/team is the single source of
+          truth. (260603-gdz: merged the duplicate Team/Invite cards into one.) */}
       {isOwner ? (
         <Link href="/settings/team" className="block">
           <Card className="hover:bg-accent/40 transition-colors">
@@ -110,8 +91,8 @@ export default async function SettingsPage() {
                 <div className="space-y-1">
                   <CardTitle className="text-base font-semibold">Invite your team</CardTitle>
                   <CardDescription>
-                    Bring your colleagues into Altus — send them an invite link so they can start
-                    adding candidates and working the pipeline straight away.
+                    Bring colleagues into Altus so they can add candidates and work the pipeline.
+                    Invite, resend, or revoke invitations, and see who&apos;s joined.
                   </CardDescription>
                 </div>
                 <ChevronRight className="text-muted-foreground size-5" aria-hidden="true" />

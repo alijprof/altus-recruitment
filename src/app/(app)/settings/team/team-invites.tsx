@@ -84,6 +84,14 @@ export function TeamInvites({ initialInvites }: { initialInvites: InviteView[] }
   )
   const [, startTransition] = useTransition()
 
+  // Drop the optimistic "Sending…" ghost as soon as the real (revalidated) row
+  // for the same email appears. inviteMemberAction calls revalidatePath BEFORE
+  // it finishes sending the email, so without this the temp row (key
+  // `optimistic-<email>`) and the real row (key = real UUID) would both render
+  // for the duration of the email send. (WR-01)
+  const realEmails = new Set(optimistic.filter((i) => i.pending !== 'adding').map((i) => i.email))
+  const rows = optimistic.filter((i) => !(i.pending === 'adding' && realEmails.has(i.email)))
+
   function handleRevoke(id: string) {
     startTransition(async () => {
       addOptimistic({ type: 'remove', id })
@@ -122,11 +130,11 @@ export function TeamInvites({ initialInvites }: { initialInvites: InviteView[] }
         <InviteDialog addOptimistic={addOptimistic} startTransition={startTransition} />
       </CardHeader>
       <CardContent>
-        {optimistic.length === 0 ? (
+        {rows.length === 0 ? (
           <p className="text-muted-foreground text-sm font-normal">No pending invitations.</p>
         ) : (
           <ul className="divide-y rounded-md border">
-            {optimistic.map((row) => (
+            {rows.map((row) => (
               <li
                 key={row.id}
                 className="flex flex-wrap items-center justify-between gap-3 px-4 py-3"
