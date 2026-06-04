@@ -357,7 +357,10 @@ export async function createCandidate(
   // payload to exactly what we actually send.
   const payload = {
     full_name: input.full_name,
-    email: input.email || null,
+    // Lowercase + trim at the write boundary so dedup (getCandidateByEmailForOrg
+    // / findCandidateByEmail lowercase on read) compares apples to apples and
+    // mixed-case emails don't create duplicate candidates.
+    email: input.email ? input.email.toLowerCase().trim() || null : null,
     phone: input.phone || null,
     location: input.location || null,
     current_role_title: input.current_role_title || null,
@@ -451,8 +454,14 @@ export async function updateCandidate(
   id: string,
   patch: UpdateCandidateInput,
 ): Promise<DbResult<{ id: string }>> {
+  // Normalise email at the write boundary (lowercase + trim) so dedup, which
+  // lowercases on read, compares apples to apples. Empty after trim → null.
+  const normalised = { ...patch }
+  if (typeof normalised.email === 'string') {
+    normalised.email = normalised.email.toLowerCase().trim() || null
+  }
   // reason: last_contacted_at is added by 20260517215938; not yet in TablesUpdate type.
-  const updatePayload = patch as unknown as TablesUpdate<'candidates'>
+  const updatePayload = normalised as unknown as TablesUpdate<'candidates'>
   const { error } = await supabase
     .from('candidates')
     .update(updatePayload)

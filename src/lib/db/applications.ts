@@ -86,6 +86,11 @@ function shapeCard(row: JoinedApplicationRow, now: number): PipelineCardData {
  * Flat list of applications for a single candidate — used by the candidate
  * detail page's applications section. Includes terminal stages so the
  * recruiter sees the full history. Joined with jobs (title + client).
+ *
+ * Filters to `application_type = 'standard'`: shortlists and floats live in
+ * their own tabs (/jobs/[id]/shortlist, /candidates/[id]/floats, /floats)
+ * and MUST NOT show up here as phantom "Untitled job" cards with live
+ * Move/Reject/Place actions. Mirrors listApplicationsForJob's invariant.
  */
 export async function listApplicationsForCandidate(
   supabase: SupabaseClient<Database>,
@@ -95,6 +100,7 @@ export async function listApplicationsForCandidate(
     .from('applications')
     .select(APP_WITH_CANDIDATE_AND_JOB_SELECT)
     .eq('candidate_id', candidateId)
+    .eq('application_type', 'standard')
     .order('stage_changed_at', { ascending: false })
 
   if (error) {
