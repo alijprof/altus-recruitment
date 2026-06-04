@@ -132,12 +132,26 @@ Plans:
 
 **Success Criteria** (what must be TRUE when this phase completes):
 1. A new agency can sign up without any manual intervention — create an org, complete an onboarding tour, import a CSV of candidates, and be using the product within 30 minutes
-2. The new org is on a Stripe subscription; the billing portal lets them upgrade, downgrade, or cancel; the CRM enforces plan limits
+2. The new org is on a Stripe subscription (card-upfront 14-day trial via Checkout); the Stripe Customer Portal lets them upgrade, downgrade, or cancel; the CRM enforces per-seat plan limits + AI-usage caps (soft banner/email → hard cached-only/queue + overage)
 3. Each org can upload their logo and set brand colours which appear on their public careers/apply site
-4. Super-admin can impersonate any org, override plan limits, and review per-tenant AI usage costs from a support console
+4. Super-admin can review per-tenant AI usage costs + billing state and override plan limits / extend trials from a lean support console (impersonation + audit-log layer explicitly descoped to v2 per CONTEXT D-14)
 5. The public marketing site explains the product, links to documentation, and has a status page — ready to share with prospects
 
-**Plans:** TBD
+**Plans:** 6 plans
+
+Plans:
+- [ ] 05-00-hardening-PLAN.md — Stripe env isolation (all `.optional()`), PUBLIC_PATHS for new public routes, fail-closed Stripe client + PLANS constant (§5 caps), billing/super_admin migrations + push (foundation for all of Phase 5)
+- [ ] 05-01-billing-PLAN.md — Stripe Checkout (card+14-day trial) → idempotent webhook → subscriptions table → entitlement helper + seat enforcement + AI-usage soft/hard caps + overage + Customer Portal (BILL-01)
+- [ ] 05-02-branding-PLAN.md — owner-set logo + brand colours (hex-validated, XSS-safe) rendered on the public apply/careers site (BRAND-01)
+- [ ] 05-03-onboarding-PLAN.md — extended welcome checklist + synthetic sample-data seed + CSV candidate import (column-map, dedupe by lowercased email) (SAAS-01)
+- [ ] 05-04-marketing-PLAN.md — public `(marketing)` group (landing/pricing/features, Pro highlighted), in-app `/docs`, simple `/status` page (MARKETING-01)
+- [ ] 05-05-admin-PLAN.md — super-admin-gated `/admin` console: per-tenant AI-cost + billing dashboard + plan/trial overrides; the only (tightly-gated) cross-tenant read path (ADMIN-01)
+
+**Wave structure:**
+- Wave 0: 05-00 (hardening: env isolation + PUBLIC_PATHS + Stripe client/plans + migrations)
+- Wave 1 (parallel — zero file overlap): 05-01 (billing), 05-02 (branding), 05-03 (onboarding), 05-04 (marketing/docs/status)
+- Wave 2: 05-05 (admin console — needs 05-00 super_admin flag + 05-01 subscriptions/entitlement layer)
+
 **UI hint:** yes
 
 ---
@@ -150,9 +164,9 @@ Plans:
 | 2. Search, Match & Intake | 5/5 | Complete | 2026-05-19 |
 | 3. LinkedIn, Spec Workflow & Shortlists | 7/7 | Complete   | 2026-05-20 |
 | 4. Voice, Marketing & Reporting | 0/0 | Not started | - |
-| 5. SaaS Shell | 0/0 | Not started | - |
+| 5. SaaS Shell | 0/6 | Planned | - |
 
 ---
 
 *Roadmap created: 2026-05-17*
-*Last updated: 2026-05-19 — Phase 3 plans drafted*
+*Last updated: 2026-06-04 — Phase 5 (SaaS Shell) plans drafted: 6 plans, 3 waves*
