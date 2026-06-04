@@ -1,6 +1,7 @@
 'use client'
 
 import Link from 'next/link'
+import { useRouter } from 'next/navigation'
 import { useTransition, useState } from 'react'
 import { Loader2 } from 'lucide-react'
 import { toast } from 'sonner'
@@ -27,6 +28,7 @@ type ShortlistListProps = {
 }
 
 export function ShortlistList({ jobId, rows }: ShortlistListProps) {
+  const router = useRouter()
   const [pendingId, setPendingId] = useState<string | null>(null)
   const [, startTransition] = useTransition()
 
@@ -42,6 +44,8 @@ export function ShortlistList({ jobId, rows }: ShortlistListProps) {
         return
       }
       toast.success('Promoted to formal application.')
+      // Refresh so the converted row leaves the shortlist immediately.
+      router.refresh()
     })
   }
 
@@ -58,6 +62,8 @@ export function ShortlistList({ jobId, rows }: ShortlistListProps) {
         return
       }
       toast.success('Removed from shortlist.')
+      // Refresh so the removed row disappears immediately.
+      router.refresh()
     })
   }
 

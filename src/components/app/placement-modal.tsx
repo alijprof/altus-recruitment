@@ -86,8 +86,15 @@ export function PlacementModal({
   }
 
   // Validation: fee must parse to a non-negative finite integer of pence.
+  // Strip £, spaces and thousands separators first — bare parseFloat turns
+  // "7,500" into 7 (£7 instead of £7,500). Then require a clean numeric
+  // string with no trailing garbage so a value like "7500abc" is rejected
+  // (returns null → disabled Confirm = the inline validation signal).
   function parsedFeePence(): number | null {
-    const parsed = parseFloat(feeGbp)
+    const sanitised = feeGbp.replace(/[£\s,]/g, '')
+    if (sanitised.length === 0) return null
+    if (!/^\d+(\.\d{1,2})?$/.test(sanitised)) return null
+    const parsed = Number(sanitised)
     if (!isFinite(parsed) || parsed < 0) return null
     return Math.round(parsed * 100)
   }

@@ -25,11 +25,26 @@ const STATUS_LABEL: Record<Enums<'job_status'>, string> = {
 
 function formatSalary(min: number | null, max: number | null, currency: string): string | null {
   if (min == null && max == null) return null
-  const fmt = new Intl.NumberFormat('en-GB', {
-    style: 'currency',
-    currency: currency || 'GBP',
-    maximumFractionDigits: 0,
-  })
+  // A free-text currency transcribed from a spec call ("pounds", "£",
+  // "GBP " with a trailing space) crashes Intl.NumberFormat with a
+  // RangeError and makes the whole job un-viewable. Coerce to a valid
+  // ISO-4217 code, defaulting to GBP, and wrap construction in try/catch.
+  const code = (currency ?? '').trim().toUpperCase()
+  const safe = /^[A-Z]{3}$/.test(code) ? code : 'GBP'
+  let fmt: Intl.NumberFormat
+  try {
+    fmt = new Intl.NumberFormat('en-GB', {
+      style: 'currency',
+      currency: safe,
+      maximumFractionDigits: 0,
+    })
+  } catch {
+    fmt = new Intl.NumberFormat('en-GB', {
+      style: 'currency',
+      currency: 'GBP',
+      maximumFractionDigits: 0,
+    })
+  }
   if (min != null && max != null) return `${fmt.format(min)} – ${fmt.format(max)}`
   if (min != null) return `${fmt.format(min)}+`
   if (max != null) return `up to ${fmt.format(max)}`

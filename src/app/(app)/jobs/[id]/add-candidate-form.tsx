@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useMemo, useRef, useState, useTransition } from 'react'
+import { useRouter } from 'next/navigation'
 import { Plus } from 'lucide-react'
 import { toast } from 'sonner'
 
@@ -40,6 +41,7 @@ function useDebounced<T>(value: T, ms: number): T {
 }
 
 export function AddCandidateForm({ jobId }: AddCandidateFormProps) {
+  const router = useRouter()
   const [open, setOpen] = useState(false)
   const [query, setQuery] = useState('')
   // Combined state machine — fewer setState calls inside the effect (the
@@ -93,6 +95,9 @@ export function AddCandidateForm({ jobId }: AddCandidateFormProps) {
       setOpen(false)
       setQuery('')
       setSearch({ kind: 'idle' })
+      // Refresh so the newly added candidate appears without a manual reload
+      // (and re-adding doesn't confusingly hit the dup guard).
+      router.refresh()
     })
   }
 
