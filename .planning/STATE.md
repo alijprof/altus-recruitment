@@ -3,13 +3,13 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: launch-readiness
-last_updated: "2026-06-02T00:00:00.000Z"
+last_updated: "2026-06-04T17:43:41.119Z"
 progress:
   total_phases: 5
-  completed_phases: 3
+  completed_phases: 2
   total_plans: 18
   completed_plans: 13
-  percent: 60
+  percent: 40
 ---
 
 # Project State: Altus — AI-First Recruitment CRM
@@ -107,6 +107,7 @@ None currently. Tasks 3–7 can proceed in order.
 **Status (2026-06-02 EOD):** v1.0 is **LIVE** at https://altus-recruitment.vercel.app. Launch blockers B1/B2/B3 done + verified. All M-tier fixes (M-3/4/5/6/8) shipped, deployed, and **verified live via an autonomous Playwright + Gmail browser smoke** (see [[autonomous-smoke-playwright-gmail]] memory): M-8 create, H-1 PII strip, M-3 Unattributed bucket, M-5 audit, M-4 Team UI, M-6b shortlist add, M-6c remove-audit-note, Tests 1/14/15, and a clean 15-page render smoke (0 console/page errors). **No bugs found.**
 
 **Open for tomorrow:**
+
 1. **New domain** — buy it, then wire to Vercel (project `altus-recruitment`, ids in [[vercel-project-ids]]) + update `NEXT_PUBLIC_SITE_URL` (Vercel Prod+Preview) + Supabase Auth Site URL + Redirect URLs **together**, redeploy, verify.
 2. **Delete the smoke test job** `"UAT smoke — safe to delete…"` (id `549a5feb-1638-4ebd-9577-fda044efab45`) in org AJ. (Also harmless: a "Removed from shortlist" note on Dave Bassett + 1 H-1 feedback row — leave or clean.)
 3. **Residual 03-UAT** (need artifacts I can't supply): Tests 2/3 (LinkedIn extension), 4/5 (`.mp3` spec audio), 12 (Outlook OAuth+send). Tests 6/7/11/13 render clean — quick click-through.
@@ -152,11 +153,13 @@ Goal: round off v1.0 for handover to anchor friend's recruitment agency. Four `/
 | 4 | Buyer-value dashboards (REPORT-02) | 260524-cwd | d2eb202, f13fa5c, 5bfb6d0 | c3156d8 | human_needed (12/12 truths verified at code level; 5 browser/runtime checks remain) |
 
 ### What ran successfully without intervention
+
 - All four `/gsd-quick` invocations: planner → plan-checker (1 revision loop on 260524-bpy for orphan-org atomicity; passed on second iteration) → executor (worktree isolation) → worktree merge → migration push + types regen → verifier → STATE update → push to main.
 - Three Supabase migrations pushed to linked DB: `20260524000000_feedback`, `20260524000100_org_invitations`, `20260524000200_buyer_value_rpcs`. All applied cleanly; types regenerated cleanly via `pnpm db:types` (each regen replaced the executor's hand-patched stub with canonical introspection output).
 - `pnpm typecheck` passes after every task. `pnpm lint` clean on all touched files; one pre-existing error in `src/app/(app)/candidates/[id]/cv-review-panel.tsx:98` ("Cannot call impure function during render") logged across deferred-items.md in 260524-b6v, 260524-cjl, 260524-cwd — noted but out of scope for every task in this run.
 
 ### Autonomous decisions worth user review
+
 - **260524-bpy revision loop:** Plan-checker flagged Task 1 over-scope, missing null-email guard, and orphan-org cleanup TOCTOU. Decided autonomously to (a) fold cookie.ts + lookup.ts into Task 3, (b) add explicit null-email guard before any service-role work, (c) replace ad-hoc orphan cleanup with a single SECURITY DEFINER RPC `public.accept_invitation(p_token, p_user_id, p_user_email)` using SELECT...FOR UPDATE for atomicity. Granted EXECUTE only to `service_role`.
 - **260524-b6v Resend `from` address:** Used `Altus <feedback@updates.altus.app>` as fallback `RESEND_FROM`. Anchor will need to verify `updates.altus.app` in the Resend dashboard before the bonus email fires (DB row writes succeed regardless). Same domain assumption applies to invitation emails in 260524-bpy.
 - **260524-cwd dependency add:** Pinned `recharts ^3.8.1` per RESEARCH.md (React 19 peer support shipped in Recharts 3.x; 2.x required `pnpm.overrides`). Only net-new dep across the run.
@@ -164,15 +167,18 @@ Goal: round off v1.0 for handover to anchor friend's recruitment agency. Four `/
 - **260524-cjl jobs CTA:** `/jobs/new` route does not exist on the schema. Wired the primary CTA to `/spec/new` (AI-first) and secondary to `/clients` instead; flagged the missing route as a Phase 4 follow-up in SUMMARY.md.
 
 ### Skipped / excluded
+
 - **Task 5 (Outlook Mail.Send)** — explicitly excluded by orchestrator; needs user in a browser for OAuth consent. Still on the deferred backlog; the OAuth scaffolding from D3-20 is in place.
 
 ### Outstanding manual UAT
+
 1. **260524-b6v** (9 items): visual FAB placement on each authenticated route; route-group negative test on `/sign-in`, `/sign-up`, `/apply/*`; empty-body inline error UX; success state + 1.5s auto-close; live DB row inspection; multi-tenant RLS isolation; fail-open with RESEND_API_KEY unset; real email delivery (requires Resend domain verification); server-side Zod rejection of 2001-char body.
 2. **260524-bpy** (6 items): Resend email delivery; magic-link PKCE round-trip end-to-end; DB state inspection after acceptance; plain sign-up regression (fresh-org invariant); adversarial cookie tamper with Sentry breadcrumb visibility; /settings/team layout + non-owner redirect.
 3. **260524-cjl** (2 items): visual + responsive layout of the 8 empty states; runtime CTA navigation.
 4. **260524-cwd** (5 items): date-filter UI behaviour (preset + custom); Recharts hydration (zero console warnings); mobile 375px stack; cross-tenant RLS via two real org sessions; Methodology `<details>` toggle.
 
 ### Recommended next action
+
 - Wire `RESEND_API_KEY` + verify the sending domain (`updates.altus.app`) in the Resend dashboard so 260524-b6v and 260524-bpy emails actually leave. Once that's done, click through the four UAT batches above (probably 30-40 mins total). After that, the v1.0 handover bundle is ready for the anchor friend's agency.
 - Optional cleanup: fix the lingering `cv-review-panel.tsx:98` impure-function-during-render lint error (`React 19 react-hooks/set-state-in-effect` rule). Pattern fix is the same one used in `sign-in-form.tsx` during 260524-bpy (replace `useEffect` URL→state sync with adjust-state-during-render).
 - Task 5 (Outlook Mail.Send end-to-end) when you're at a browser — D3-20 OAuth scaffolding already wired, just needs the live consent click + first send.
