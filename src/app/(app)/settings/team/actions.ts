@@ -36,7 +36,11 @@ import {
 } from './schema'
 
 type ActionResult =
-  | { ok: true }
+  // emailDelivered tells the UI whether the Resend send actually went out.
+  // The DB row is always canonical (the invite exists); a false here means
+  // the invitee will not receive an email until config is fixed — the UI
+  // surfaces a warning instead of a misleading "Invitation sent".
+  | { ok: true; emailDelivered: boolean }
   | { ok: false; fieldErrors: Record<string, string[] | undefined> }
   | { ok: false; formError: string }
 
@@ -144,7 +148,10 @@ export async function inviteMemberAction(rawInput: unknown): Promise<ActionResul
 
   revalidatePath('/settings/team')
 
-  // Bonus: send the email. Best-effort — DB row is canonical.
+  // Bonus: send the email. Best-effort — DB row is canonical. Track whether
+  // delivery actually succeeded so the UI can warn instead of falsely
+  // reporting "sent" when no email went out.
+  let emailDelivered = false
   try {
     const origin = await resolveOrigin()
     if (!origin) {
@@ -152,7 +159,7 @@ export async function inviteMemberAction(rawInput: unknown): Promise<ActionResul
         level: 'warning',
         tags: { feature: 'invitations', step: 'resend' },
       })
-      return { ok: true }
+      return { ok: true, emailDelivered: false }
     }
 
     // Look up the org name for the subject line. RLS scopes to caller's org.
@@ -187,6 +194,7 @@ export async function inviteMemberAction(rawInput: unknown): Promise<ActionResul
       html,
       text,
     })
+    emailDelivered = result.ok
 
     if (!result.ok && result.reason === 'http_error') {
       // no_api_key is expected in dev — only log real failures.
@@ -200,10 +208,11 @@ export async function inviteMemberAction(rawInput: unknown): Promise<ActionResul
     Sentry.captureException(emailErr, {
       tags: { feature: 'invitations', step: 'resend' },
     })
-    // Fall through — row is canonical.
+    // Fall through — row is canonical; delivery failed.
+    return { ok: true, emailDelivered: false }
   }
 
-  return { ok: true }
+  return { ok: true, emailDelivered }
 }
 
 export async function revokeInviteAction(rawInput: unknown): Promise<ActionResult> {
@@ -249,7 +258,9 @@ export async function revokeInviteAction(rawInput: unknown): Promise<ActionResul
   }
 
   revalidatePath('/settings/team')
-  return { ok: true }
+  // Revoke sends no email — emailDelivered is irrelevant here; report true
+  // to satisfy the shared result type (the revoke UI ignores this field).
+  return { ok: true, emailDelivered: true }
 }
 
 export async function resendInviteAction(rawInput: unknown): Promise<ActionResult> {
@@ -320,7 +331,9 @@ export async function resendInviteAction(rawInput: unknown): Promise<ActionResul
     }
   }
 
-  // Always re-fire the email.
+  // Always re-fire the email. Track whether delivery succeeded so the UI
+  // warns instead of falsely reporting "resent" when nothing went out.
+  let emailDelivered = false
   try {
     const origin = await resolveOrigin()
     if (!origin) {
@@ -328,7 +341,8 @@ export async function resendInviteAction(rawInput: unknown): Promise<ActionResul
         level: 'warning',
         tags: { feature: 'invitations', step: 'resend' },
       })
-      return { ok: true }
+      revalidatePath('/settings/team')
+      return { ok: true, emailDelivered: false }
     }
 
     const { data: org } = await supabase
@@ -362,6 +376,7 @@ export async function resendInviteAction(rawInput: unknown): Promise<ActionResul
       html,
       text,
     })
+    emailDelivered = result.ok
 
     if (!result.ok && result.reason === 'http_error') {
       Sentry.captureMessage('resend_send_failed', {
@@ -374,8 +389,10 @@ export async function resendInviteAction(rawInput: unknown): Promise<ActionResul
     Sentry.captureException(emailErr, {
       tags: { feature: 'invitations', step: 'resend' },
     })
+    revalidatePath('/settings/team')
+    return { ok: true, emailDelivered: false }
   }
 
   revalidatePath('/settings/team')
-  return { ok: true }
+  return { ok: true, emailDelivered }
 }

@@ -111,7 +111,13 @@ export function TeamInvites({ initialInvites }: { initialInvites: InviteView[] }
       addOptimistic({ type: 'resending', id })
       const result = await resendInviteAction({ inviteId: id })
       if (result.ok) {
-        toast.success('Invitation resent')
+        if (result.emailDelivered) {
+          toast.success('Invitation resent')
+        } else {
+          toast.warning(
+            'Invitation saved, but the email could not be sent. Check Resend is configured (RESEND_API_KEY) and NEXT_PUBLIC_SITE_URL is set.',
+          )
+        }
         return
       }
       toast.error('formError' in result ? result.formError : 'Could not resend invitation.')
@@ -214,7 +220,16 @@ function InviteDialog({
       })
       const result = await inviteMemberAction(data)
       if (result.ok) {
-        toast.success('Invitation sent')
+        // The DB row exists either way (the invite is real); only WARN if the
+        // email itself couldn't be delivered, so we never show a misleading
+        // "Invitation sent" when no email went out.
+        if (result.emailDelivered) {
+          toast.success('Invitation sent')
+        } else {
+          toast.warning(
+            'Invitation saved, but the email could not be sent. Check Resend is configured (RESEND_API_KEY) and NEXT_PUBLIC_SITE_URL is set.',
+          )
+        }
         return
       }
       // The dialog already closed and the optimistic row reverts when the
