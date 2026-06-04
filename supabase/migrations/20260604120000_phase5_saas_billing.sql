@@ -90,21 +90,20 @@ alter table public.organizations
 -- Hex colour columns with a DB-level format CHECK.
 -- The regex CHECK is the DB-level half of the brand-XSS defence
 -- (render-level validation is in the settings form, 05-02).
--- Uses NOT VALID + VALIDATE so no long ACCESS EXCLUSIVE lock on existing rows.
--- Existing rows have NULL (default), which satisfies `check(... is null or ...)`.
+-- NOTE: `NOT VALID` is NOT permitted on an inline column constraint inside
+-- ADD COLUMN (Postgres only accepts it on ALTER TABLE ... ADD CONSTRAINT).
+-- It is also unnecessary here: `organizations` is tiny and every existing
+-- row receives NULL for the new column, so the CHECK validates instantly
+-- with no meaningful lock.
 alter table public.organizations
   add column brand_primary text
     constraint organizations_brand_primary_hex
-    check (brand_primary ~ '^#[0-9a-fA-F]{6}$') not valid;
-
-alter table public.organizations validate constraint organizations_brand_primary_hex;
+    check (brand_primary ~ '^#[0-9a-fA-F]{6}$');
 
 alter table public.organizations
   add column brand_secondary text
     constraint organizations_brand_secondary_hex
-    check (brand_secondary ~ '^#[0-9a-fA-F]{6}$') not valid;
-
-alter table public.organizations validate constraint organizations_brand_secondary_hex;
+    check (brand_secondary ~ '^#[0-9a-fA-F]{6}$');
 
 -- Grant column-level SELECT on the new brand columns to the roles that
 -- the public apply page uses (anon via service-role path, and authenticated).
