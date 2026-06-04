@@ -22,6 +22,14 @@ const PUBLIC_PATHS = [
   // Microsoft Graph change-notification webhook (Plan 4) — guarded by the
   // `clientState` echoed in every notification, NOT by Supabase auth.
   '/api/outlook/webhook',
+  // LinkedIn capture ingest (Phase 3 extension). The request originates from
+  // a `chrome-extension://` origin which carries NO Supabase cookies, so the
+  // cookie-based middleware would 307-redirect it to /sign-in before the
+  // route ever runs (the extension then sees a redirect, not JSON). The route
+  // does its OWN bearer-token auth via `supabase.auth.getUser(token)` and
+  // runs queries token-scoped under RLS. Gating it here breaks capture
+  // entirely — same rationale as the /api/outlook/* entries above.
+  '/api/linkedin/ingest',
   // Org invitation accept route (Quick 260524-bpy + 260527-x2q P0 fix) —
   // invitees are by definition unauthenticated when they first click the
   // emailed link. The route validates the token via service-role lookup,

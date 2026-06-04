@@ -1,4 +1,5 @@
 import * as Sentry from '@sentry/nextjs'
+import { createServerClient } from '@supabase/ssr'
 
 import { corsHeadersFor, versionGte } from '@/app/api/linkedin/_cors'
 import { upsertCandidateFromLinkedIn } from '@/lib/db/candidates-linkedin'
@@ -6,6 +7,7 @@ import { getProfile } from '@/lib/db/profiles'
 import { env } from '@/lib/env'
 import { inngest } from '@/lib/inngest/client'
 import { createClient } from '@/lib/supabase/server'
+import type { Database } from '@/types/database'
 import { LinkedInIngestSchema } from '@/lib/validation/linkedin-ingest-schema'
 
 // ---------------------------------------------------------------------------
@@ -114,6 +116,24 @@ export async function POST(req: Request): Promise<Response> {
   }
   const user = userData.user
 
+  // Build a token-scoped client for the DATA queries so they run AS the
+  // bearer-authenticated user under RLS. The cookie-bound `supabase` client
+  // validates the token but does NOT attach it to PostgREST's Authorization
+  // header — getProfile / upsertCandidateFromLinkedIn would otherwise run with
+  // no session (auth.uid() NULL → anon role → RLS blocks → 500). Passing the
+  // bearer in the global Authorization header makes PostgREST run as that user.
+  // RLS stays the tenant boundary (org is read from the user's own profile row,
+  // and upsertCandidateFromLinkedIn additionally asserts the dedup row's org) —
+  // this is more tenant-safe than service-role and matches the route's design.
+  const db = createServerClient<Database>(
+    env.NEXT_PUBLIC_SUPABASE_URL,
+    env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY,
+    {
+      global: { headers: { Authorization: `Bearer ${token}` } },
+      cookies: { getAll: () => [], setAll: () => {} },
+    },
+  )
+
   // 3. Body validation
   let raw: unknown
   try {
@@ -134,8 +154,8 @@ export async function POST(req: Request): Promise<Response> {
   }
   const payload = parsed.data
 
-  // 4. Profile lookup → organization_id
-  const profileResult = await getProfile(supabase, user.id)
+  // 4. Profile lookup → organization_id (token-scoped, runs under RLS)
+  const profileResult = await getProfile(db, user.id)
   if (!profileResult.ok) {
     Sentry.captureException(new Error(`profile_not_found: ${profileResult.code}`), {
       tags: { ...ROUTE_TAGS, subop: 'getProfile' },
@@ -154,8 +174,8 @@ export async function POST(req: Request): Promise<Response> {
   // converts the concurrent-write race into a deterministic 23505 that the
   // upsert helper's existing dedup branch already handles.
 
-  // 6. Upsert
-  const upsertResult = await upsertCandidateFromLinkedIn(supabase, {
+  // 6. Upsert (token-scoped, runs under RLS as the bearer user)
+  const upsertResult = await upsertCandidateFromLinkedIn(db, {
     organizationId,
     profile: {
       name: payload.name,
