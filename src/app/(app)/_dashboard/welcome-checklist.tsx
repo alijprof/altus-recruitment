@@ -2,10 +2,13 @@
 
 import Link from 'next/link'
 import { useEffect, useState } from 'react'
-import { CheckCircle2, Circle, ChevronRight } from 'lucide-react'
+import { CheckCircle2, Circle, ChevronRight, Loader2 } from 'lucide-react'
+import { toast } from 'sonner'
 
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+
+import { seedSampleDataAction } from './sample-data-action'
 
 // Dismiss flag stored in localStorage. This is a cosmetic client-side flag
 // only — it carries no auth or tenancy meaning and cannot be forged to skip
@@ -19,11 +22,22 @@ type WelcomeChecklistProps = {
   teamMembers: number
 }
 
-type Step = {
+type BaseStep = {
   label: string
-  href: string
   done: boolean
 }
+
+type LinkStep = BaseStep & {
+  kind: 'link'
+  href: string
+}
+
+type ActionStep = BaseStep & {
+  kind: 'action'
+  actionKey: 'seed-sample-data'
+}
+
+type Step = LinkStep | ActionStep
 
 export function WelcomeChecklist({ candidates, clients, jobs, teamMembers }: WelcomeChecklistProps) {
   // SSR guard: do not read localStorage during server-side rendering or before
@@ -34,6 +48,7 @@ export function WelcomeChecklist({ candidates, clients, jobs, teamMembers }: Wel
   // We batch the mounted + dismissed reads into a single setState call to
   // satisfy the react/no-state-in-effect rule.
   const [dismissedState, setDismissedState] = useState<boolean | null>(null)
+  const [seeding, setSeeding] = useState(false)
 
   useEffect(() => {
     // Async wrapper satisfies react-hooks/set-state-in-effect while correctly
@@ -45,10 +60,25 @@ export function WelcomeChecklist({ candidates, clients, jobs, teamMembers }: Wel
   }, [])
 
   const steps: Step[] = [
-    { label: 'Add your first candidate', href: '/candidates/new', done: candidates > 0 },
-    { label: 'Add your first client', href: '/clients/new', done: clients > 0 },
-    { label: 'Invite a teammate', href: '/settings/team', done: teamMembers > 1 },
-    { label: 'Upload a job spec', href: '/spec/new', done: jobs > 0 },
+    { kind: 'link', label: 'Add your first candidate', href: '/candidates/new', done: candidates > 0 },
+    { kind: 'link', label: 'Add your first client', href: '/clients/new', done: clients > 0 },
+    { kind: 'link', label: 'Invite a teammate', href: '/settings/team', done: teamMembers > 1 },
+    { kind: 'link', label: 'Upload a job spec', href: '/spec/new', done: jobs > 0 },
+    // New onboarding steps (Plan 05-03).
+    {
+      kind: 'action',
+      label: 'Seed sample data',
+      actionKey: 'seed-sample-data',
+      // Done when the org has candidates (same DB-derived signal as 'Add your first candidate').
+      done: candidates > 0,
+    },
+    {
+      kind: 'link',
+      label: 'Import candidates',
+      href: '/candidates/import',
+      // Done when the org has candidates — importing creates candidates.
+      done: candidates > 0,
+    },
   ]
 
   const allDone = steps.every((s) => s.done)
@@ -60,6 +90,32 @@ export function WelcomeChecklist({ candidates, clients, jobs, teamMembers }: Wel
   const handleDismiss = () => {
     localStorage.setItem(DISMISS_KEY, '1')
     setDismissedState(true)
+  }
+
+  async function handleSeedSampleData() {
+    if (seeding) return
+    setSeeding(true)
+    try {
+      const result = await seedSampleDataAction()
+      if (!result.ok) {
+        toast.error(result.error)
+        return
+      }
+      if (result.summary.skippedAlreadySeeded) {
+        toast.info('Your org already has data — no sample records were added.')
+      } else {
+        toast.success(
+          `Sample data seeded: ${result.summary.candidatesCreated} candidates, ${result.summary.clientsCreated} clients, ${result.summary.jobsCreated} job.`,
+        )
+        // The parent RSC will revalidate on next navigation. For now, inform
+        // the user to refresh to see the new data in the checklist.
+      }
+    } catch (err) {
+      console.error('Seed failed:', err)
+      toast.error(err instanceof Error ? err.message : 'Could not seed sample data.')
+    } finally {
+      setSeeding(false)
+    }
   }
 
   return (
@@ -85,33 +141,65 @@ export function WelcomeChecklist({ candidates, clients, jobs, teamMembers }: Wel
       <CardContent className="pt-0">
         <ul className="space-y-2">
           {steps.map((step) => (
-            <li key={step.href}>
-              <Link
-                href={step.href}
-                className={[
-                  'flex items-center gap-3 rounded-md px-2 py-2 text-sm transition-colors',
-                  step.done
-                    ? 'text-muted-foreground pointer-events-none'
-                    : 'hover:bg-accent/60',
-                ]
-                  .filter(Boolean)
-                  .join(' ')}
-                tabIndex={step.done ? -1 : undefined}
-                aria-disabled={step.done}
-              >
-                {step.done ? (
-                  <CheckCircle2 className="size-4 shrink-0 text-green-600" aria-hidden="true" />
-                ) : (
-                  <Circle className="text-muted-foreground size-4 shrink-0" aria-hidden="true" />
-                )}
-                <span className={step.done ? 'line-through' : ''}>{step.label}</span>
-                {!step.done && (
-                  <ChevronRight
-                    className="text-muted-foreground ml-auto size-4 shrink-0"
-                    aria-hidden="true"
-                  />
-                )}
-              </Link>
+            <li key={step.kind === 'link' ? step.href : step.actionKey}>
+              {step.kind === 'link' ? (
+                <Link
+                  href={step.href}
+                  className={[
+                    'flex items-center gap-3 rounded-md px-2 py-2 text-sm transition-colors',
+                    step.done
+                      ? 'text-muted-foreground pointer-events-none'
+                      : 'hover:bg-accent/60',
+                  ]
+                    .filter(Boolean)
+                    .join(' ')}
+                  tabIndex={step.done ? -1 : undefined}
+                  aria-disabled={step.done}
+                >
+                  {step.done ? (
+                    <CheckCircle2 className="size-4 shrink-0 text-green-600" aria-hidden="true" />
+                  ) : (
+                    <Circle className="text-muted-foreground size-4 shrink-0" aria-hidden="true" />
+                  )}
+                  <span className={step.done ? 'line-through' : ''}>{step.label}</span>
+                  {!step.done && (
+                    <ChevronRight
+                      className="text-muted-foreground ml-auto size-4 shrink-0"
+                      aria-hidden="true"
+                    />
+                  )}
+                </Link>
+              ) : (
+                <button
+                  type="button"
+                  disabled={step.done || seeding}
+                  onClick={step.actionKey === 'seed-sample-data' ? handleSeedSampleData : undefined}
+                  className={[
+                    'flex w-full items-center gap-3 rounded-md px-2 py-2 text-sm transition-colors',
+                    step.done
+                      ? 'text-muted-foreground pointer-events-none'
+                      : 'hover:bg-accent/60 cursor-pointer',
+                  ]
+                    .filter(Boolean)
+                    .join(' ')}
+                  aria-disabled={step.done || seeding}
+                >
+                  {step.done ? (
+                    <CheckCircle2 className="size-4 shrink-0 text-green-600" aria-hidden="true" />
+                  ) : seeding ? (
+                    <Loader2 className="size-4 shrink-0 animate-spin" aria-hidden="true" />
+                  ) : (
+                    <Circle className="text-muted-foreground size-4 shrink-0" aria-hidden="true" />
+                  )}
+                  <span className={step.done ? 'line-through' : ''}>{step.label}</span>
+                  {!step.done && !seeding && (
+                    <ChevronRight
+                      className="text-muted-foreground ml-auto size-4 shrink-0"
+                      aria-hidden="true"
+                    />
+                  )}
+                </button>
+              )}
             </li>
           ))}
         </ul>
