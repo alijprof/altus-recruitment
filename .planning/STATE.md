@@ -3,13 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: launch-readiness
-last_updated: "2026-06-04T21:11:46.711Z"
+last_updated: "2026-06-04T21:21:55.526Z"
+last_plan_completed: "05-04-marketing"
 progress:
   total_phases: 5
   completed_phases: 2
   total_plans: 24
-  completed_plans: 17
-  percent: 40
+  completed_plans: 19
+  percent: 42
 ---
 
 # Project State: Altus — AI-First Recruitment CRM
@@ -33,7 +34,7 @@ progress:
 
 **Phases 1–3: COMPLETE.** All 15 success criteria verified end-to-end in code by the 2026-05-30 launch-readiness audit (multi-agent). Only LinkedIn one-click DOM capture is flagged fragile (documented PDF-pivot fallback).
 **Phase 4 (Voice, Marketing & Reporting): NOT STARTED** — but REPORT-02 (buyer-value dashboards) already shipped via quick task 260524-cwd, and REMIND-01 (stale-candidate / dormant-client reminders) is partially shipped via dashboard widgets. REPORT-01 (NL→SQL), VOICE-01/02, MARKET-01/02/03 are genuinely unbuilt.
-**Phase 5 (SaaS Shell): IN PROGRESS** — on branch `feat/phase-5-saas-shell`. Wave 0 (05-00 hardening) COMPLETE. **Wave 1 COMPLETE 2026-06-04**: 05-01 Stripe billing (checkout+14d trial, HMAC webhooks, entitlement engine, seat enforcement, AI caps, Customer Portal, billing settings, cap-warning banner) + **05-02 branding** (hex brand colours stored in DB, previewed live on public apply page, settings UI, XSS-safe CSS vars) + **05-03 onboarding** (CSV import wizard with PapaParse + column-map + dedupe, seedSampleDataAction idempotent, extended welcome checklist). Remaining: 05-04 admin portal, 05-05 marketing site. Billing live-mode needs founder's Stripe TEST keys + 3 Products/Prices.
+**Phase 5 (SaaS Shell): IN PROGRESS** — on branch `feat/phase-5-saas-shell`. Wave 0 (05-00 hardening) COMPLETE. **Wave 1 IN PROGRESS 2026-06-04**: 05-01 Stripe billing COMPLETE + **05-02 branding** COMPLETE + **05-03 onboarding** COMPLETE + **05-04 marketing site** COMPLETE (landing /welcome, /pricing from PLANS, /features, in-app /docs 11 articles, /status with graceful DB probe). Remaining: 05-05 admin portal. Billing live-mode needs founder's Stripe TEST keys + 3 Products/Prices.
 
 **Track:** v1.0 launch — anchor agency can go live. **0 launch blockers remain (all cleared & verified 2026-06-02).** Remaining is the final UAT click-through (see LAUNCH-READINESS.md).
 
