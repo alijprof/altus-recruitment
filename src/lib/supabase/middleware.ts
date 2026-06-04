@@ -39,6 +39,31 @@ const PUBLIC_PATHS = [
   // of bootstrapping a fresh one. Gating this behind auth here would
   // create the bug it was added to fix.
   '/accept-invite',
+  // --- Phase 5: Stripe webhook (Plan 05-01) --------------------------------
+  // Stripe POSTs carry NO Supabase cookies — the middleware 307-redirect
+  // would eat the request body and break billing sync entirely (same class
+  // of bug as 260527-x2q / 260528-0rd). The route handler verifies the
+  // Stripe-Signature header before touching any data.
+  //
+  // NOTE: /api/stripe/checkout and /api/stripe/portal are NOT here — those
+  // endpoints are called by authenticated users and MUST stay gated.
+  '/api/stripe/webhook',
+  // --- Phase 5: Marketing / public surfaces (Plan 05-04) -------------------
+  // Pre-decided in Wave 0 so 05-04 only creates route files and never
+  // needs to touch this file again (mirrors the 260527-x2q lesson: add
+  // public paths at foundation time, not reactively).
+  //
+  // `/welcome` is the marketing landing page. It intentionally lives at
+  // /welcome (NOT at /) so `/` remains the authenticated dashboard — no
+  // blanket-allow on the root required.
+  '/welcome',
+  '/pricing',
+  '/features',
+  '/docs',
+  '/status',
+  // IMPORTANT: `/admin` is NOT here. The admin area is authenticated +
+  // role-gated in the layout (05-05 Task 5.1). Adding it to PUBLIC_PATHS
+  // would create a cross-tenant read gate (Pitfall 8 from 05-RESEARCH).
 ]
 
 export async function updateSession(request: NextRequest) {
