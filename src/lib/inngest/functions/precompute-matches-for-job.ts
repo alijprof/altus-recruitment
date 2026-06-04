@@ -284,6 +284,11 @@ export const precomputeMatchesForJob = inngest.createFunction(
             content: score,
             model: 'claude-sonnet-4-6',
             costPence: MATCH_COST_ESTIMATE_PENCE,
+            // Job's org, already verified against the claimed org at
+            // read-job-context (line ~120). Required so the service-role
+            // insert satisfies set_organization_id() instead of RAISE-ing
+            // on a NULL org — which silently failed every match insert.
+            organizationId: organization_id,
           })
           if (!upsertResult.ok) {
             // Unique-violation = concurrent worker already inserted; no-op.

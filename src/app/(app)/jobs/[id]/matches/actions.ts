@@ -171,6 +171,11 @@ export async function explainCandidateMatchAction(
       // ai_usage is authoritative for cost (runWithLogging wrote it);
       // ai_summaries.cost_pence is bookkeeping for the matches page.
       costPence: 1,
+      // The caller's own already-verified org. Passing it explicitly
+      // keeps this write consistent with the service-role precompute path
+      // and satisfies the same_org guard (the user client could also rely
+      // on the trigger, but being explicit avoids any NULL-org surprises).
+      organizationId,
     })
     if (!upsertResult.ok) {
       // Treat unique-violation gracefully — a concurrent precompute may

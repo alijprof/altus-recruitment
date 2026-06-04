@@ -11,9 +11,13 @@ import type { DbResult } from './types'
 // ai_summaries cache helpers (D2-07). The table itself is created in
 // migration 20260519092944_ai_summaries.sql; the row is keyed on
 // (organization_id, kind, candidate_id, job_id, candidate_embedding_version,
-// job_embedding_version). organization_id is filled by the
-// ai_summaries_set_org BEFORE INSERT trigger — callers MUST NOT pass it
-// (the cross-tenant FK guard would reject any caller-supplied org).
+// job_embedding_version). The write path (upsertMatchSummary) MUST pass the
+// parent's already-verified organization_id explicitly: under the
+// service-role (no session) the set_organization_id() BEFORE INSERT trigger
+// RAISES on a NULL org, which silently fails every match insert. The
+// cross-tenant ai_summaries_same_org_guard only rejects an org that DIFFERS
+// from the parent FK's org, so supplying the CORRECT (already-verified) org
+// is safe — it is exactly what avoids the NULL-org raise.
 // ---------------------------------------------------------------------------
 
 export type MatchSummaryContent = {
@@ -114,6 +118,13 @@ export async function getMatchSummary(
  * inserts a no-op at the DB level. Caller should treat a unique-violation
  * error as "cache already populated by a concurrent worker" rather than a
  * real failure. Plan 2 wires this into the precompute Inngest function.
+ *
+ * `organizationId` is REQUIRED and must be the parent job's
+ * already-verified org. Under the service-role client (no session) the
+ * set_organization_id() trigger cannot resolve the org from auth context
+ * and RAISES on NULL — which silently failed every insert. Passing the
+ * correct org satisfies the same_org guard (which only rejects a DIFFERING
+ * org) and avoids the raise.
  */
 export async function upsertMatchSummary(
   supabase: SupabaseClient<Database>,
@@ -125,11 +136,13 @@ export async function upsertMatchSummary(
     content: MatchSummaryContent
     model: string
     costPence: number
+    organizationId: string
   },
 ): Promise<DbResult<{ id: string }>> {
   const { data, error } = await asAiSummariesClient(supabase)
     .from('ai_summaries')
     .insert({
+      organization_id: input.organizationId,
       kind: 'match_score',
       candidate_id: input.candidateId,
       job_id: input.jobId,
