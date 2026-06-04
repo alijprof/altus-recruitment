@@ -208,12 +208,15 @@ export const createJobFromSpec = inngest.createFunction(
       }
     })
 
-    // Fire `jobs/jd-changed` so embed-job-on-jd-change picks it up.
+    // Fire `job/embed` so embed-job-on-jd-change picks it up. The embed
+    // function listens for `job/embed` (NOT `jobs/jd-changed`, which nothing
+    // consumes) — same event the two real job-creation paths emit. Without
+    // this the spec-approved job is never embedded or match-scored.
     // The new job has a fresh description from the structured fields and
     // must be embedded for semantic search.
     try {
       await inngest.send({
-        name: 'jobs/jd-changed',
+        name: 'job/embed',
         data: {
           organization_id,
           job_id: newJob.id,
@@ -222,7 +225,7 @@ export const createJobFromSpec = inngest.createFunction(
       })
     } catch (sendErr) {
       const name = sendErr instanceof Error ? sendErr.name : 'UnknownError'
-      Sentry.captureException(new Error(`${name}: jobs/jd-changed dispatch failed`), {
+      Sentry.captureException(new Error(`${name}: job/embed dispatch failed`), {
         tags: {
           phase: 'p3',
           layer: 'inngest',

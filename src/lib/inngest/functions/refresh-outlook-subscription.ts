@@ -310,19 +310,31 @@ async function tryRecreate(
       clientState,
     },
   )
-  await updateOutlookSubscriptionState(serviceClient, {
+  // Capture the write result and THROW on failure BEFORE recording success.
+  // Previously the result was discarded and recordRenewalAttempt(success:true)
+  // fired even if the subscription_id write failed — reporting "healthy" while
+  // sync was dead. The throw propagates to the per-user loop's catch, which
+  // records a failed attempt and Sentry-tags it (one user's failure does not
+  // block the rest of the cron).
+  const subWrite = await updateOutlookSubscriptionState(serviceClient, {
     userId,
     subscriptionId,
     subscriptionClientState: clientState,
     subscriptionExpiresAt: expirationDateTime,
   })
+  if (!subWrite.ok) {
+    throw new Error('tryRecreate: failed to persist subscription_id')
+  }
   // Delta link is invalid after a subscription recreate — Graph treats
   // each subscription's delta query as independent. Force full resync.
-  await setOutlookDeltaLink(serviceClient, {
+  const deltaWrite = await setOutlookDeltaLink(serviceClient, {
     userId,
     deltaLink: null,
     lastSyncedAt: new Date().toISOString(),
   })
+  if (!deltaWrite.ok) {
+    throw new Error('tryRecreate: failed to reset delta link')
+  }
   // Fire follow-up sync so the resync runs immediately rather than
   // waiting for the next inbound email push.
   try {
