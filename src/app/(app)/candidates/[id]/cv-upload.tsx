@@ -1,6 +1,7 @@
 'use client'
 
 import { Upload } from 'lucide-react'
+import { useRouter } from 'next/navigation'
 import { useRef, useState, useTransition } from 'react'
 import { toast } from 'sonner'
 
@@ -14,6 +15,7 @@ type CvUploadProps = {
 }
 
 export function CvUpload({ candidateId }: CvUploadProps) {
+  const router = useRouter()
   const [file, setFile] = useState<File | null>(null)
   const [isPending, startTransition] = useTransition()
   const inputRef = useRef<HTMLInputElement>(null)
@@ -38,6 +40,9 @@ export function CvUpload({ candidateId }: CvUploadProps) {
       }
       toast.success('CV uploaded — parsing…')
       reset()
+      // Refresh so the review panel (PendingState → CompleteState) appears
+      // without a manual reload.
+      router.refresh()
     })
   }
 

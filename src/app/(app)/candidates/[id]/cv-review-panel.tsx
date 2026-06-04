@@ -183,6 +183,7 @@ function CompleteState({
   candidateCv: CandidateCvRow
   candidateFullName: string
 }) {
+  const router = useRouter()
   const [open, setOpen] = useState(false)
   const [isPending, startTransition] = useTransition()
   const extracted = (candidateCv.extracted_data ?? {}) as ExtractedShape
@@ -203,6 +204,8 @@ function CompleteState({
         )
       }
       setOpen(false)
+      // Refresh so the candidate's newly filled fields render immediately.
+      router.refresh()
     })
   }
 
