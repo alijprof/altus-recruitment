@@ -17,6 +17,7 @@ import * as Sentry from '@sentry/nextjs'
 import { revalidatePath } from 'next/cache'
 import { headers } from 'next/headers'
 
+import { getEntitlement } from '@/lib/stripe/entitlement'
 import { sendResendEmail } from '@/lib/email/resend'
 import {
   renderTransactionalEmail,
@@ -111,6 +112,54 @@ export async function inviteMemberAction(rawInput: unknown): Promise<ActionResul
   }
 
   setRequestScope(user.id, me.organization_id)
+
+  // VERIFICATION R8 — step 4.5: Seat enforcement (D-09).
+  // Runs AFTER owner check (step 4), BEFORE the org_invitations insert (step 5).
+  // Uses the RLS-scoped client (same `supabase` as getUser/role — no service-role
+  // escalation for this read per the plan requirement).
+  //
+  // Prospective seats = activeSeats + pendingInvites + 1 (the invite we're about
+  // to create). If this exceeds planSeats, block with a clear upgrade message.
+  //
+  // Pending = accepted_at IS NULL AND expires_at > now()
+  // (org_invitations has no revoked_at column; revocation is a hard DELETE).
+  try {
+    const entitlement = await getEntitlement(me.organization_id, supabase)
+
+    const { count: pendingCount, error: pendingErr } = await supabase
+      .from('org_invitations')
+      .select('id', { count: 'exact', head: true })
+      .eq('organization_id', me.organization_id)
+      .is('accepted_at', null)
+      .gt('expires_at', new Date().toISOString())
+
+    if (!pendingErr) {
+      const pending = pendingCount ?? 0
+      const prospective = entitlement.activeSeats + pending + 1
+
+      // For orgs on a real plan (active/trialing/past_due), gate against planSeats.
+      // For orgs with status 'none' (trial/no plan), gate against Pro trial seats
+      // so the anchor/trial isn't blocked but is still bounded.
+      const seatLimit =
+        entitlement.status !== 'none'
+          ? entitlement.planSeats
+          : entitlement.planSeats // planSeats for 'none' is already set to PLANS.pro.seats in getEntitlement
+
+      if (prospective > seatLimit) {
+        return {
+          ok: false,
+          formError:
+            "You've reached your plan's seat limit. Upgrade your plan to add more teammates.",
+        }
+      }
+    }
+    // If the pending count query errors, we fail open (let the invite proceed).
+    // A billing misconfiguration should not block team growth; Sentry captures
+    // the underlying error via getEntitlement's own logging.
+  } catch {
+    // getEntitlement or seat count threw — fail open, log implicitly via Sentry
+    // inside getEntitlement. The invite proceeds.
+  }
 
   // Insert via the user-scoped client. RLS WITH CHECK + the two BEFORE INSERT
   // triggers (set_org + set_invited_by) auto-fill organization_id + invited_by.

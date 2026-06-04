@@ -90,7 +90,10 @@ async function countActiveSeats(serviceClient: SupabaseClient<Database>, orgId: 
 export async function getEntitlement(
   orgId: string,
   // Allow callers to pass their existing RLS-scoped client for usage reads.
-  // For the seat count + subscription we always use service-role.
+  // Currently all reads use the service-role client for consistency (the caller's
+  // RLS client may not have the SELECT policy needed for subscriptions). This
+  // parameter is reserved for future optimisation and is currently unused.
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   _supabase?: SupabaseClient<Database>,
 ): Promise<EntitlementStatus> {
   const serviceClient = createServiceClient()

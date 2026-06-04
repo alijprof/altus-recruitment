@@ -161,6 +161,28 @@ export default async function SettingsPage() {
           </CardHeader>
         </Card>
       </Link>
+
+      <Separator />
+
+      {/* Phase 5 Plan 05-01 — billing + plan management (owner-only). */}
+      {isOwner ? (
+        <Link href="/settings/billing" className="block">
+          <Card className="transition-colors hover:bg-accent/40">
+            <CardHeader>
+              <div className="flex items-center justify-between">
+                <div className="space-y-1">
+                  <CardTitle className="text-base font-semibold">Billing</CardTitle>
+                  <CardDescription>
+                    Manage your plan, seats, and payment details. View AI usage against
+                    your plan limits.
+                  </CardDescription>
+                </div>
+                <ChevronRight className="text-muted-foreground size-5" aria-hidden="true" />
+              </div>
+            </CardHeader>
+          </Card>
+        </Link>
+      ) : null}
     </div>
   )
 }
