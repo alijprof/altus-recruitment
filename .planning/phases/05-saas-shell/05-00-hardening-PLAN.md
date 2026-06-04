@@ -44,11 +44,13 @@ user_setup:
 must_haves:
   truths:
     - "App boots (`pnpm build` / dev server) with ALL Stripe env vars absent — no boot crash"
-    - "New public routes (/api/stripe/webhook, (marketing), /docs, /status) reach their handlers instead of 307-redirecting to /sign-in"
+    - "New public routes (/api/stripe/webhook, /welcome, /pricing, /features, /docs, /status) reach their handlers instead of 307-redirecting to /sign-in"
     - "organizations table has stripe_customer_id, brand_primary, brand_secondary columns with a hex CHECK constraint on the colour columns"
-    - "subscriptions, stripe_webhook_events tables exist with RLS as specified"
+    - "subscriptions, stripe_webhook_events, ai_cap_notifications tables exist with RLS as specified"
+    - "ai_cap_notifications enforces once-per-bucket-per-month dedup via UNIQUE (organization_id, bucket, notified_month)"
     - "Founder account carries super_admin:true in app_metadata"
     - "PLANS constant exposes Starter/Pro/Scale prices + per-seat AI caps matching the pricing doc"
+    - "getOrganizationBySlug returns brand_primary + brand_secondary (BRAND-01 key link — the apply-site renderer in 05-02 reads these from the row)"
   artifacts:
     - path: "src/lib/stripe/client.ts"
       provides: "Fail-closed Stripe SDK singleton (null when key absent)"
@@ -60,7 +62,7 @@ must_haves:
       provides: "PlanKey, SubscriptionStatus, EntitlementStatus, AiCaps types"
       exports: ["PlanKey", "EntitlementStatus"]
     - path: "supabase/migrations/20260604120000_phase5_saas_billing.sql"
-      provides: "subscriptions + stripe_webhook_events tables + organizations columns"
+      provides: "subscriptions + stripe_webhook_events + ai_cap_notifications tables + organizations columns"
       contains: "create table public.subscriptions"
     - path: "supabase/migrations/20260604120100_phase5_super_admin_flag.sql"
       provides: "Documented SQL to set super_admin (run manually in Task 0.4)"
@@ -69,17 +71,25 @@ must_haves:
       to: "PUBLIC_PATHS"
       via: "array entries"
       pattern: "/api/stripe/webhook"
+    - from: "src/lib/supabase/middleware.ts"
+      to: "PUBLIC_PATHS"
+      via: "marketing landing entry"
+      pattern: "/welcome"
     - from: "src/lib/stripe/client.ts"
       to: "env.STRIPE_SECRET_KEY"
       via: "conditional instantiation"
       pattern: "env\\.STRIPE_SECRET_KEY"
+    - from: "src/lib/db/organizations.ts"
+      to: "organizations.brand_primary"
+      via: "getOrganizationBySlug SELECT + OrganizationApplyRow"
+      pattern: "brand_primary"
 ---
 
 <objective>
-Wave 0 hardening for the SaaS shell. Lays the foundation every downstream slice depends on: Stripe env-var isolation (so the phase ships without live keys), middleware PUBLIC_PATHS for the new public routes (the exact omission that caused P0/P1 bugs 260527-x2q and 260528-0rd), the fail-closed Stripe client + PLANS constant, all Phase-5 migrations applied to the linked DB, and the super_admin flag.
+Wave 0 hardening for the SaaS shell. Lays the foundation every downstream slice depends on: Stripe env-var isolation (so the phase ships without live keys), middleware PUBLIC_PATHS for the new public routes (the exact omission that caused P0/P1 bugs 260527-x2q and 260528-0rd), the fail-closed Stripe client + PLANS constant, all Phase-5 migrations applied to the linked DB (incl. the `ai_cap_notifications` dedup ledger 05-01 needs), the super_admin flag, AND the brand-column SELECT extension that BRAND-01's apply-site renderer (05-02) depends on.
 
-Purpose: Everything else in Phase 5 is unbuildable or unsafe until this foundation is correct. The single highest-severity item (the /admin cross-tenant read gate) and the highest-likelihood regression (middleware omission) are both pre-empted here.
-Output: env vars declared `.optional()`, PUBLIC_PATHS extended, Stripe client + plans + billing types, two migrations pushed + types regenerated, super_admin set.
+Purpose: Everything else in Phase 5 is unbuildable or unsafe until this foundation is correct. The single highest-severity item (the /admin cross-tenant read gate) and the highest-likelihood regression (middleware omission) are both pre-empted here. The marketing landing route is pre-decided as `/welcome` and added to PUBLIC_PATHS here so 05-04 only creates route files, never touches middleware.
+Output: env vars declared `.optional()`, PUBLIC_PATHS extended (incl. `/welcome`), Stripe client + plans + billing types, the Phase-5 migrations (billing tables + brand columns + ai_cap_notifications) pushed + types regenerated, super_admin set, organizations brand columns wired into the DB helper SELECTs.
 </objective>
 
 <execution_context>
@@ -107,9 +117,13 @@ From src/lib/supabase/middleware.ts:
   // isPublic matches `pathname === p || pathname.startsWith(`${p}/`)`
 
 From src/lib/db/organizations.ts:
+  // OrganizationRow ~lines 18-21:
   export type OrganizationRow = Pick<Tables<'organizations'>, 'id' | 'name' | 'slug'> & { logo_url: string | null; apply_form_enabled: boolean }
-  export async function getOrganization(supabase, organizationId): Promise<DbResult<OrganizationRow>>
-  export async function updateOrganization(supabase, organizationId, patch: UpdateOrganizationPatch): Promise<DbResult<OrganizationRow>>
+  // OrganizationApplyRow ~lines 90-95 (used by the public apply page + apply server action):
+  export type OrganizationApplyRow = { id: string; name: string; slug: string; apply_form_enabled: boolean }
+  export async function getOrganization(supabase, organizationId): Promise<DbResult<OrganizationRow>>          // SELECT at ~line 29
+  export async function updateOrganization(supabase, organizationId, patch: UpdateOrganizationPatch): Promise<DbResult<OrganizationRow>>  // SELECT at ~line 69
+  export async function getOrganizationBySlug(supabase, slug): Promise<DbResult<OrganizationApplyRow>>          // SELECT string at ~line 103: '.select("id, name, slug, apply_form_enabled")'
 
 From src/lib/supabase/service.ts:
   export function createServiceClient()  // service-role, bypasses RLS
@@ -152,76 +166,86 @@ AI-usage caps (AUTHORITATIVE — from docs/cost-and-pricing-analysis.md §5, per
 </task>
 
 <task type="auto">
-  <name>Task 0.2: Extend PUBLIC_PATHS + middleware matcher for new public routes</name>
+  <name>Task 0.2: Extend PUBLIC_PATHS + middleware matcher for new public routes (incl. /welcome)</name>
   <read_first>
     - src/lib/supabase/middleware.ts (the file being modified — the PUBLIC_PATHS array + isPublic logic)
     - src/middleware.ts (the matcher — extended in 260528-0rd for the same class of bug)
     - .planning/phases/05-saas-shell/05-RESEARCH.md (Pitfall 3 — middleware omission was P0/P1 in 260527-x2q + 260528-0rd)
   </read_first>
   <action>
-    In src/lib/supabase/middleware.ts, add to PUBLIC_PATHS (with an explanatory comment block per the existing style for each): `/api/stripe/webhook` (Stripe-signature-verified, no Supabase session — Stripe POSTs carry no cookies; gating it 307-redirects the webhook and breaks billing sync), `/api/stripe/checkout` and `/api/stripe/portal` ONLY IF they must run pre-auth — NOTE checkout/portal are called by authenticated users, so they do NOT go in PUBLIC_PATHS; only `/api/stripe/webhook` does. Add the marketing/docs/status public surfaces: `/pricing`, `/features`, `/docs`, `/status`, and the marketing landing. Because the `(marketing)` route group renders at top-level paths (e.g. `/`, `/pricing`), and `/` is the authenticated dashboard, DO NOT blanket-allow `/`. Instead allow the specific marketing child paths (`/pricing`, `/features`, `/docs`, `/status`) and document that the marketing landing page itself is decided in 05-04 (it may live at `/welcome` or be served to logged-out users at `/` — 05-04 owns that routing decision; this task allows the unambiguous children only).
+    In src/lib/supabase/middleware.ts, add to PUBLIC_PATHS (with an explanatory comment block per the existing style for each): `/api/stripe/webhook` (Stripe-signature-verified, no Supabase session — Stripe POSTs carry no cookies; gating it 307-redirects the webhook and breaks billing sync). NOTE checkout/portal (`/api/stripe/checkout`, `/api/stripe/portal`) are called by authenticated users, so they do NOT go in PUBLIC_PATHS.
+    Add the marketing/docs/status public surfaces: `/welcome` (the pre-decided marketing landing route — DECIDED here in Wave 0 so 05-04 only creates route files and never touches middleware), `/pricing`, `/features`, `/docs`, `/status`. The marketing landing lives at `/welcome` (NOT at `/` — `/` remains the authenticated dashboard), so adding `/welcome` is unambiguous and does not require blanket-allowing `/`. 05-04 creates `(marketing)/welcome/page.tsx`, `pricing`, `features`, `/docs`, `/status` against these already-allowed paths.
     Confirm `/admin` is NOT added to PUBLIC_PATHS (it is authenticated + role-gated in the layout, per 05-RESEARCH Pitfall 8).
     Verify src/middleware.ts matcher does not already exclude these paths in a way that breaks them; the existing matcher excludes static assets only, so the new paths flow through updateSession() correctly — no matcher change is needed UNLESS /docs serves static MDX assets, in which case leave that to 05-04. Add a comment noting the matcher was reviewed for Phase 5 and needs no change.
   </action>
   <verify>
-    <automated>grep -q "/api/stripe/webhook" src/lib/supabase/middleware.ts && grep -q "/pricing" src/lib/supabase/middleware.ts && grep -q "/docs" src/lib/supabase/middleware.ts && grep -q "/status" src/lib/supabase/middleware.ts && ! grep -q "'/admin'" src/lib/supabase/middleware.ts && pnpm typecheck</automated>
+    <automated>grep -q "/api/stripe/webhook" src/lib/supabase/middleware.ts && grep -q "/welcome" src/lib/supabase/middleware.ts && grep -q "/pricing" src/lib/supabase/middleware.ts && grep -q "/docs" src/lib/supabase/middleware.ts && grep -q "/status" src/lib/supabase/middleware.ts && ! grep -q "'/admin'" src/lib/supabase/middleware.ts && pnpm typecheck</automated>
   </verify>
   <acceptance_criteria>
     - source: `grep -v '^\s*//' src/lib/supabase/middleware.ts | grep -c "/api/stripe/webhook"` ≥ 1
-    - source: PUBLIC_PATHS contains `/pricing`, `/features`, `/docs`, `/status`
+    - source: PUBLIC_PATHS contains `/welcome`, `/pricing`, `/features`, `/docs`, `/status`
     - source: PUBLIC_PATHS does NOT contain `/admin` and does NOT contain a bare `/api/stripe/checkout`-as-public (checkout is authenticated)
     - test-command: `pnpm typecheck` passes
   </acceptance_criteria>
-  <done>The new public routes reach their handlers; /admin stays gated; matcher reviewed. Mirrors the fix pattern from 260527-x2q/260528-0rd preemptively.</done>
+  <done>The new public routes (incl. the pre-decided `/welcome` landing) reach their handlers; /admin stays gated; matcher reviewed. 05-04 inherits all marketing paths already allowlisted. Mirrors the fix pattern from 260527-x2q/260528-0rd preemptively.</done>
 </task>
 
 <task type="auto">
-  <name>Task 0.3: Write Phase 5 migrations (billing tables + org columns + super_admin doc)</name>
+  <name>Task 0.3: Write Phase 5 migrations (billing tables + ai_cap_notifications + org columns + super_admin doc) + wire brand columns into the org DB helper</name>
   <read_first>
     - supabase/migrations/20260524000100_org_invitations.sql (reference for RLS policy + set_org trigger conventions on a new tenant table)
     - supabase/migrations/20260519092943_phase2_organizations_extensions.sql (reference for an `alter table organizations add column ... check (...)` pattern)
     - .planning/phases/05-saas-shell/05-RESEARCH.md (Subscriptions Table Migration shape + Pattern 5 hex CHECK)
-    - src/lib/db/organizations.ts (the OrganizationRow type to extend with the 3 new columns)
+    - src/lib/db/organizations.ts (the OrganizationRow type ~lines 18-21, OrganizationApplyRow ~lines 90-95, and the three SELECT strings at ~lines 29/69/103 to extend)
   </read_first>
   <action>
     Create supabase/migrations/20260604120000_phase5_saas_billing.sql (append-only — never edit a committed migration):
     (a) `create table public.subscriptions` with columns: id uuid PK default gen_random_uuid(); organization_id uuid not null UNIQUE references organizations(id) on delete cascade; stripe_customer_id text unique; stripe_subscription_id text unique; plan_key text not null default 'none' check (plan_key in ('starter','pro','scale','none')); plan_seats int not null default 0; status text not null default 'none' check (status in ('trialing','active','past_due','cancelled','none')); trial_end timestamptz; current_period_end timestamptz; created_at/updated_at timestamptz default now(). Add an `updated_at` BEFORE UPDATE trigger if the codebase has a shared one (check existing migrations for `set_updated_at` / `moddatetime`), else a simple trigger.
-    (b) `alter table public.organizations add column stripe_customer_id text unique, add column brand_primary text check (brand_primary ~ '^#[0-9a-fA-F]{6}$'), add column brand_secondary text check (brand_secondary ~ '^#[0-9a-fA-F]{6}$')`. The hex CHECK is the DB-level half of the brand-XSS defence (Pitfall 5 / D-decision-7).
+    (b) `alter table public.organizations add column stripe_customer_id text unique, add column brand_primary text check (brand_primary ~ '^#[0-9a-fA-F]{6}$'), add column brand_secondary text check (brand_secondary ~ '^#[0-9a-fA-F]{6}$')`. The hex CHECK is the DB-level half of the brand-XSS defence (Pitfall 5 / D-10).
     (c) `create table public.stripe_webhook_events (stripe_event_id text primary key, event_type text, created_at timestamptz not null default now())` — the idempotency table (UNIQUE on stripe_event_id via PK).
-    (d) RLS: `alter table public.subscriptions enable row level security;` with a SELECT policy `org_members_read_own_subscription using (organization_id = public.current_organization_id())`. NO insert/update/delete policy — writes are service-role-only (webhook handler). `alter table public.stripe_webhook_events enable row level security;` with NO policies at all (service-role only; RLS-enabled-no-policy = deny-all for authenticated, service-role bypasses).
-    (e) Grant column-level SELECT on the new organizations columns consistent with how logo_url/apply_form_enabled were granted (check 20260518202000 + 20260519092943 for the grant pattern).
+    (d) `create table public.ai_cap_notifications (id uuid primary key default gen_random_uuid(), organization_id uuid not null references organizations(id) on delete cascade, bucket text not null, notified_month text not null, created_at timestamptz not null default now(), unique (organization_id, bucket, notified_month))` — the once-per-bucket-per-month dedup ledger for the 80% soft-cap warning email (consumed by 05-01 Task 1.4). `notified_month` is a 'YYYY-MM' string. RLS: enable row level security with NO authenticated policies (service-role only — cap enforcement runs server-side in claude.ts/Inngest; RLS-enabled-no-policy = deny-all for authenticated).
+    (e) RLS for subscriptions/webhook-events: `alter table public.subscriptions enable row level security;` with a SELECT policy `org_members_read_own_subscription using (organization_id = public.current_organization_id())`. NO insert/update/delete policy — writes are service-role-only (webhook handler). `alter table public.stripe_webhook_events enable row level security;` with NO policies at all (service-role only; RLS-enabled-no-policy = deny-all for authenticated, service-role bypasses).
+    (f) Grant column-level SELECT on the new organizations columns consistent with how logo_url/apply_form_enabled were granted (check 20260518202000 + 20260519092943 for the grant pattern). The `brand_primary` + `brand_secondary` SELECT grant must reach the anon/service path used by the public apply page (BRAND-01).
     Create supabase/migrations/20260604120100_phase5_super_admin_flag.sql as a DOCUMENTATION migration: a SQL comment block + the exact `update auth.users set raw_app_meta_data = raw_app_meta_data || '{"super_admin": true}'::jsonb where email = 'alasdairj8@gmail.com';` statement, gated behind a guard so a fresh-DB `db push` does not fail if the founder account doesn't exist yet (wrap in a `do $$ begin ... if exists (...) then ... end if; end $$;` block). This makes the flag reproducible across environments without a manual-only step, while still being safe on a clean DB.
-    Update src/lib/db/organizations.ts: extend `OrganizationRow` and `OrganizationApplyRow` types + the SELECT strings to include `stripe_customer_id`, `brand_primary`, `brand_secondary` (apply row needs brand_primary + brand_secondary for the BRAND-01 render in 05-02; OrganizationRow gets all three). Extend `UpdateOrganizationPatch` with `brand_primary?: string | null; brand_secondary?: string | null`.
+    Update src/lib/db/organizations.ts (this task OWNS the brand-column wiring — do it unconditionally; 05-02 only consumes the columns):
+      1. Extend the `OrganizationRow` type (~lines 18-21) to add `stripe_customer_id: string | null; brand_primary: string | null; brand_secondary: string | null`.
+      2. Extend the `OrganizationApplyRow` type (~lines 90-95) to add `logo_url: string | null; brand_primary: string | null; brand_secondary: string | null` (the apply page needs logo + both brand colours for the BRAND-01 render in 05-02).
+      3. Extend the `getOrganizationBySlug` SELECT string (~line 103) from `'id, name, slug, apply_form_enabled'` to `'id, name, slug, apply_form_enabled, logo_url, brand_primary, brand_secondary'`. This is the BRAND-01 key link — without it the apply renderer in 05-02 has nothing to read.
+      4. Extend the `getOrganization` SELECT (~line 29) and `updateOrganization` SELECT (~line 69) to include `stripe_customer_id, brand_primary, brand_secondary` so the settings page (05-02) can read/write brand colours.
+      5. Extend `UpdateOrganizationPatch` (~lines 43-47) with `brand_primary?: string | null; brand_secondary?: string | null`, and add the corresponding conditional spreads to the `updatePayload` in `updateOrganization`.
+    Keep the existing `as unknown as` boundary-cast comments accurate (the casts hold until Task 0.4 regenerates database.ts; extend the comment to mention the new columns).
     Do NOT run the migration in this task — Task 0.4 is the [BLOCKING] push.
   </action>
   <verify>
-    <automated>grep -q "create table public.subscriptions" supabase/migrations/20260604120000_phase5_saas_billing.sql && grep -q "brand_primary text check" supabase/migrations/20260604120000_phase5_saas_billing.sql && grep -q "stripe_webhook_events" supabase/migrations/20260604120000_phase5_saas_billing.sql && grep -q "org_members_read_own_subscription" supabase/migrations/20260604120000_phase5_saas_billing.sql && grep -q "brand_primary" src/lib/db/organizations.ts && pnpm typecheck</automated>
+    <automated>grep -q "create table public.subscriptions" supabase/migrations/20260604120000_phase5_saas_billing.sql && grep -q "brand_primary text check" supabase/migrations/20260604120000_phase5_saas_billing.sql && grep -q "stripe_webhook_events" supabase/migrations/20260604120000_phase5_saas_billing.sql && grep -q "ai_cap_notifications" supabase/migrations/20260604120000_phase5_saas_billing.sql && grep -q "unique (organization_id, bucket, notified_month)" supabase/migrations/20260604120000_phase5_saas_billing.sql && grep -q "org_members_read_own_subscription" supabase/migrations/20260604120000_phase5_saas_billing.sql && grep -q "brand_primary, brand_secondary" src/lib/db/organizations.ts && grep -c "brand_primary" src/lib/db/organizations.ts && pnpm typecheck</automated>
   </verify>
   <acceptance_criteria>
     - source: subscriptions table has UNIQUE organization_id, plan_key + status CHECK constraints, RLS enabled with exactly one SELECT policy and no write policy
     - source: organizations gains stripe_customer_id (unique) + brand_primary + brand_secondary, both colour columns with `~ '^#[0-9a-fA-F]{6}$'` CHECK
     - source: stripe_webhook_events PK is stripe_event_id (UNIQUE idempotency)
+    - source: ai_cap_notifications table exists with UNIQUE (organization_id, bucket, notified_month) and RLS-enabled-no-authenticated-policy (service-role only)
     - source: super_admin migration is idempotent/guarded (wrapped in an existence check) so `db push` is safe on a fresh DB
-    - source: src/lib/db/organizations.ts OrganizationRow + OrganizationApplyRow + SELECT strings include the new columns
+    - source: src/lib/db/organizations.ts `getOrganizationBySlug` SELECT string contains `logo_url, brand_primary, brand_secondary`, AND `OrganizationApplyRow` type declares `brand_primary` + `brand_secondary` (+ `logo_url`)
+    - source: `OrganizationRow` + `getOrganization`/`updateOrganization` SELECTs include `brand_primary, brand_secondary`; `UpdateOrganizationPatch` has the two brand fields
     - test-command: `pnpm typecheck` passes
   </acceptance_criteria>
-  <done>Two migration files written (billing tables + columns + idempotency table + RLS; guarded super_admin), organizations DB helper extended. Not yet pushed.</done>
+  <done>Two migration files written (billing tables + brand columns + idempotency table + ai_cap_notifications dedup ledger + RLS; guarded super_admin), organizations DB helper extended unconditionally so getOrganizationBySlug + OrganizationApplyRow expose the brand columns (BRAND-01 key link owned here, consumed by 05-02). Not yet pushed.</done>
 </task>
 
 <task type="checkpoint:human-action" gate="blocking">
   <name>Task 0.4: [BLOCKING] Push migrations to linked Supabase + regenerate types + set super_admin</name>
   <what-built>
-    Two migration files (20260604120000_phase5_saas_billing.sql, 20260604120100_phase5_super_admin_flag.sql) are written and ready to apply. Per project memory ([[supabase-migrations-manual-push]]), GitHub->Supabase auto-apply is unreliable — the push is manual and mandatory, and may require interactive Supabase auth.
+    Two migration files (20260604120000_phase5_saas_billing.sql — subscriptions, stripe_webhook_events, ai_cap_notifications, organizations columns; 20260604120100_phase5_super_admin_flag.sql) are written and ready to apply. Per project memory ([[supabase-migrations-manual-push]]), GitHub->Supabase auto-apply is unreliable — the push is manual and mandatory, and may require interactive Supabase auth.
   </what-built>
   <how-to-verify>
     Run, in order:
     1. `pnpm exec supabase db push --linked` — applies both new migrations to the linked cloud DB. If it prompts for auth, complete it.
     2. `pnpm db:types` — regenerates src/types/database.ts from the live schema (this replaces the hand-cast types in organizations.ts with canonical introspection output; the casts in Task 0.3 are a temporary boundary until this runs).
-    3. Confirm in Supabase Dashboard SQL editor that `select * from public.subscriptions limit 1;`, `select brand_primary from public.organizations limit 1;`, and `select * from public.stripe_webhook_events limit 1;` all succeed (empty result = OK; "relation does not exist" = FAIL).
+    3. Confirm in Supabase Dashboard SQL editor that `select * from public.subscriptions limit 1;`, `select brand_primary, brand_secondary from public.organizations limit 1;`, `select * from public.stripe_webhook_events limit 1;`, and `select * from public.ai_cap_notifications limit 1;` all succeed (empty result = OK; "relation does not exist" = FAIL).
     4. Confirm `select raw_app_meta_data->>'super_admin' from auth.users where email = 'alasdairj8@gmail.com';` returns `true`. If the guarded migration did not set it (account created after push), run the update statement from 20260604120100 manually.
     5. `pnpm typecheck` — must pass against the regenerated types.
   </how-to-verify>
-  <resume-signal>Type "pushed" once all three tables exist, types are regenerated, super_admin returns true, and typecheck passes — or describe the failure.</resume-signal>
+  <resume-signal>Type "pushed" once all four tables exist (subscriptions, stripe_webhook_events, ai_cap_notifications, + the new organizations columns), types are regenerated, super_admin returns true, and typecheck passes — or describe the failure.</resume-signal>
 </task>
 
 </tasks>
@@ -233,7 +257,7 @@ AI-usage caps (AUTHORITATIVE — from docs/cost-and-pricing-analysis.md §5, per
 |----------|-------------|
 | build/runtime env | Missing Stripe keys must not crash the app; features degrade, app stays up |
 | middleware → routes | New public routes must reach handlers; auth-gated routes must stay gated |
-| client → DB (RLS) | subscriptions readable by own org only; webhook-events deny-all for authenticated |
+| client → DB (RLS) | subscriptions readable by own org only; webhook-events + ai_cap_notifications deny-all for authenticated |
 
 ## STRIDE Threat Register
 
@@ -241,7 +265,7 @@ AI-usage caps (AUTHORITATIVE — from docs/cost-and-pricing-analysis.md §5, per
 |-----------|----------|-----------|-------------|-----------------|
 | T-05-00-01 | Denial of Service | env.ts module load | mitigate | All Stripe vars `.optional()`; client fails closed at call time, never at boot (Pitfall 7) |
 | T-05-00-02 | Elevation of Privilege | subscriptions RLS | mitigate | SELECT policy scoped to current_organization_id(); no write policy (service-role only) |
-| T-05-00-03 | Information Disclosure | stripe_webhook_events | mitigate | RLS enabled, zero policies = deny-all for authenticated role |
+| T-05-00-03 | Information Disclosure | stripe_webhook_events + ai_cap_notifications | mitigate | RLS enabled, zero policies = deny-all for authenticated role |
 | T-05-00-04 | Tampering | brand colour columns | mitigate | DB CHECK `~ '^#[0-9a-fA-F]{6}$'` (DB-level half of XSS defence; render-level half in 05-02) |
 | T-05-00-05 | Spoofing | /api/stripe/webhook routing | mitigate | Added to PUBLIC_PATHS so signature-verified handler (05-01) actually runs instead of 307 |
 | T-05-00-SC | Tampering | npm installs (stripe, papaparse) | accept | Both [ASSUMED]-approved in 05-RESEARCH audit: stripe = official Stripe Inc. (14yr), papaparse (11yr). No [SUS]/[SLOP] packages → no blocking checkpoint required. |
@@ -250,14 +274,18 @@ AI-usage caps (AUTHORITATIVE — from docs/cost-and-pricing-analysis.md §5, per
 <verification>
 - `pnpm typecheck` and `pnpm lint` pass.
 - `pnpm build` succeeds with NO Stripe env vars set (proves isolation).
-- All three new tables queryable in Supabase; super_admin flag true for founder.
-- PUBLIC_PATHS contains the four new public surfaces; /admin absent.
+- All four new tables (subscriptions, stripe_webhook_events, ai_cap_notifications, + organizations columns) queryable in Supabase; super_admin flag true for founder.
+- PUBLIC_PATHS contains the five new public surfaces (`/welcome`, `/pricing`, `/features`, `/docs`, `/status`) + `/api/stripe/webhook`; /admin absent.
+- getOrganizationBySlug SELECT + OrganizationApplyRow expose brand_primary/brand_secondary (BRAND-01 key link).
 </verification>
 
 <success_criteria>
 - App boots and builds without any Stripe configuration.
 - Migrations applied to linked DB; types regenerated; typecheck green against canonical types.
 - PLANS constant encodes the §5 pricing-doc caps exactly.
+- ai_cap_notifications dedup ledger exists for 05-01's soft-cap email once-per-bucket-per-month guarantee.
+- Marketing landing route `/welcome` (+ /pricing /features /docs /status) is allowlisted in middleware; 05-04 inherits it.
+- Brand columns are SELECTed by the org DB helper so 05-02's apply renderer can consume them.
 - Foundation ready: 05-01..05-05 can build in parallel on top.
 </success_criteria>
 

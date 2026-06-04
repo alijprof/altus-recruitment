@@ -65,13 +65,14 @@ Output: branding settings page + form + action + schema, a shared colour-validat
 @src/lib/db/organizations.ts
 
 <interfaces>
-<!-- 05-00 added brand_primary/brand_secondary to organizations + the DbResult helpers. -->
+<!-- 05-00 added brand_primary/brand_secondary (and logo_url on the apply row) to the org DB helpers + the SELECT strings. This plan ONLY consumes them. -->
 
-From src/lib/db/organizations.ts (extended in 05-00):
+From src/lib/db/organizations.ts (extended in 05-00 — DONE there, not here):
   export type OrganizationRow = { id; name; slug; logo_url; apply_form_enabled; stripe_customer_id; brand_primary: string | null; brand_secondary: string | null }
-  export type OrganizationApplyRow = { id; name; slug; apply_form_enabled; brand_primary: string | null; brand_secondary: string | null }
+  export type OrganizationApplyRow = { id; name; slug; apply_form_enabled; logo_url: string | null; brand_primary: string | null; brand_secondary: string | null }
   export type UpdateOrganizationPatch = { name?; logo_url?; apply_form_enabled?; brand_primary?: string | null; brand_secondary?: string | null }
   export async function getOrganization(supabase, orgId): Promise<DbResult<OrganizationRow>>
+  // getOrganizationBySlug SELECT (set in 05-00) is: 'id, name, slug, apply_form_enabled, logo_url, brand_primary, brand_secondary'
   export async function getOrganizationBySlug(supabase, slug): Promise<DbResult<OrganizationApplyRow>>
   export async function updateOrganization(supabase, orgId, patch): Promise<DbResult<OrganizationRow>>
 
@@ -128,7 +129,7 @@ Brand defaults (Altus): primary '#0A3D5C' (Midnight), secondary '#5DCAA5' (Mint)
     - .planning/phases/05-saas-shell/05-RESEARCH.md (Pattern 5 — inject as style object custom properties, NEVER a style tag)
   </read_first>
   <action>
-    In src/app/(public)/apply/[orgSlug]/page.tsx: the existing getOrganizationBySlug now returns brand_primary + brand_secondary (added to OrganizationApplyRow + the SELECT string in 05-00). Compute brandPrimary = safeHex(org.brand_primary, BRAND_DEFAULTS.primary) and brandSecondary = safeHex(org.brand_secondary, BRAND_DEFAULTS.secondary) — re-validate at render even though the DB CHECK + Server Action already validated (defence in depth, Pitfall 5). Wrap the page content in a div with `style={{ '--brand-primary': brandPrimary, '--brand-secondary': brandSecondary } as React.CSSProperties}`. NEVER build a <style> string. Render the org logo: if org.logo_url is present, show it (use a plain <img> or next/image as the codebase convention dictates) in the header; fall back to the org name wordmark when absent. Pass the org logo_url through getOrganizationBySlug (add logo_url to OrganizationApplyRow + the SELECT if not already there — confirm against 05-00's change; if 05-00 only added the colour fields, extend the apply row select to include logo_url here).
+    In src/app/(public)/apply/[orgSlug]/page.tsx: getOrganizationBySlug ALREADY returns logo_url + brand_primary + brand_secondary — 05-00 added these three fields to OrganizationApplyRow AND extended the SELECT string to `'id, name, slug, apply_form_enabled, logo_url, brand_primary, brand_secondary'`. This task does NOT touch organizations.ts; it only consumes the row. Compute brandPrimary = safeHex(org.brand_primary, BRAND_DEFAULTS.primary) and brandSecondary = safeHex(org.brand_secondary, BRAND_DEFAULTS.secondary) — re-validate at render even though the DB CHECK + Server Action already validated (defence in depth, Pitfall 5). Wrap the page content in a div with `style={{ '--brand-primary': brandPrimary, '--brand-secondary': brandSecondary } as React.CSSProperties}`. NEVER build a <style> string. Render the org logo: if org.logo_url is present, show it (use a plain <img> or next/image as the codebase convention dictates) in the header; fall back to the org name wordmark when absent.
     In apply-form.tsx (and/or the page's CTA): style the primary button / accent using the `var(--brand-primary)` / `var(--brand-secondary)` custom properties (Tailwind arbitrary value e.g. `bg-[var(--brand-primary)]` or an inline style referencing the var). Keep contrast/readability sane with the defaults. Do NOT interpolate the raw hex into a className string in a way that defeats validation — always go through the CSS custom property set on the wrapper.
     Keep the anti-enumeration behaviour intact (unknown slug / apply_form_enabled=false still notFound()).
   </action>
@@ -138,12 +139,13 @@ Brand defaults (Altus): primary '#0A3D5C' (Midnight), secondary '#5DCAA5' (Mint)
   <acceptance_criteria>
     - source: apply page calls safeHex on both colours at render time (render-level re-validation)
     - source: colours injected via a React style object custom property; NO <style> tag string anywhere in the file
+    - source: this task does NOT modify src/lib/db/organizations.ts — the brand/logo columns are already on OrganizationApplyRow + the SELECT (owned by 05-00)
     - behavior: an org with no brand colours renders the Altus defaults (no crash, no empty var)
     - behavior: org logo renders when logo_url set; wordmark fallback otherwise
     - behavior: unknown/disabled org still returns notFound() (anti-enumeration preserved)
     - test-command: `pnpm typecheck && pnpm lint` pass
   </acceptance_criteria>
-  <done>The public apply page shows the org's logo and brand colours via validated CSS custom properties, with defaults as fallback and the XSS vector closed at every layer.</done>
+  <done>The public apply page shows the org's logo and brand colours via validated CSS custom properties (read from the row 05-00 already widened), with defaults as fallback and the XSS vector closed at every layer.</done>
 </task>
 
 </tasks>

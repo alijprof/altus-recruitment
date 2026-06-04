@@ -22,6 +22,7 @@ requirements: [MARKETING-01]
 must_haves:
   truths:
     - "A logged-out visitor can read a marketing landing, a pricing page, and a features page without authenticating"
+    - "GET /welcome, /pricing, /features, /docs, /status with no session returns HTTP 200 (not 307 to /sign-in)"
     - "The pricing page renders the three tiers (Pro highlighted as default) straight from the PLANS constant"
     - "A visitor can read in-app documentation under /docs"
     - "A visitor can see a simple status page reflecting whether the app + DB are reachable"
@@ -48,9 +49,9 @@ must_haves:
 ---
 
 <objective>
-The public marketing surface (MARKETING-01): a `(marketing)` route group (landing + pricing + features), an in-app `/docs` documentation area, and a simple `/status` page — all in-app, no separate hosting (D-15). The pricing page renders the three tiers straight from the PLANS constant so prices never drift from billing.
+The public marketing surface (MARKETING-01): a `(marketing)` route group (landing at `/welcome` + pricing + features), an in-app `/docs` documentation area, and a simple `/status` page — all in-app, no separate hosting (D-15). The pricing page renders the three tiers straight from the PLANS constant so prices never drift from billing.
 
-This is a thin vertical slice: public pages a prospect can read, with the pricing CTA wired into the signup/checkout flow built in 05-01.
+This is a thin vertical slice: public pages a prospect can read, with the pricing CTA wired into the signup/checkout flow built in 05-01. The marketing landing route (`/welcome`) and all public-path allowlisting were PRE-DECIDED and applied in 05-00 (Wave 0) — this plan only creates the route/page files against those already-allowlisted paths and never touches middleware.
 
 Purpose: Gives the founder something to share with prospects (the front door to self-serve customer #2+) without standing up a separate CDN/DNS/marketing-site stack.
 Output: marketing route group + pricing/features/landing, /docs, /status, a PLANS-driven pricing table, and marketing nav.
@@ -66,53 +67,54 @@ Output: marketing route group + pricing/features/landing, /docs, /status, a PLAN
 @.planning/phases/05-saas-shell/05-CONTEXT.md
 @.planning/phases/05-saas-shell/05-RESEARCH.md
 @CLAUDE.md
-@docs/pricing-overheads-breakeven-2026-06-04.md
+@docs/cost-and-pricing-analysis.md
 @src/lib/supabase/middleware.ts
 
 <interfaces>
-<!-- 05-00 added the marketing/docs/status paths to PUBLIC_PATHS already. -->
+<!-- 05-00 added the marketing/docs/status paths (incl. /welcome) to PUBLIC_PATHS already. This plan does NOT edit middleware. -->
 
 From src/lib/stripe/plans.ts (05-00):
   export const PLANS: { starter: { label; pricePence:5900; seats:3; aiCaps:{...} }, pro: { label; pricePence:8900; seats:8; aiCaps:{...} }, scale: { label; pricePence:12900; seats:99; aiCaps:{...} } }
   export type PlanKey = 'starter' | 'pro' | 'scale'
   // Pro is the default/highlighted tier.
 
-From src/lib/supabase/middleware.ts (05-00): PUBLIC_PATHS includes /pricing, /features, /docs, /status. The marketing landing routing (where the logged-out '/' lands) is decided HERE in 05-04 — see Task 4.1.
+From src/lib/supabase/middleware.ts (05-00 — DONE there, read-only here): PUBLIC_PATHS already includes /welcome, /pricing, /features, /docs, /status. The marketing landing route was DECIDED as `/welcome` in 05-00; this plan only creates the page files at those paths. DO NOT add anything to PUBLIC_PATHS in this plan.
 
 From src/lib/supabase/server.ts: createClient() — usable in /status for a lightweight DB reachability probe (a trivial SELECT 1 / count query).
 
 Existing public route group precedent: src/app/(public)/apply/[orgSlug]/ (a sibling public group with its own layout, no auth).
 Brand: Midnight #0A3D5C, Mint #5DCAA5. Existing email/brand assets at /public/email/altus-recruit-logo.svg.
-Pricing copy source: docs/pricing-overheads-breakeven-2026-06-04.md (positioning: AI bundled, no add-on tier; Pro £89 founding price). Marketing copy is placeholder-quality — the founder fills real copy later.
+Pricing copy source: docs/cost-and-pricing-analysis.md (positioning: AI bundled, no add-on tier; Pro £89 founding price; §5 AI caps). Marketing copy is placeholder-quality — the founder fills real copy later.
 </interfaces>
 </context>
 
 <tasks>
 
 <task type="auto">
-  <name>Task 4.1: Marketing route group — landing, pricing (PLANS-driven), features + nav</name>
+  <name>Task 4.1: Marketing route group — landing (/welcome), pricing (PLANS-driven), features + nav</name>
   <read_first>
     - src/app/(public)/apply/[orgSlug]/page.tsx + the (public) layout (sibling public-group precedent: layout with no auth)
-    - src/lib/supabase/middleware.ts (PUBLIC_PATHS — confirm /pricing,/features are allowed; decide the landing route here)
+    - src/lib/supabase/middleware.ts (read-only — confirm /welcome, /pricing, /features are ALREADY in PUBLIC_PATHS from 05-00; do NOT edit this file)
     - src/lib/stripe/plans.ts (PLANS — the pricing source of truth)
-    - docs/pricing-overheads-breakeven-2026-06-04.md (§4 positioning + §5 tiers; Pro is the founding/default tier)
+    - docs/cost-and-pricing-analysis.md (§4 positioning + §5 tiers; Pro is the founding/default tier)
   </read_first>
   <action>
-    Create the `(marketing)` route group with its own layout.tsx (no auth; a marketing-nav header + footer). Routing decision (resolving the 05-00 note): the authenticated dashboard owns `/`. To avoid colliding, place the marketing landing at `/welcome` (in PUBLIC_PATHS — add `/welcome` to PUBLIC_PATHS in src/lib/supabase/middleware.ts as part of this task, since 05-04 owns the landing route) and link to it from sign-in/sign-up footers; pricing at `/pricing`, features at `/features`. (Do NOT remap `/` to marketing — that would break the authed dashboard and the existing logged-in redirect in middleware.)
+    Create the `(marketing)` route group with its own layout.tsx (no auth; a marketing-nav header + footer). Routing is ALREADY DECIDED by 05-00: the authenticated dashboard owns `/`; the marketing landing lives at `/welcome`, and `/welcome`, `/pricing`, `/features` are ALREADY in PUBLIC_PATHS. This task does NOT edit src/lib/supabase/middleware.ts — it only creates page files at the pre-allowlisted paths. (Do NOT remap `/` to marketing — that would break the authed dashboard and the existing logged-in redirect in middleware.) Link to `/welcome` from the sign-in/sign-up footers.
     Create src/components/marketing/marketing-nav.tsx (links: Features /features, Pricing /pricing, Docs /docs, Status /status, Sign in /sign-in, Get started /sign-up). Create src/components/marketing/pricing-table.tsx — renders the three tiers from PLANS: label, formatted GBP price/seat/mo (pricePence→£ using the existing GBP formatter convention, e.g. Intl.NumberFormat 'en-GB' currency GBP), seat allowance, the AI caps as bullet features (match-scores, CV parses, searches, spec-call minutes per seat/mo), and a CTA per tier. Highlight Pro as the recommended/default tier (badge + emphasis). Each CTA routes to /sign-up?plan=<planKey> (the signup→checkout flow from 05-01 reads the chosen plan; if signup doesn't yet thread the plan, the CTA can deep-link to /sign-up and the post-signup checkout defaults to Pro — keep the planKey in the query string regardless).
     Create the three pages: (marketing)/welcome/page.tsx (landing — headline + value props + a "Get started" CTA + an embedded pricing-table or a link to /pricing), (marketing)/pricing/page.tsx (renders <PricingTable/> + the founding-price framing), (marketing)/features/page.tsx (feature list — semantic search, AI CV parsing, match scoring, spec→JD, etc.). All RSC, static where possible, placeholder marketing copy clearly marked for the founder to replace. Keep them lightweight; a design polish pass on these customer-facing surfaces happens at build time.
   </action>
   <verify>
-    <automated>grep -q "PLANS" src/components/marketing/pricing-table.tsx && grep -q "/welcome" src/lib/supabase/middleware.ts && grep -q "pricing-table\|PricingTable" "src/app/(marketing)/pricing/page.tsx" && pnpm typecheck && pnpm lint</automated>
+    <automated>grep -q "PLANS" src/components/marketing/pricing-table.tsx && grep -q "pricing-table\|PricingTable" "src/app/(marketing)/pricing/page.tsx" && grep -q "/welcome" src/lib/supabase/middleware.ts && pnpm typecheck && pnpm lint</automated>
   </verify>
   <acceptance_criteria>
     - behavior: /welcome, /pricing, /features render for a logged-OUT visitor (no redirect to /sign-in)
+    - behavior: with no session, each of /welcome /pricing /features /docs /status returns HTTP 200 — verify e.g. `curl -s -o /dev/null -w "%{http_code}" <baseUrl>/welcome` (and the same for /pricing, /features, /docs, /status) returns 200, NOT 307. (Run against the dev server / preview deploy; logged-out = no auth cookie.)
     - source: pricing-table imports and iterates PLANS (no hardcoded prices); Pro visibly highlighted
-    - source: /welcome added to PUBLIC_PATHS; `/` is NOT remapped to marketing
+    - source: this task does NOT modify src/lib/supabase/middleware.ts — `/welcome` + the other public paths are already allowlisted by 05-00 (the verify grep just confirms 05-00's entry is present)
     - behavior: each tier CTA links to /sign-up (with ?plan=<key>)
     - test-command: `pnpm typecheck && pnpm lint` pass
   </acceptance_criteria>
-  <done>Marketing landing/pricing/features live as public pages; pricing renders from PLANS with Pro highlighted; CTAs feed the signup/checkout flow.</done>
+  <done>Marketing landing (/welcome)/pricing/features live as public pages against the paths 05-00 already allowlisted; pricing renders from PLANS with Pro highlighted; CTAs feed the signup/checkout flow. Middleware untouched by this plan.</done>
 </task>
 
 <task type="auto">
@@ -120,7 +122,7 @@ Pricing copy source: docs/pricing-overheads-breakeven-2026-06-04.md (positioning
   <read_first>
     - "src/app/(app)/help/page.tsx" (the existing in-app help/cheat-sheet — reuse its section structure/copy as the seed for /docs content; quick-task 260603-fv0)
     - src/lib/supabase/server.ts (createClient — for the /status DB probe)
-    - src/lib/supabase/middleware.ts (confirm /docs + /status are in PUBLIC_PATHS from 05-00)
+    - src/lib/supabase/middleware.ts (read-only — confirm /docs + /status are in PUBLIC_PATHS from 05-00; do NOT edit)
   </read_first>
   <action>
     Create the /docs area: docs/content.ts exporting a typed array of doc sections/articles ({ slug, title, body | sections }) — seed from the existing /help page content (getting started, candidates + AI CV parsing, semantic search, clients, jobs, spec→job, pipeline/shortlists, reports, team & settings, integrations, billing). docs/layout.tsx (public layout + a sidebar nav listing the articles), docs/page.tsx (index linking each article), docs/[slug]/page.tsx (renders one article from content.ts; notFound() for unknown slugs; generateStaticParams from the content array so they prerender). Keep it static text (no MDX dependency needed — a typed content module is simpler and avoids a new build dependency per "don't hand-roll / favour simple"). PII-safe: docs use no tenant data and no real candidate screenshots (follow the /help ScreenshotSlot placeholder discipline if images are referenced).
@@ -131,9 +133,10 @@ Pricing copy source: docs/pricing-overheads-breakeven-2026-06-04.md (positioning
   </verify>
   <acceptance_criteria>
     - behavior: /docs index + at least one /docs/[slug] article render for a logged-OUT visitor
+    - behavior: with no session, GET /docs and GET /status return HTTP 200 (not 307) — covered by the curl check in Task 4.1's criteria
     - source: docs content lives in a typed content module (no new MDX/build dependency added)
     - behavior: /status renders App + Database indicators; a failing DB probe shows Degraded (caught), not a crash
-    - source: /docs and /status confirmed in PUBLIC_PATHS (from 05-00)
+    - source: /docs and /status confirmed in PUBLIC_PATHS (from 05-00; this task does not edit middleware)
     - source: no tenant data / real PII in docs content
     - test-command: `pnpm typecheck && pnpm lint` pass
   </acceptance_criteria>
@@ -163,11 +166,12 @@ Pricing copy source: docs/pricing-overheads-breakeven-2026-06-04.md (positioning
 <verification>
 - `pnpm typecheck` + `pnpm lint` pass.
 - Manual (logged out): /welcome, /pricing, /features, /docs, /docs/[slug], /status all render without a redirect to /sign-in; pricing shows three tiers with Pro highlighted and correct £ prices from PLANS.
+- Automated (logged out): `curl -s -o /dev/null -w "%{http_code}"` against /welcome, /pricing, /features, /docs, /status each returns 200 (not 307).
 - /status shows Operational normally and Degraded if the DB probe fails (no crash).
 </verification>
 
 <success_criteria>
-- Public marketing (landing/pricing/features), in-app docs, and a simple status page exist; pricing is PLANS-driven with Pro highlighted; CTAs feed signup/checkout. No separate hosting or new build dependency.
+- Public marketing (landing at /welcome / pricing / features), in-app docs, and a simple status page exist; pricing is PLANS-driven with Pro highlighted; CTAs feed signup/checkout. No separate hosting or new build dependency. Middleware allowlisting was owned by 05-00; this plan added no PUBLIC_PATHS edits.
 </success_criteria>
 
 <output>

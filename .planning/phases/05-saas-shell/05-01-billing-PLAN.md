@@ -27,7 +27,7 @@ must_haves:
     - "Stripe webhooks sync subscription lifecycle (trial start, active, past_due, cancelled) into the local subscriptions table, idempotently"
     - "getEntitlement(orgId) resolves plan + seats + AI-usage-this-month from local DB without ever calling Stripe at request time"
     - "Inviting a teammate beyond the plan's seat allowance is blocked server-side with a clear upgrade message"
-    - "When an org crosses 80% of any AI cap, an in-app banner shows + an email fires once; at 100%, match-scoring falls back to cached-only/queue and CV parsing queues (never blocks)"
+    - "When an org crosses 80% of any AI cap, an in-app banner shows + an email fires once per bucket per month (deduped via ai_cap_notifications); at 100%, match-scoring falls back to cached-only/queue and CV parsing queues (never blocks)"
     - "An owner can open the Stripe Customer Portal to upgrade/downgrade/cancel"
   artifacts:
     - path: "src/app/api/stripe/webhook/route.ts"
@@ -117,8 +117,12 @@ From src/lib/email/render.ts:
   export function renderTransactionalEmail(input: TransactionalEmail): string
   export function renderTransactionalEmailText(input: TransactionalEmail): string
 
+org_invitations (existing table — migration 20260524000100): columns id, organization_id, email, token, invited_by, expires_at, accepted_at, created_at. There is NO revoked_at column — revocation is a hard DELETE (the table has a tenant DELETE policy). A PENDING invite = `accepted_at IS NULL AND expires_at > now()`. Partial-unique index already exists on (organization_id, email) WHERE accepted_at IS NULL.
+
 ai_usage meter (existing table): columns org_id, model, purpose, input_tokens, output_tokens, cost_pence, created_at.
 Aggregate current-month usage by `purpose` to compare against PLANS[planKey].aiCaps * planSeats. record_ai_usage RPC writes rows.
+
+ai_cap_notifications (NEW table, created by 05-00 Wave-0 migration + pushed in 05-00 Task 0.4): columns id uuid pk, organization_id uuid, bucket text, notified_month text (e.g. '2026-06'), created_at timestamptz; UNIQUE (organization_id, bucket, notified_month). This is the once-per-bucket-per-month dedup ledger for the 80% soft-cap warning email.
 </interfaces>
 </context>
 
@@ -191,25 +195,31 @@ Aggregate current-month usage by `purpose` to compare against PLANS[planKey].aiC
   <name>Task 1.3: Seat enforcement at invite + billing settings page</name>
   <read_first>
     - "src/app/(app)/settings/team/actions.ts" (inviteMemberAction — the EXACT R8 ordering; seat check inserts at step 4.5)
+    - supabase/migrations/20260524000100_org_invitations.sql (CONFIRM the real columns: no revoked_at; pending = accepted_at IS NULL AND expires_at > now())
     - "src/app/(app)/settings/page.tsx" + "src/app/(app)/settings/usage/page.tsx" (settings page conventions, owner-only gating)
     - src/lib/stripe/entitlement.ts (getEntitlement, created Task 1.1)
   </read_first>
   <action>
-    Edit src/app/(app)/settings/team/actions.ts `inviteMemberAction`: after the owner-role check (step 4) and BEFORE the org_invitations insert (step 5), call `getEntitlement(me.organization_id, supabase)`. Compute prospective seat usage = activeSeats + pending-invitation count. If that would exceed `entitlement.planSeats` (when status is active/trialing/past_due — i.e. a real plan), return `{ ok:false, formError: 'You\'ve reached your plan\'s seat limit. Upgrade your plan to add more teammates.' }` BEFORE any DB write. When status is 'none' (no plan yet), allow invites up to the Pro trial seat allowance so the anchor/trial isn't blocked. Reuse the existing pending-invitation count or add a lightweight count query (RLS-scoped). Keep R8 ordering intact — no service-role escalation before the gate. Surface the error via the existing ActionResult formError path (the team UI already toasts formError — no silent false-success per CLAUDE.md).
+    Edit src/app/(app)/settings/team/actions.ts `inviteMemberAction` (D-09 seat enforcement at invite time): after the owner-role check (step 4) and BEFORE the org_invitations insert (step 5), and on the RLS-scoped client (the same `supabase` used for getUser/role — do NOT escalate to service-role for this read), compute prospective seats:
+      - activeSeats = entitlement.activeSeats (count of public.users in the org; already computed by getEntitlement(me.organization_id, supabase) from Task 1.1).
+      - pendingInvites = a count query on the RLS-scoped client: `select count(*) from org_invitations where organization_id = me.organization_id and accepted_at is null and expires_at > now()` (use `.from('org_invitations').select('id', { count: 'exact', head: true })` with `.is('accepted_at', null).gt('expires_at', new Date().toISOString())`). org_invitations has NO revoked_at column — revocation is a hard delete, so "not accepted and not expired" is the correct pending definition (confirm against the migration in read_first).
+      - prospective = activeSeats + pendingInvites + 1 (the invite about to be created).
+    Call `getEntitlement(me.organization_id, supabase)` first. If `entitlement.status` is a real plan (active/trialing/past_due) AND prospective > entitlement.planSeats, return `{ ok:false, formError: 'You\'ve reached your plan\'s seat limit. Upgrade your plan to add more teammates.' }` BEFORE any DB write / before any service-role escalation. When `entitlement.status` is 'none' (no plan yet), gate against the Pro trial seat allowance (PLANS.pro.seats) so the anchor/trial isn't blocked but is still bounded. Keep R8 ordering intact. Surface the error via the existing ActionResult formError path (the team UI already toasts formError — no silent false-success per CLAUDE.md).
     Create src/app/(app)/settings/billing/page.tsx (RSC, owner-only — mirror the owner gate used in /settings/team). Show: current plan (label + price), status (trialing/active/past_due/cancelled), trial end / next renewal date, seats used vs allowance, and current AI usage vs caps (read getEntitlement). Buttons: "Manage billing" (POSTs to /api/stripe/portal then redirects to the returned url — client component), and, when status 'none', "Choose a plan" linking to /pricing. When `stripe` is unconfigured (env.STRIPE_SECRET_KEY absent), show a "Billing not configured" notice instead of crashing. Add a "Billing" nav entry to the settings nav consistent with the existing /settings/usage entry.
   </action>
   <verify>
-    <automated>grep -q "getEntitlement" "src/app/(app)/settings/team/actions.ts" && grep -q "seat" "src/app/(app)/settings/team/actions.ts" && grep -q "/api/stripe/portal" "src/app/(app)/settings/billing/page.tsx" && pnpm typecheck && pnpm lint</automated>
+    <automated>grep -q "getEntitlement" "src/app/(app)/settings/team/actions.ts" && grep -q "seat\|planSeats" "src/app/(app)/settings/team/actions.ts" && grep -q "accepted_at" "src/app/(app)/settings/team/actions.ts" && grep -q "/api/stripe/portal" "src/app/(app)/settings/billing/page.tsx" && pnpm typecheck && pnpm lint</automated>
   </verify>
   <acceptance_criteria>
-    - source: seat check in inviteMemberAction runs AFTER `me.role !== 'owner'` reject and BEFORE the `.from('org_invitations').insert` (R8 ordering preserved)
-    - behavior: inviting beyond planSeats returns formError (no DB row created), surfaced as a toast (no silent success)
-    - behavior: with status 'none' (trial/no plan), invites allowed up to Pro trial seats
+    - source: seat check in inviteMemberAction runs AFTER `me.role !== 'owner'` reject and BEFORE the `.from('org_invitations').insert` (R8 ordering preserved), on the RLS-scoped client (no service-role read for the count)
+    - source: pending count query filters `accepted_at IS NULL AND expires_at > now()` (the real org_invitations pending definition — no revoked_at column exists)
+    - behavior: when activeSeats + pendingInvites + 1 > entitlement.planSeats (real plan), invite returns formError and creates NO DB row, surfaced as a toast (no silent success)
+    - behavior: with status 'none' (trial/no plan), invites allowed up to PLANS.pro.seats
     - source: billing page reads getEntitlement and POSTs to /api/stripe/portal for "Manage billing"
     - behavior: billing page renders a "Billing not configured" notice (not a crash) when Stripe env absent
     - test-command: `pnpm typecheck && pnpm lint` pass
   </acceptance_criteria>
-  <done>Seat limit enforced at invite time without breaking R8 ordering; owner-facing billing page wired to entitlement + Customer Portal.</done>
+  <done>Seat limit enforced at invite time (active + pending + 1 vs planSeats) on the RLS-scoped client without breaking R8 ordering; owner-facing billing page wired to entitlement + Customer Portal.</done>
 </task>
 
 <task type="auto" tdd="true">
@@ -219,32 +229,36 @@ Aggregate current-month usage by `purpose` to compare against PLANS[planKey].aiC
     - src/lib/inngest/functions/precompute-matches-for-job.ts (the existing spend-ceiling bail pattern — mirror it for hard-cap fallback)
     - src/lib/stripe/usage.ts (PURPOSE_CAP_BUCKETS — reuse the exact mapping) + src/lib/stripe/entitlement.ts
     - src/lib/email/resend.ts + src/lib/email/render.ts (branded email send)
+    - .planning/phases/05-saas-shell/05-00-hardening-PLAN.md (the ai_cap_notifications table — created + pushed in 05-00)
   </read_first>
   <behavior>
     - At <80% of a cap: AI call proceeds normally
-    - At ≥80% and <100%: call proceeds, but soft-cap state is flagged so the banner shows and ONE email fires per cap-bucket per month (deduped)
+    - At ≥80% and <100%: call proceeds, but soft-cap state is flagged so the banner shows and ONE email fires per cap-bucket per month (deduped via the ai_cap_notifications UNIQUE constraint)
     - At ≥100% (hard cap): match_score (on-demand) falls back to cached-only / overnight queue (do NOT make the fresh Sonnet call); cv_parse QUEUES (never blocks onboarding) rather than running synchronously; overage is recorded for billing (~£0.05/match-score, ~£0.04/CV parse over cap) instead of a hard stop
     - cap enforcement maps each call's `purpose` to its bucket via PURPOSE_CAP_BUCKETS
   </behavior>
   <action>
-    Create src/lib/stripe/cap-enforcement.ts (server-only) with `checkCap(orgId, purpose): Promise<{ allow: boolean; mode: 'normal'|'soft'|'hard'; bucket: string }>` using getEntitlement + PURPOSE_CAP_BUCKETS. In src/lib/ai/claude.ts `runWithLogging`, BEFORE the Anthropic call, consult checkCap for the call's purpose+org. For hard-capped on-demand purposes (match_score), throw a typed `CapExceededError` (mode 'hard') that the match wrapper/precompute interprets as "use cached only / queue" — wire the precompute-matches-for-job function to treat CapExceededError the same as its existing spend-ceiling bail (Sentry warning, exit, recruiter still sees vector-only results). For cv_parse hard cap, the parse Inngest path should enqueue/defer rather than throw to the user (never block onboarding — D-08). For soft-cap (≥80%), allow the call but emit a `softCapBreached` signal: fire the cap-warning email once per bucket per month (dedupe via a marker row — reuse stripe_webhook_events-style idempotency OR a dedicated ai_cap_notifications check; keep it simple, e.g. a guard query against ai_usage-derived state or a small notifications table — choose the lightest approach and document it). Do NOT add `await` inside any Supabase subscriber callback (CLAUDE.md). Record overage: when over cap, still log the ai_usage row (it already logs) and rely on the existing cost_pence tracking; add a `metadata`/purpose marker or a derived overage query the admin console (05-05) can read — document the chosen mechanism.
-    Create src/lib/email/billing-emails.ts with `sendCapWarningEmail`, `sendTrialEndingEmail`, `sendPaymentFailedEmail` (each builds a TransactionalEmail via renderTransactionalEmail/Text and sends via sendResendEmail; best-effort, fail-open, never throw into the caller — mirror the invite-email pattern). The webhook (Task 1.2) calls the trial-ending + payment-failed ones.
+    Create src/lib/stripe/cap-enforcement.ts (server-only) with `checkCap(orgId, purpose): Promise<{ allow: boolean; mode: 'normal'|'soft'|'hard'; bucket: string }>` using getEntitlement + PURPOSE_CAP_BUCKETS. In src/lib/ai/claude.ts `runWithLogging`, BEFORE the Anthropic call, consult checkCap for the call's purpose+org. For hard-capped on-demand purposes (match_score), throw a typed `CapExceededError` (mode 'hard') that the match wrapper/precompute interprets as "use cached only / queue" — wire the precompute-matches-for-job function to treat CapExceededError the same as its existing spend-ceiling bail (Sentry warning, exit, recruiter still sees vector-only results). For cv_parse hard cap, the parse Inngest path should enqueue/defer rather than throw to the user (never block onboarding — D-08). Do NOT add `await` inside any Supabase subscriber callback (CLAUDE.md).
+    Soft-cap dedup (COMMITTED design — do NOT improvise): when checkCap finds a bucket at ≥80% (and <100%), the call proceeds, and the soft-cap email fires AT MOST ONCE per (organization_id, bucket, notified_month). Implement via the `ai_cap_notifications` table (created in 05-00, columns: id, organization_id, bucket, notified_month text e.g. '2026-06', created_at; UNIQUE (organization_id, bucket, notified_month)): attempt an INSERT of { organization_id, bucket, notified_month: current 'YYYY-MM' } with `.onConflict('organization_id,bucket,notified_month').ignoreDuplicates()` (or a plain insert that swallows the unique-violation 23505); ONLY when the insert actually created a row (no conflict) do you call sendCapWarningEmail. This makes the email exactly-once-per-bucket-per-month even under concurrent AI calls. The insert uses the service-role client (cap enforcement runs server-side in claude.ts/Inngest). Do NOT create any other notifications/overage table.
+    Overage (COMMITTED design): track overage purely off the EXISTING ai_usage cost data — no new overage table. Every AI call already logs an ai_usage row with cost_pence; "overage" for a bucket = the portion of that bucket's month-to-date count beyond its effective cap, and overage cost = the cost_pence of the over-cap rows. The admin console (05-05) and billing page derive overage by comparing month-to-date ai_usage aggregates against PLANS caps. Document this in the SUMMARY: overage is a DERIVED quantity from ai_usage + PLANS, not a stored counter.
+    Create src/lib/email/billing-emails.ts with `sendCapWarningEmail`, `sendTrialEndingEmail`, `sendPaymentFailedEmail` (each builds a TransactionalEmail via renderTransactionalEmail/Text and sends via sendResendEmail; best-effort, fail-open, never throw into the caller — mirror the invite-email pattern). The webhook (Task 1.2) calls the trial-ending + payment-failed ones; the soft-cap path calls sendCapWarningEmail only after a successful ai_cap_notifications insert.
     Create src/components/app/cap-warning-banner.tsx — a client/server banner shown in the authenticated app shell when getEntitlement().softCapBreached (or hardCapBreached) is true, with copy + a link to /settings/billing. Wire it into the (app) layout or dashboard so it surfaces (read entitlement server-side in the layout; pass the boolean to the banner — no client-side Stripe).
     Add a unit test src/lib/stripe/cap-enforcement.test.ts: <80%→normal/allow; 80%→soft/allow; 100% match_score→hard/deny; 100% cv_parse→hard/queue.
   </action>
   <verify>
-    <automated>grep -q "checkCap\|CapExceededError" src/lib/ai/claude.ts && grep -q "CapExceededError\|cap" src/lib/inngest/functions/precompute-matches-for-job.ts && pnpm typecheck && pnpm test -- src/lib/stripe/cap-enforcement.test.ts</automated>
+    <automated>grep -q "checkCap\|CapExceededError" src/lib/ai/claude.ts && grep -q "CapExceededError\|cap" src/lib/inngest/functions/precompute-matches-for-job.ts && grep -q "ai_cap_notifications" src/lib/stripe/cap-enforcement.ts && pnpm typecheck && pnpm test -- src/lib/stripe/cap-enforcement.test.ts</automated>
   </verify>
   <acceptance_criteria>
     - behavior: cap-enforcement returns mode 'normal' <80%, 'soft' at 80%, 'hard' at 100% (unit-tested)
     - behavior: at hard cap, match_score does NOT make a fresh Sonnet call (cached-only/queue); cv_parse queues, never throws to the user
     - source: claude.ts runWithLogging consults checkCap before the Anthropic call
     - source: precompute-matches-for-job handles CapExceededError like its existing spend-ceiling bail (no retries, Sentry warning, vector-only fallback)
+    - source: soft-cap email dedup is implemented via an INSERT into ai_cap_notifications guarded by its UNIQUE (organization_id, bucket, notified_month); email sends only when the insert created a new row — at most once per bucket per month
+    - source: NO new overage table — overage is derived from ai_usage + PLANS (documented in SUMMARY)
     - source: no `await` of a Supabase call inside any onAuthStateChange/subscriber callback (CLAUDE.md)
-    - behavior: cap-warning email fires at most once per bucket per month (deduped)
     - test-command: `pnpm test -- src/lib/stripe/cap-enforcement.test.ts` passes
   </acceptance_criteria>
-  <done>Soft cap (banner + one email) and hard cap (match cached-only/queue, CV parse queues, overage recorded) enforced through the central claude.ts hook + precompute fallback. Banner surfaces in the app shell.</done>
+  <done>Soft cap (banner + exactly-one email per bucket per month via ai_cap_notifications) and hard cap (match cached-only/queue, CV parse queues, overage DERIVED from ai_usage) enforced through the central claude.ts hook + precompute fallback. Banner surfaces in the app shell.</done>
 </task>
 
 </tasks>
@@ -265,8 +279,8 @@ Aggregate current-month usage by `purpose` to compare against PLANS[planKey].aiC
 | T-05-01-01 | Spoofing | webhook handler | mitigate | stripe.webhooks.constructEvent HMAC verify on raw body; 400 on failure |
 | T-05-01-02 | Tampering/Replay | webhook handler | mitigate | stripe_webhook_events idempotency insert BEFORE processing (at-least-once delivery safe) |
 | T-05-01-03 | Tampering | checkout price selection | mitigate | Price IDs from server env (PLAN_PRICE_IDS); planKey validated against PLANS enum; never trust client price |
-| T-05-01-04 | Elevation of Privilege | seat enforcement | mitigate | getEntitlement seat check before org_invitations insert; R8 ordering preserved |
-| T-05-01-05 | Abuse (margin) | AI usage caps | mitigate | Per-seat caps enforced in claude.ts hook + precompute fallback; overage recorded |
+| T-05-01-04 | Elevation of Privilege | seat enforcement | mitigate | getEntitlement seat check (active + pending + 1 vs planSeats) on RLS-scoped client before org_invitations insert; R8 ordering preserved |
+| T-05-01-05 | Abuse (margin) | AI usage caps | mitigate | Per-seat caps enforced in claude.ts hook + precompute fallback; soft-cap email deduped via ai_cap_notifications; overage derived from ai_usage |
 | T-05-01-06 | Information Disclosure | webhook + emails | mitigate | No customer email/PII to Sentry; org-id/event-type tags only (CLAUDE.md) |
 | T-05-01-07 | Fraud (trial abuse) | signup/checkout | accept | Card required upfront (D-03) raises intent; same-email = existing Stripe customer; deeper anti-fraud deferred |
 </threat_model>
@@ -274,12 +288,13 @@ Aggregate current-month usage by `purpose` to compare against PLANS[planKey].aiC
 <verification>
 - `pnpm typecheck`, `pnpm lint`, and the two new unit suites pass.
 - Manual (test mode, founder keys): Checkout → trial subscription appears; `stripe trigger checkout.session.completed` (or `stripe listen`) syncs a subscriptions row; duplicate event is a no-op; invite beyond seats blocked; portal opens.
+- Soft-cap email fires once then is suppressed for the rest of the month (ai_cap_notifications row present).
 - With Stripe env absent: app builds, billing pages show "not configured", no crash.
 </verification>
 
 <success_criteria>
 - Owner subscribes (card + 14-day trial), webhooks keep the local subscriptions table authoritative, entitlements resolve from local DB only.
-- Seat limit enforced at invite; AI caps enforced (soft banner+email, hard cached-only/queue, overage recorded); Customer Portal manages plan changes.
+- Seat limit enforced at invite (active + pending + 1 vs planSeats); AI caps enforced (soft banner + one email/bucket/month via ai_cap_notifications, hard cached-only/queue, overage derived from ai_usage); Customer Portal manages plan changes.
 </success_criteria>
 
 <output>

@@ -462,9 +462,9 @@ export async function importCandidatesAction(formData: FormData) {
 **Warning signs:** Duplicate emails; subscription rows with duplicate `stripe_subscription_id`.
 
 ### Pitfall 3: Middleware Not Updated for New Public Routes
-**What goes wrong:** `/api/stripe/checkout`, `/api/stripe/webhook`, `(marketing)/*`, `/docs/*`, `/status` get intercepted by `updateSession()` and 307'd to `/sign-in`.
+**What goes wrong:** `/api/stripe/checkout`, `/api/stripe/webhook`, `(marketing)/*`, `/welcome`, `/docs/*`, `/status` get intercepted by `updateSession()` and 307'd to `/sign-in`.
 **Why it happens:** Precedent: 260527-x2q (P0 invite-flow fix), 260528-0rd (PWA fix) — both were middleware PUBLIC_PATHS omissions.
-**How to avoid:** Simultaneously with creating each new route, add it to `PUBLIC_PATHS` in `src/lib/supabase/middleware.ts`. Do this as Wave 0 hardening, not as a follow-up.
+**How to avoid:** Simultaneously with creating each new route, add it to `PUBLIC_PATHS` in `src/lib/supabase/middleware.ts`. Do this as Wave 0 hardening (05-00), not as a follow-up — 05-00 pre-decides and adds all marketing/public paths (`/welcome`, `/pricing`, `/features`, `/docs`, `/status`, `/api/stripe/webhook`).
 **Warning signs:** Webhook handler receives 307 instead of reaching the route; Stripe logs show redirects.
 
 ### Pitfall 4: `request.text()` vs `request.json()` in Webhook Handler
@@ -519,18 +519,18 @@ export const stripe = env.STRIPE_SECRET_KEY
 
 ```typescript
 // src/lib/stripe/plans.ts
-// AI caps are per-seat/month. Match pricing doc exactly.
+// AI caps are per-seat/month. Numbers are AUTHORITATIVE — sourced from
+// docs/cost-and-pricing-analysis.md §5 (see Open Questions Q1 resolution).
 export const PLANS = {
   starter: {
     label: 'Starter',
     pricePence: 5900,    // £59/seat/mo
     seats: 3,
     aiCaps: {
-      matchScores: 200,       // per seat/mo [ASSUMED — verify against pricing doc]
-      cvParses: 50,           // per seat/mo [ASSUMED]
-      writingCalls: 100,      // per seat/mo [ASSUMED]
-      searches: 500,          // per seat/mo [ASSUMED]
-      specMinutes: 60,        // per seat/mo [ASSUMED]
+      matchScores: 300,       // per seat/mo — cost-and-pricing-analysis.md §5
+      cvParses: 200,          // per seat/mo
+      searches: 1000,         // per seat/mo
+      specMinutes: 30,        // per seat/mo
     },
   },
   pro: {
@@ -538,11 +538,10 @@ export const PLANS = {
     pricePence: 8900,    // £89/seat/mo — DEFAULT
     seats: 10,
     aiCaps: {
-      matchScores: 500,
-      cvParses: 150,
-      writingCalls: 300,
-      searches: 2000,
-      specMinutes: 180,
+      matchScores: 800,
+      cvParses: 600,
+      searches: 5000,
+      specMinutes: 120,
     },
   },
   scale: {
@@ -550,11 +549,10 @@ export const PLANS = {
     pricePence: 12900,   // £129/seat/mo
     seats: 99,           // effectively unlimited for v1
     aiCaps: {
-      matchScores: 2000,
-      cvParses: 500,
-      writingCalls: 1000,
-      searches: 10000,
-      specMinutes: 600,
+      matchScores: 2400,      // 3× Pro
+      cvParses: 1800,         // 3× Pro
+      searches: 15000,        // 3× Pro
+      specMinutes: 360,       // 3× Pro
     },
   },
 } as const
@@ -569,7 +567,7 @@ export const PLAN_PRICE_IDS: Record<PlanKey, string> = {
 }
 ```
 
-**NOTE on AI caps:** The exact cap numbers above are `[ASSUMED]` — they must be validated against `docs/pricing-overheads-breakeven-2026-06-04.md` section 5 guardrails table before implementing. That document defines the margin-protecting caps; the planner should treat these numbers as placeholders.
+**NOTE on AI caps:** The cap numbers above are AUTHORITATIVE, sourced from `docs/cost-and-pricing-analysis.md §5` (the margin-protecting guardrails table). See Open Questions Q1 (RESOLVED). The 05-00 plan writes the `PLANS` constant with these exact values.
 
 ### Subscriptions Table Migration (minimal shape)
 
@@ -641,7 +639,7 @@ This phase builds on substantial existing infrastructure. The planner MUST use t
 | Email sending | `src/lib/email/resend.ts` + `src/lib/email/render.ts` | Reuse for trial-end, payment-failed, cap-warning emails |
 | Service client | `src/lib/supabase/service.ts` | Reuse in webhook handler + admin routes |
 | Env validation | `src/lib/env.ts` | Add Stripe env vars (all `.optional()` for build isolation) |
-| Middleware public paths | `src/lib/supabase/middleware.ts` | Add `/api/stripe/*`, `(marketing)` routes, `/docs`, `/status` to PUBLIC_PATHS |
+| Middleware public paths | `src/lib/supabase/middleware.ts` | Add `/api/stripe/webhook`, `/welcome`, `/pricing`, `/features`, `/docs`, `/status` to PUBLIC_PATHS (all in 05-00 Wave 0) |
 
 ---
 
@@ -649,44 +647,39 @@ This phase builds on substantial existing infrastructure. The planner MUST use t
 
 | # | Claim | Section | Risk if Wrong |
 |---|-------|---------|---------------|
-| A1 | AI cap numbers (200/500/2000 match-scores per tier) | Code Examples — Plan Definitions | Caps don't match pricing doc → margin not protected |
+| A1 | AI cap numbers per tier — RESOLVED: authoritative from cost-and-pricing-analysis.md §5 | Code Examples — Plan Definitions | Resolved — caps now match pricing doc |
 | A2 | Stripe API version `2025-06-30` is current | Code Examples — Stripe Client | Outdated API version causes type errors or missing features |
 | A3 | `user.app_metadata.super_admin` is readable from RSC via `supabase.auth.getUser()` | Pattern 4 — Admin Gate | Admin gate does not work → security hole |
 | A4 | `papaparse` server-side usage is tree-shakeable and compatible with Next.js server actions | Standard Stack | Import fails in server action context |
 | A5 | Stripe Customer Portal can be configured for GBP pricing in test mode | BILL-01 | Portal shows USD; founder must configure GBP currency in Stripe Dashboard |
 
-**Resolving A1:** Planner must cross-reference `docs/pricing-overheads-breakeven-2026-06-04.md` section 5 guardrails before writing the `PLANS` constant. The exact cap numbers are not in the pricing doc's table — they will need founder input.
+**Resolving A1:** RESOLVED — cap numbers are now taken from `docs/cost-and-pricing-analysis.md §5` and encoded in the 05-00 `PLANS` constant: Starter 300/200/1000/30, Pro 800/600/5000/120, Scale 3× Pro (2400/1800/15000/360). See Open Questions Q1 (RESOLVED).
 
 **Resolving A3:** The Supabase JWT contains `app_metadata` in its claims; `supabase.auth.getUser()` returns this in the `user.app_metadata` field. This is a standard Supabase pattern (confirmed by makerkit.dev/docs/next-supabase-turbo/admin/adding-super-admin). Confidence: HIGH.
 
 ---
 
-## Open Questions
+## Open Questions (RESOLVED)
 
-1. **Exact AI-usage cap numbers per tier**
-   - What we know: Tiers are Starter/Pro/Scale with prices £59/£89/£129. Usage must be metered via `ai_usage` table.
-   - What's unclear: The exact per-seat/month cap numbers for match-scores, CV parses, writing calls, searches, spec minutes. The pricing doc discusses the guardrail concept but not the specific numbers.
-   - Recommendation: Founder provides these before `PLANS` constant is written. Planner should stub with `[CAP_TBD]` placeholders.
+1. **Exact AI-usage cap numbers per tier** — RESOLVED
+   - What we knew: Tiers are Starter/Pro/Scale with prices £59/£89/£129. Usage must be metered via `ai_usage` table.
+   - Resolution: Authoritative cap numbers are taken from `docs/cost-and-pricing-analysis.md §5` and encoded directly in the `PLANS` constant written in **05-00**. The numbers are: **Starter** 300 match-scores / 200 CV parses / 1000 searches / 30 spec minutes per seat/month; **Pro** 800 / 600 / 5000 / 120; **Scale** 3× Pro (2400 / 1800 / 15000 / 360). No `[CAP_TBD]` placeholders — the constant ships with real values in 05-00.
 
-2. **Stripe Price IDs — test-mode products**
-   - What we know: Founder must create products in Stripe Dashboard before the checkout flow works.
-   - What's unclear: Will the founder create these before or after the code is deployed?
-   - Recommendation: Code uses env var references (`STRIPE_PRICE_STARTER`, etc.); checkout feature is conditionally shown only when `env.STRIPE_SECRET_KEY` is set. Phase ships without live keys working; founder wires keys when ready.
+2. **Stripe Price IDs — test-mode products** — RESOLVED
+   - What we knew: Founder must create products in Stripe Dashboard before the checkout flow works.
+   - Resolution: Code uses env var references (`STRIPE_PRICE_STARTER`, `STRIPE_PRICE_PRO`, `STRIPE_PRICE_SCALE`) supplied by the founder at go-live. These are documented in the billing plan's `user_setup` frontmatter. Checkout is conditionally shown only when `env.STRIPE_SECRET_KEY` is set; the phase ships without live keys, founder wires keys when ready.
 
-3. **Customer Portal GBP configuration**
-   - What we know: Stripe Customer Portal must be configured per Stripe Dashboard settings.
-   - What's unclear: GBP currency and specific product features (upgrade/downgrade/cancel) must be enabled by founder in the Stripe Dashboard before Portal works.
-   - Recommendation: Document as a "founder action required" in the plan; build the Portal redirect link regardless.
+3. **Customer Portal GBP configuration** — RESOLVED (Claude's discretion / documented founder action)
+   - What we knew: Stripe Customer Portal must be configured per Stripe Dashboard settings.
+   - Resolution: Documented as a "founder action required" in the billing plan's `user_setup`; the Portal redirect link is built regardless. GBP currency + upgrade/downgrade/cancel features are enabled by the founder in the Stripe Dashboard pre-launch. No code blocker.
 
-4. **Sample data seed contents**
-   - What we know: D-12 says "optional sample-data seed so an empty org isn't intimidating."
-   - What's unclear: How many records? What sectors/roles? Real names or synthetic?
-   - Recommendation: Claude's discretion — 3–5 synthetic candidates (no real PII), 2 clients, 1 open job. Planner specifies, executor implements.
+4. **Sample data seed contents** — RESOLVED (Claude's discretion)
+   - What we knew: D-12 says "optional sample-data seed so an empty org isn't intimidating."
+   - Resolution: 3–5 synthetic candidates (no real PII), 2 clients, 1 open job. Specified in the onboarding plan; executor implements.
 
-5. **Marketing site content**
-   - What we know: D-15 says landing, pricing, features pages in `(marketing)` route group.
-   - What's unclear: Actual copy, feature list structure, how the pricing page displays the three tiers.
-   - Recommendation: Claude's discretion — build the skeleton with placeholder copy; founder fills in real copy. Pricing page renders the `PLANS` constant directly.
+5. **Marketing site content** — RESOLVED (Claude's discretion / documented founder action)
+   - What we knew: D-15 says landing, pricing, features pages in `(marketing)` route group.
+   - Resolution: Build the skeleton with placeholder copy; founder fills in real copy. Pricing page renders the `PLANS` constant directly. The marketing landing route is `/welcome` (pre-decided; added to PUBLIC_PATHS in 05-00).
 
 ---
 
@@ -763,7 +756,7 @@ If the gate check is absent or bypassed, every org's data is exposed. This is th
 - `src/lib/supabase/middleware.ts` — PUBLIC_PATHS pattern (read directly)
 - `src/lib/stripe/service.ts` + `src/lib/ai/claude.ts` — service-role and entitlement patterns (read directly)
 - GHSA-97v6-998m-fp4g — ApostropheCMS CSS injection CVE (brand colour XSS prevention)
-- `docs/pricing-overheads-breakeven-2026-06-04.md` — pricing tiers (read directly)
+- `docs/cost-and-pricing-analysis.md` — pricing tiers + §5 AI cap guardrails (read directly)
 
 ### Secondary (MEDIUM confidence)
 - [dev.to/jonathan_diniz — Next.js 15 + Supabase + Stripe](https://dev.to/jonathan_diniz_cee738f10e/how-i-wired-stripe-subscriptions-to-supabase-in-nextjs-15-the-parts-tutorials-skip-2b9l) — webhook raw body pattern
@@ -783,7 +776,7 @@ If the gate check is absent or bypassed, every org's data is exposed. This is th
 - Webhook raw body handling: HIGH — multiple independent sources confirm `request.text()` pattern for Next.js App Router
 - Brand colour XSS prevention: HIGH — confirmed by OWASP + real CVE as negative example
 - Super-admin gate via app_metadata: HIGH — Supabase standard pattern (makerkit reference)
-- AI cap numbers per tier: LOW — values are [ASSUMED]; must be confirmed against pricing doc by founder
+- AI cap numbers per tier: HIGH — RESOLVED; values sourced from cost-and-pricing-analysis.md §5
 - Stripe API version string: LOW — `2025-06-30` is an assumption; verify `stripe --version` after install
 
 **Research date:** 2026-06-04
