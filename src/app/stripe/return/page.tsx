@@ -15,12 +15,31 @@
 // overhead on this thin redirect page, but it IS authenticated — the user
 // just came from Stripe with a valid card session).
 
-import { useEffect, useState } from 'react'
+import { Suspense, useEffect, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 
 import { checkSubscriptionStatus } from './actions'
 
-export default function StripeReturnPage() {
+// Shared centred-spinner shell (used by both the live view and the Suspense
+// fallback so there is no visual flicker during hydration).
+function ReturnShell({ message }: { message: string }) {
+  return (
+    <div className="flex min-h-svh items-center justify-center px-4">
+      <div className="max-w-sm space-y-4 text-center">
+        <div className="mx-auto size-12 animate-spin rounded-full border-4 border-current border-t-transparent text-primary" />
+        <h1 className="text-xl font-semibold">{message}</h1>
+        <p className="text-muted-foreground text-sm">
+          Your subscription is being activated. This only takes a moment.
+        </p>
+      </div>
+    </div>
+  )
+}
+
+// useSearchParams() must be inside a Suspense boundary or the page fails static
+// prerendering (Next.js CSR-bailout requirement). The default export below wraps
+// this inner component in <Suspense>.
+function StripeReturnInner() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const sessionId = searchParams.get('session_id') ?? ''
@@ -67,15 +86,13 @@ export default function StripeReturnPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionId])
 
+  return <ReturnShell message={statusMessage} />
+}
+
+export default function StripeReturnPage() {
   return (
-    <div className="flex min-h-svh items-center justify-center px-4">
-      <div className="text-center space-y-4 max-w-sm">
-        <div className="mx-auto size-12 animate-spin rounded-full border-4 border-current border-t-transparent text-primary" />
-        <h1 className="text-xl font-semibold">{statusMessage}</h1>
-        <p className="text-muted-foreground text-sm">
-          Your subscription is being activated. This only takes a moment.
-        </p>
-      </div>
-    </div>
+    <Suspense fallback={<ReturnShell message="Setting up your account…" />}>
+      <StripeReturnInner />
+    </Suspense>
   )
 }
