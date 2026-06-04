@@ -106,7 +106,9 @@ export function ConnectOutlookCard({
         ) : null}
 
         <p className="text-muted-foreground text-xs">
-          Read-only access (Mail.Read). We never send email on your behalf.
+          Reads inbound emails so they appear on candidate and contact timelines, and can
+          send check-in emails you compose and approve. Altus never sends email
+          automatically.
         </p>
       </CardContent>
     </Card>

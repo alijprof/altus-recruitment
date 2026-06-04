@@ -157,13 +157,21 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       accessTokenEncrypted: encryptedAccess,
       accessTokenExpiresAt: tokens.expiresOn.toISOString(),
       scopes: [...OUTLOOK_SCOPES],
+      // Service-role has no session, so the set_organization_id trigger
+      // RAISES on a NULL org and the first-connect INSERT fails silently
+      // without this. Pass the org resolved above so the INSERT succeeds.
+      organizationId,
     })
     if (!writeResult.ok) {
       // If a row already exists (re-connect), upsert it by hand via
       // UPDATE — `outlook_credentials.user_id` is UNIQUE so the
       // insert path collides. We don't bother with onConflict
       // because the Plan 0 helper signature is plain INSERT.
-      const { error: updErr } = await serviceClient
+      // CRITICAL: select the affected rows and check the count — a
+      // first-time connect has NO existing row, so a zero-row UPDATE must
+      // NOT be reported as success (that was the "connected but nothing
+      // persisted" bug). PostgREST returns error:null on a 0-row UPDATE.
+      const { data: updRows, error: updErr } = await serviceClient
         .from('outlook_credentials')
         .update({
           microsoft_tenant_id: tokens.account.tenantId,
@@ -176,10 +184,14 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
           revoked_at: null,
         })
         .eq('user_id', user.id)
-      if (updErr) {
-        Sentry.captureException(updErr, {
-          tags: { layer: 'route-handler', route: '/api/outlook/callback', subop: 'upsert-update' },
-        })
+        .select('id')
+      if (updErr || !updRows || updRows.length === 0) {
+        Sentry.captureException(
+          updErr ?? new Error('outlook callback: persist failed (insert raised, 0-row update)'),
+          {
+            tags: { layer: 'route-handler', route: '/api/outlook/callback', subop: 'upsert-update' },
+          },
+        )
         const res = redirectToSettings(request, { outlook_error: 'persist_failed' })
         res.cookies.set(STATE_COOKIE, '', { path: '/', maxAge: 0 })
         return res

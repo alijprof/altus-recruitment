@@ -131,8 +131,14 @@ export async function getOutlookCredentialsBySubscriptionId(
 
 /**
  * Insert the row on first OAuth success. Caller passes encrypted token
- * blobs (NEVER plaintext). organization_id is filled by the set_org
- * trigger.
+ * blobs (NEVER plaintext).
+ *
+ * `organizationId` is optional but MUST be supplied for the service-role
+ * callback path: under service-role (no session) the set_organization_id
+ * trigger cannot resolve the org from auth context and RAISES, so the
+ * first-connect INSERT fails silently. The outlook_credentials table has no
+ * cross-tenant guard, so supplying the correct org is safe and lets the
+ * INSERT succeed.
  */
 export async function upsertOutlookCredentials(
   supabase: SupabaseClient<Database>,
@@ -145,6 +151,7 @@ export async function upsertOutlookCredentials(
     accessTokenEncrypted: string
     accessTokenExpiresAt: string
     scopes: string[]
+    organizationId?: string
   },
 ): Promise<DbResult<{ id: string }>> {
   const { data, error } = await asOutlookCredsClient(supabase)
@@ -158,6 +165,9 @@ export async function upsertOutlookCredentials(
       access_token_encrypted: input.accessTokenEncrypted,
       access_token_expires_at: input.accessTokenExpiresAt,
       scopes: input.scopes,
+      ...(input.organizationId !== undefined
+        ? { organization_id: input.organizationId }
+        : {}),
     })
     .select('id')
     .single()

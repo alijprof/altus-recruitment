@@ -307,6 +307,32 @@ export async function getValidAccessToken(
   }
 
   const msal = getMsal()
+
+  // CROSS-TENANT RISK (SENSITIVE): the ConfidentialClientApplication is a
+  // module-level singleton, so its MSAL token cache accumulates RefreshToken
+  // entries from EVERY user that refreshes through this process (the 6-hourly
+  // cron refreshes all users). The previous `entries.find(rt.secret !==
+  // plaintext)` heuristic could match ANOTHER user's pre-existing RT and
+  // persist it under THIS user's row — a cross-tenant token bleed.
+  // MITIGATION (snapshot-diff): snapshot the set of RT secrets present BEFORE
+  // this refresh; after the refresh, the rotated RT is the one whose secret
+  // is NEW (not in the pre-snapshot) AND not equal to our plaintext input.
+  // That is provably the entry MSAL added for THIS refresh. If exactly one
+  // new secret appeared we use it; otherwise we fall back to re-encrypting the
+  // input RT (current behaviour) rather than risk grabbing someone else's.
+  const preRefreshSecrets = new Set<string>()
+  try {
+    const preBlob = msal.getTokenCache().serialize()
+    const preJson = JSON.parse(preBlob) as {
+      RefreshToken?: Record<string, { secret?: string }>
+    }
+    for (const rt of Object.values(preJson.RefreshToken ?? {})) {
+      if (rt.secret) preRefreshSecrets.add(rt.secret)
+    }
+  } catch (err) {
+    captureScrubbed('getValidAccessToken.snapshotCacheRT', err)
+  }
+
   let response: Awaited<ReturnType<typeof msal.acquireTokenByRefreshToken>>
   try {
     response = await msal.acquireTokenByRefreshToken({
@@ -333,10 +359,14 @@ export async function getValidAccessToken(
     throw new OutlookReconnectRequiredError('refresh returned no access token')
   }
 
-  // Pull the rotated refresh token from the MSAL cache. Microsoft does
-  // not surface it on the response object directly. If for some reason
-  // no rotation happened (Microsoft sometimes returns the same RT),
-  // we re-encrypt the plaintext we already have.
+  // Pull the rotated refresh token from the MSAL cache via the snapshot-diff
+  // (see the cross-tenant-risk comment above the refresh call). Microsoft does
+  // not surface the rotated RT on the response object directly. The rotated RT
+  // is the secret that is NEW after this refresh and is not our plaintext
+  // input. If exactly one such secret appeared, it is unambiguously ours; if
+  // zero or more than one appeared (no rotation, or concurrent refreshes
+  // muddied the cache), we re-encrypt the plaintext we already have rather
+  // than risk persisting another user's RT.
   let newRefreshToken = refreshTokenPlaintext
   try {
     const cacheBlob = msal.getTokenCache().serialize()
@@ -344,8 +374,14 @@ export async function getValidAccessToken(
       RefreshToken?: Record<string, { secret?: string; home_account_id?: string }>
     }
     const entries = Object.values(cacheJson.RefreshToken ?? {})
-    const match = entries.find((rt) => rt.secret && rt.secret !== refreshTokenPlaintext)
-    if (match?.secret) newRefreshToken = match.secret
+    const newSecrets = entries
+      .map((rt) => rt.secret)
+      .filter((s): s is string => typeof s === 'string' && s.length > 0)
+      .filter((s) => s !== refreshTokenPlaintext && !preRefreshSecrets.has(s))
+    // Only adopt the rotated RT when exactly one new secret appeared — that is
+    // provably the one MSAL added for THIS refresh.
+    const rotated = newSecrets.length === 1 ? newSecrets[0] : undefined
+    if (rotated) newRefreshToken = rotated
   } catch (err) {
     captureScrubbed('getValidAccessToken.readCacheRT', err)
   }
