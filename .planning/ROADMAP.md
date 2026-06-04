@@ -137,12 +137,12 @@ Plans:
 4. Super-admin can review per-tenant AI usage costs + billing state and override plan limits / extend trials from a lean support console (impersonation + audit-log layer explicitly descoped to v2 per CONTEXT D-14)
 5. The public marketing site explains the product, links to documentation, and has a status page — ready to share with prospects
 
-**Plans:** 2/6 plans executed
+**Plans:** 3/6 plans executed
 
 Plans:
 - [x] 05-00-hardening-PLAN.md — Stripe env isolation (all `.optional()`), PUBLIC_PATHS for new public routes, fail-closed Stripe client + PLANS constant (§5 caps), billing/super_admin migrations + push (foundation for all of Phase 5) ✅ 2026-06-04 (migrations live; super_admin set; history drift reconciled)
 - [x] 05-01-billing-PLAN.md — Stripe Checkout (card+14-day trial) → idempotent webhook → subscriptions table → entitlement helper + seat enforcement + AI-usage soft/hard caps + overage + Customer Portal (BILL-01)
-- [ ] 05-02-branding-PLAN.md — owner-set logo + brand colours (hex-validated, XSS-safe) rendered on the public apply/careers site (BRAND-01)
+- [x] 05-02-branding-PLAN.md — owner-set logo + brand colours (hex-validated, XSS-safe) rendered on the public apply/careers site (BRAND-01)
 - [ ] 05-03-onboarding-PLAN.md — extended welcome checklist + synthetic sample-data seed + CSV candidate import (column-map, dedupe by lowercased email) (SAAS-01)
 - [ ] 05-04-marketing-PLAN.md — public `(marketing)` group (landing/pricing/features, Pro highlighted), in-app `/docs`, simple `/status` page (MARKETING-01)
 - [ ] 05-05-admin-PLAN.md — super-admin-gated `/admin` console: per-tenant AI-cost + billing dashboard + plan/trial overrides; the only (tightly-gated) cross-tenant read path (ADMIN-01)
@@ -164,7 +164,7 @@ Plans:
 | 2. Search, Match & Intake | 5/5 | Complete | 2026-05-19 |
 | 3. LinkedIn, Spec Workflow & Shortlists | 7/7 | Complete   | 2026-05-20 |
 | 4. Voice, Marketing & Reporting | 0/0 | Not started | - |
-| 5. SaaS Shell | 2/6 | In Progress|  |
+| 5. SaaS Shell | 3/6 | In Progress|  |
 
 ---
 
