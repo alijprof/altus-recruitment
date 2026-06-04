@@ -110,7 +110,7 @@ Requirements for initial release (Phases 1–5, "ready for paying customer #2").
 ### SaaS Shell
 
 - [ ] **SAAS-01**: Self-service signup creates a new organisation with onboarding flow (tour, sample data, CSV import)
-- [ ] **BILL-01**: Stripe subscription with billing portal; tiered plans
+- [x] **BILL-01**: Stripe subscription with billing portal; tiered plans
 - [ ] **BRAND-01**: Per-org branding — logo and colours on careers/apply site
 - [ ] **ADMIN-01**: Super-admin support tooling (impersonation, plan overrides, usage review)
 - [ ] **MARKETING-01**: Documentation site, marketing site, status page
@@ -218,7 +218,7 @@ Phase mappings finalized by `/gsd:new-project` roadmap step — 2026-05-17.
 | REPORT-01 | Phase 4 | Pending |
 | REPORT-02 | Phase 4 | Pending |
 | SAAS-01 | Phase 5 | Pending |
-| BILL-01 | Phase 5 | Pending |
+| BILL-01 | Phase 5 | Complete |
 | BRAND-01 | Phase 5 | Pending |
 | ADMIN-01 | Phase 5 | Pending |
 | MARKETING-01 | Phase 5 | Pending |

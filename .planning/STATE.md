@@ -3,12 +3,12 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: launch-readiness
-last_updated: "2026-06-04T20:30:00.000Z"
+last_updated: "2026-06-04T20:50:04.875Z"
 progress:
   total_phases: 5
   completed_phases: 2
-  total_plans: 18
-  completed_plans: 14
+  total_plans: 24
+  completed_plans: 15
   percent: 40
 ---
 
@@ -33,7 +33,7 @@ progress:
 
 **Phases 1–3: COMPLETE.** All 15 success criteria verified end-to-end in code by the 2026-05-30 launch-readiness audit (multi-agent). Only LinkedIn one-click DOM capture is flagged fragile (documented PDF-pivot fallback).
 **Phase 4 (Voice, Marketing & Reporting): NOT STARTED** — but REPORT-02 (buyer-value dashboards) already shipped via quick task 260524-cwd, and REMIND-01 (stale-candidate / dormant-client reminders) is partially shipped via dashboard widgets. REPORT-01 (NL→SQL), VOICE-01/02, MARKET-01/02/03 are genuinely unbuilt.
-**Phase 5 (SaaS Shell): IN PROGRESS** — on branch `feat/phase-5-saas-shell`. Wave 0 (05-00 hardening) COMPLETE & verified: Stripe isolated behind optional env, billing/idempotency/dedup tables + brand columns live on the linked DB with correct RLS, PUBLIC_PATHS extended, `super_admin` set on founder, migration-history drift reconciled. Waves 1 (05-01 billing, 05-02 branding, 05-03 onboarding, 05-04 marketing) + 2 (05-05 admin) remaining. Billing live-mode needs founder's Stripe TEST keys + 3 Products/Prices.
+**Phase 5 (SaaS Shell): IN PROGRESS** — on branch `feat/phase-5-saas-shell`. Wave 0 (05-00 hardening) COMPLETE. **Wave 1 Plan 05-01 (Stripe billing) COMPLETE 2026-06-04**: checkout (card+14d trial), idempotent HMAC-verified webhooks, local-DB-only entitlement engine, seat enforcement at invite, AI caps with soft-cap dedup (ai_cap_notifications), hard cap with cached-only fallback, Customer Portal, billing settings page, cap-warning banner. Remaining: 05-02 branding, 05-03 onboarding, 05-04 marketing, 05-05 admin. Billing live-mode needs founder's Stripe TEST keys + 3 Products/Prices.
 
 **Track:** v1.0 launch — anchor agency can go live. **0 launch blockers remain (all cleared & verified 2026-06-02).** Remaining is the final UAT click-through (see LAUNCH-READINESS.md).
 
