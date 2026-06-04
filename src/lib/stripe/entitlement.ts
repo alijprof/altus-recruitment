@@ -17,6 +17,59 @@ import type { Database } from '@/types/database'
 import type { EntitlementStatus, AiCaps, AiUsageAggregate } from '@/types/billing'
 
 // ---------------------------------------------------------------------------
+// PlanOverrideRow — shape of the plan_overrides table (05-05 migration).
+//
+// reason: plan_overrides is added by 20260604130000_phase5_admin_overrides.sql
+// which has not been pushed yet at the time of writing (Wave 2 [BLOCKING] push).
+// Until `pnpm db:types` is run post-push, the generated Database type does not
+// include this table. We cast at the query boundary using the same pattern as
+// src/lib/db/organizations.ts. Remove the cast after Task 5.3 regeneration.
+// ---------------------------------------------------------------------------
+type PlanOverrideRow = {
+  organization_id: string
+  trial_end_override: string | null
+  cap_multiplier: number | null
+  note: string | null
+  updated_by: string | null
+  updated_at: string
+}
+
+// Typed cast boundary for the plan_overrides table (pre-types-regeneration).
+type PlanOverridesClient = {
+  from: (table: 'plan_overrides') => {
+    select: (cols: string) => {
+      eq: (col: string, val: string) => Promise<{
+        data: PlanOverrideRow[] | null
+        error: unknown
+      }>
+    }
+  }
+}
+
+// Read the plan_override row for an org. Uses the passed client — can be either
+// the org's RLS-scoped client (reads its own row via SELECT policy) or the
+// service-role client (admin cross-org reads; bypasses RLS).
+async function getPlanOverride(
+  supabase: SupabaseClient<Database>,
+  orgId: string,
+): Promise<PlanOverrideRow | null> {
+  const overrideClient = supabase as unknown as PlanOverridesClient
+
+  const { data, error } = await overrideClient
+    .from('plan_overrides')
+    .select('organization_id, trial_end_override, cap_multiplier, note, updated_by, updated_at')
+    .eq('organization_id', orgId)
+
+  if (error) {
+    // Fail open — if the table doesn't exist yet (pre-push), treat as no override.
+    return null
+  }
+
+  const rows = data ?? []
+  return rows[0] ?? null
+}
+
+// ---------------------------------------------------------------------------
 // getEntitlement — the single entrypoint for billing-gated logic.
 //
 // Reads: subscriptions table (plan_key, plan_seats, status) + ai_usage
@@ -98,17 +151,36 @@ export async function getEntitlement(
 ): Promise<EntitlementStatus> {
   const serviceClient = createServiceClient()
 
-  // Run subscription fetch, usage fetch, and seat count concurrently.
-  const [subscriptionResult, aiUsageThisMonth, activeSeats] = await Promise.all([
+  // Run subscription fetch, usage fetch, seat count, and overrides concurrently.
+  // plan_overrides is read via service-role (which bypasses RLS) so we can read
+  // it alongside subscriptions without a separate RLS-scoped client.
+  const [subscriptionResult, aiUsageThisMonth, activeSeats, override] = await Promise.all([
     getSubscriptionForOrg(serviceClient, orgId),
     getAiUsageThisMonth(serviceClient, orgId),
     countActiveSeats(serviceClient, orgId),
+    // Fail-open: if the plan_overrides table doesn't exist yet (pre-push), returns null.
+    getPlanOverride(serviceClient, orgId),
   ])
+
+  // cap_multiplier from the override row (1.0 = no change; null = no override).
+  const capMultiplier = override?.cap_multiplier ?? 1.0
+
+  // Applies cap_multiplier to all buckets in a cap set.
+  function applyCapMultiplier(caps: AiCaps): AiCaps {
+    if (capMultiplier === 1.0) return caps
+    return {
+      matchScores: Math.round(caps.matchScores * capMultiplier),
+      cvParses: Math.round(caps.cvParses * capMultiplier),
+      searches: Math.round(caps.searches * capMultiplier),
+      specMinutes: Math.round(caps.specMinutes * capMultiplier),
+      writingCalls: Math.round(caps.writingCalls * capMultiplier),
+    }
+  }
 
   // No subscription row → treat as trial-not-started.
   // Trial users get Pro-level caps for 14 days (plan must_haves).
   if (!subscriptionResult.ok) {
-    const trialCaps = effectiveCaps('pro', PLANS.pro.seats)
+    const trialCaps = applyCapMultiplier(effectiveCaps('pro', PLANS.pro.seats))
     const { softCapBreached, hardCapBreached } = computeCapFlags(trialCaps, aiUsageThisMonth)
     return {
       planKey: 'none',
@@ -132,14 +204,30 @@ export async function getEntitlement(
     : 'pro'
 
   const planSeats = sub.plan_seats > 0 ? sub.plan_seats : PLANS[planKey].seats
-  const caps = effectiveCaps(planKey, planSeats)
+
+  // Determine effective status, honouring trial_end_override.
+  // If the subscription is trialing and trial_end_override is set to a future
+  // date, the org retains trialing status even if trial_end has passed.
+  let effectiveStatus = sub.status as EntitlementStatus['status']
+  if (
+    override?.trial_end_override &&
+    (effectiveStatus === 'trialing' || effectiveStatus === 'none')
+  ) {
+    const overrideEnd = new Date(override.trial_end_override)
+    if (overrideEnd > new Date()) {
+      // Override extends the trial — treat as still trialing.
+      effectiveStatus = 'trialing'
+    }
+  }
+
+  const caps = applyCapMultiplier(effectiveCaps(planKey, planSeats))
   const { softCapBreached, hardCapBreached } = computeCapFlags(caps, aiUsageThisMonth)
 
   return {
     planKey,
     planSeats,
     activeSeats,
-    status: sub.status as EntitlementStatus['status'],
+    status: effectiveStatus,
     aiCaps: caps,
     aiUsageThisMonth,
     softCapBreached,
