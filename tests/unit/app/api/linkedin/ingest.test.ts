@@ -41,8 +41,14 @@ const createClientMock = vi.fn(async () => ({
   auth: { getUser: getUserMock },
   rpc: vi.fn().mockResolvedValue({ data: true, error: null }),
 }))
+// Token-scoped client used for the DATA queries. getProfile /
+// upsertCandidateFromLinkedIn are themselves mocked, so this object's shape is
+// irrelevant — it just must not throw on construction (the real helper would
+// need NEXT_PUBLIC_SUPABASE_* env which the test deliberately omits).
+const createBearerClientMock = vi.fn(() => ({ from: vi.fn() }))
 vi.mock('@/lib/supabase/server', () => ({
   createClient: createClientMock,
+  createBearerClient: createBearerClientMock,
 }))
 
 const getProfileMock = vi.fn()

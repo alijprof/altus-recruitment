@@ -29,3 +29,23 @@ export async function createClient() {
     },
   )
 }
+
+/**
+ * Token-scoped client for bearer-authenticated route handlers (e.g. the
+ * LinkedIn capture extension, which sends `Authorization: Bearer <token>`
+ * instead of Supabase cookies). PostgREST runs as that user, so RLS enforces
+ * tenancy. No cookies are read or written — this client is scoped solely to
+ * the supplied access token. Construction lives here (not inline in the route)
+ * to keep all Supabase client wiring in lib/supabase and to keep route
+ * handlers mockable in tests.
+ */
+export function createBearerClient(token: string) {
+  return createServerClient<Database>(
+    env.NEXT_PUBLIC_SUPABASE_URL,
+    env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY,
+    {
+      global: { headers: { Authorization: `Bearer ${token}` } },
+      cookies: { getAll: () => [], setAll: () => {} },
+    },
+  )
+}
