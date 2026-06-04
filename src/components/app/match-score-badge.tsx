@@ -35,8 +35,8 @@ export type MatchScoreBadgeProps =
 type Tone = 'high' | 'medium' | 'low' | 'weak'
 
 function bucketCosine(cosine: number): Tone {
-  if (cosine >= 0.7) return 'high'
-  if (cosine >= 0.5) return 'medium'
+  if (cosine >= 0.6) return 'high'
+  if (cosine >= 0.45) return 'medium'
   return 'low'
 }
 

@@ -9,12 +9,13 @@ import { createClient } from '@/lib/supabase/server'
 import { CandidatesShell } from './candidates-shell'
 import { SearchInput } from './search-input'
 
-// D-15: default sort is last_contacted_at DESC NULLS LAST (most recently
-// engaged first). D-14 puts all list interaction state in URL searchParams so
-// the result is shareable and the bundle stays small. Page size 25 is fixed
+// Default sort is created_at DESC NULLS LAST (newest-added first) so a freshly
+// added/captured candidate surfaces at the top instead of sinking below
+// contacted candidates. D-14 puts all list interaction state in URL searchParams
+// so the result is shareable and the bundle stays small. Page size 25 is fixed
 // for Phase 1 (UI-SPEC §1).
 const PAGE_SIZE = 25
-const DEFAULT_SORT: SortKey = 'last_contacted_at'
+const DEFAULT_SORT: SortKey = 'created_at'
 const DEFAULT_DIR: SortDir = 'desc'
 const VALID_SORTS: ReadonlyArray<SortKey> = ['last_contacted_at', 'full_name', 'market_status', 'created_at']
 

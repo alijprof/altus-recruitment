@@ -12,6 +12,7 @@ import { getCandidate, listCandidateActivities } from '@/lib/db/candidates'
 import { createClient } from '@/lib/supabase/server'
 
 import { CandidateApplications } from './candidate-applications'
+import { CandidateDeleteButton } from './candidate-delete-button'
 import { CandidateDetailHeader } from './candidate-detail-header'
 import { CvReviewPanel } from './cv-review-panel'
 import { CvUpload } from './cv-upload'
@@ -181,6 +182,7 @@ export default async function CandidateDetailPage({
           <Button variant="outline" size="sm" asChild>
             <Link href={`/candidates/${id}/edit`}>Edit</Link>
           </Button>
+          <CandidateDeleteButton candidateId={candidate.id} candidateName={candidate.full_name} />
         </div>
       </div>
 

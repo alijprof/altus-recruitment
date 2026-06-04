@@ -56,6 +56,7 @@ const COLUMNS: ColumnDef[] = [
   { key: null, label: 'Location' },
   { key: 'market_status', label: 'Market Status' },
   { key: 'last_contacted_at', label: 'Last Contacted' },
+  { key: 'created_at', label: 'Added' },
   { key: null, label: 'Source' },
 ]
 
@@ -196,6 +197,9 @@ export function CandidateTable({
                   </TableCell>
                   <TableCell className="text-muted-foreground text-sm font-normal">
                     {formatTimeAgo(row.last_contacted_at)}
+                  </TableCell>
+                  <TableCell className="text-muted-foreground text-sm font-normal">
+                    {formatTimeAgo(row.created_at)}
                   </TableCell>
                   <TableCell className="text-muted-foreground text-sm font-normal">
                     {SOURCE_LABEL[row.source]}

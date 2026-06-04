@@ -12,6 +12,7 @@ import { AdPanelTrigger } from './ad-panel/ad-panel-trigger'
 import { SavedAdsList } from './ad-panel/saved-ads-list'
 import { AddCandidateForm } from './add-candidate-form'
 import { ApplicationsList } from './applications-list'
+import { JobDeleteButton } from './job-delete-button'
 import { JobDetailHeader } from './job-detail-header'
 
 export default async function JobDetailPage({
@@ -59,6 +60,7 @@ export default async function JobDetailPage({
           <Button asChild variant="outline">
             <Link href={`/jobs/${id}/pipeline`}>View pipeline</Link>
           </Button>
+          <JobDeleteButton jobId={id} jobTitle={job.title} />
         </div>
       </div>
 

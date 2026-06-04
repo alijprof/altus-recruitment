@@ -16,19 +16,26 @@ import type { Enums } from '@/types/database'
 
 // Plan 1 Task 1.2 — presentation-only component for /search results.
 //
-// Renders the RRF-ranked candidate list. Rows whose RRF score is small
-// (< 0.02 — both ranks are deep) are visually de-prioritised (muted text)
-// rather than hidden so the recruiter sees all 50 results with the
-// noisier ones soft-collapsed.
+// Semantic results are ordered by cosine similarity so the % shown on each row
+// is monotonic with the visible ranking. Low-similarity rows (cosine < 0.4) are
+// visually de-prioritised (muted) rather than hidden, so the recruiter still
+// sees the full result set with the noisier matches soft-collapsed.
 
 export type SearchResultsProps = {
   rows: HybridCandidateRow[]
   mode: 'semantic' | 'trigram'
 }
 
-const RRF_DEPRIORITISE_THRESHOLD = 0.02
+const MUTED_COSINE_THRESHOLD = 0.4
 
 export function SearchResults({ rows, mode }: SearchResultsProps) {
+  // Order semantic results by cosine similarity so the % shown on each row is
+  // monotonic with the visible ranking (recruiter reads "top = best match").
+  const displayRows =
+    mode === 'semantic'
+      ? [...rows].sort((a, b) => b.cosine_similarity - a.cosine_similarity)
+      : rows
+
   if (rows.length === 0) {
     return (
       <div className="text-muted-foreground rounded-md border p-12 text-center text-sm">
@@ -62,8 +69,8 @@ export function SearchResults({ rows, mode }: SearchResultsProps) {
           </TableRow>
         </TableHeader>
         <TableBody>
-          {rows.map((row) => {
-            const muted = mode === 'semantic' && row.rrf_score < RRF_DEPRIORITISE_THRESHOLD
+          {displayRows.map((row) => {
+            const muted = mode === 'semantic' && row.cosine_similarity < MUTED_COSINE_THRESHOLD
             return (
               <TableRow
                 key={row.id}
@@ -117,8 +124,7 @@ export function SearchResults({ rows, mode }: SearchResultsProps) {
       {/* Footnote so the muted rows are explained. */}
       {mode === 'semantic' ? (
         <p className="text-muted-foreground border-t px-4 py-2 text-xs">
-          Ranked by hybrid score (semantic similarity + keyword overlap).
-          Lower-ranked rows are dimmed.
+          Ranked by semantic match strength. Lower-similarity rows are dimmed.
         </p>
       ) : (
         <p className="text-muted-foreground border-t px-4 py-2 text-xs">

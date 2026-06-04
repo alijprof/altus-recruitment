@@ -1,5 +1,6 @@
 'use server'
 
+import * as Sentry from '@sentry/nextjs'
 import { redirect } from 'next/navigation'
 import { revalidatePath } from 'next/cache'
 import { z } from 'zod'
@@ -210,4 +211,61 @@ export async function updateClientAction(
 
   revalidatePath(`/clients/${idResult.data}`)
   return { ok: true }
+}
+
+// ---------------------------------------------------------------------------
+// Delete a client/company (hard delete, tenant-safe, blocks when it has jobs).
+//
+// Routes through the delete_company SECURITY DEFINER RPC (migration
+// 20260603130000): asserts the client is in the caller's org, BLOCKS with
+// `company_has_jobs` if it has any jobs (those carry applications/placement
+// history, and the jobs->companies FK is RESTRICT), cascades contacts via FK,
+// cleans polymorphic activities + audit_log orphans for the company and its
+// contacts, SET-NULLs spec_drafts, and writes a `delete` audit row.
+// ---------------------------------------------------------------------------
+
+const deleteCompanySchema = z.object({ companyId: idSchema })
+
+export type DeleteCompanyResult = { ok: true } | { ok: false; error: string }
+
+export async function deleteCompanyAction(rawInput: unknown): Promise<DeleteCompanyResult> {
+  const parsed = deleteCompanySchema.safeParse(rawInput)
+  if (!parsed.success) return { ok: false, error: 'Invalid client id.' }
+  const { companyId } = parsed.data
+
+  const supabase = await createSupabaseClient()
+  const {
+    data: { user },
+  } = await supabase.auth.getUser()
+  if (!user) return { ok: false, error: 'Not signed in.' }
+
+  // reason: delete_company isn't in the generated Database types until `pnpm
+  // db:types` re-runs after the migration push — use the untyped .rpc cast.
+  const supabaseUntyped = supabase as unknown as {
+    rpc: (
+      fn: string,
+      args: Record<string, unknown>,
+    ) => Promise<{ error: { message: string; code?: string } | null }>
+  }
+  const { error } = await supabaseUntyped.rpc('delete_company', { p_company_id: companyId })
+
+  if (error) {
+    if (error.message.includes('company_has_jobs')) {
+      return {
+        ok: false,
+        error:
+          'This client has jobs. Delete or reassign all of its jobs first, then delete the client.',
+      }
+    }
+    if (error.message.includes('company not found')) {
+      return { ok: false, error: 'Client not found.' }
+    }
+    Sentry.captureException(new Error(`delete_company failed: ${error.code ?? 'unknown'}`), {
+      tags: { layer: 'server-action', action: 'deleteCompanyAction', company_id: companyId },
+    })
+    return { ok: false, error: 'Couldn’t delete this client. Please try again.' }
+  }
+
+  revalidatePath('/clients')
+  redirect('/clients')
 }

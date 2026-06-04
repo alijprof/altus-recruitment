@@ -9,6 +9,7 @@ import { listJobsForCompany } from '@/lib/db/jobs'
 import { createClient as createSupabaseClient } from '@/lib/supabase/server'
 
 import { ClientCheckinButton } from './client-checkin-button'
+import { ClientDeleteButton } from './client-delete-button'
 import { ClientManagementTabs } from './client-management-tabs'
 
 export default async function ClientDetailPage({
@@ -92,6 +93,7 @@ export default async function ClientDetailPage({
             </p>
           ) : null}
         </div>
+        <ClientDeleteButton companyId={id} companyName={client.name} />
       </header>
 
       <ClientManagementTabs

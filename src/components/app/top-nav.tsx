@@ -44,7 +44,7 @@ interface TopNavProps {
 export function TopNav({ userEmail, userName, organizationName }: TopNavProps) {
   return (
     <header className="border-b border-[#0f1a26] bg-[#1a2738] text-slate-100">
-      <div className="mx-auto flex w-full max-w-6xl items-center justify-between gap-6 px-4 py-3 sm:px-6">
+      <div className="mx-auto flex w-full max-w-[1400px] items-center justify-between gap-4 px-4 py-2.5 sm:px-6">
         <div className="flex items-center gap-3 md:gap-6">
           {/* Hamburger — only visible below md; renders the mobile nav drawer */}
           <MobileNavDrawer
@@ -73,12 +73,12 @@ export function TopNav({ userEmail, userName, organizationName }: TopNavProps) {
               <span className="text-[10px] text-slate-400">from Altus</span>
             </span>
           </Link>
-          <nav className="hidden gap-1 md:flex">
+          <nav className="hidden items-center gap-0.5 md:flex lg:gap-1">
             {NAV_ITEMS.map((item) => (
               <Link
                 key={item.href}
                 href={item.href}
-                className="rounded-md px-3 py-1.5 text-sm text-slate-300 transition-colors hover:bg-white/10 hover:text-slate-50"
+                className="rounded-md px-2.5 py-1.5 text-sm whitespace-nowrap text-slate-300 transition-colors hover:bg-white/10 hover:text-slate-50"
               >
                 {item.label}
               </Link>

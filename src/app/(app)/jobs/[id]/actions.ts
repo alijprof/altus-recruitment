@@ -2,6 +2,7 @@
 
 import * as Sentry from '@sentry/nextjs'
 import { revalidatePath } from 'next/cache'
+import { redirect } from 'next/navigation'
 import { z } from 'zod'
 
 import {
@@ -334,4 +335,61 @@ export async function removeApplicationAction(
   }
   revalidatePath(`/candidates/${res.data.candidate_id}`)
   return { ok: true }
+}
+
+// ---------------------------------------------------------------------------
+// Delete a job (hard delete, tenant-safe, blocks when the job has applications).
+//
+// Routes through the delete_job SECURITY DEFINER RPC (migration 20260603130000):
+// asserts the job is in the caller's org, BLOCKS with `job_has_applications` if
+// any candidate is in its pipeline (placement/fee history lives on applications
+// — never destroy it silently), cleans polymorphic activities + audit_log
+// orphans, cascades job_ads + ai_summaries via FK, SET-NULLs spec_drafts, and
+// writes a `delete` audit row.
+// ---------------------------------------------------------------------------
+
+const deleteJobSchema = z.object({ jobId: idSchema })
+
+export type DeleteJobResult = { ok: true } | { ok: false; error: string }
+
+export async function deleteJobAction(rawInput: unknown): Promise<DeleteJobResult> {
+  const parsed = deleteJobSchema.safeParse(rawInput)
+  if (!parsed.success) return { ok: false, error: 'Invalid job id.' }
+  const { jobId } = parsed.data
+
+  const supabase = await createSupabaseClient()
+  const {
+    data: { user },
+  } = await supabase.auth.getUser()
+  if (!user) return { ok: false, error: 'Not signed in.' }
+
+  // reason: delete_job isn't in the generated Database types until `pnpm
+  // db:types` re-runs after the migration push — use the untyped .rpc cast.
+  const supabaseUntyped = supabase as unknown as {
+    rpc: (
+      fn: string,
+      args: Record<string, unknown>,
+    ) => Promise<{ error: { message: string; code?: string } | null }>
+  }
+  const { error } = await supabaseUntyped.rpc('delete_job', { p_job_id: jobId })
+
+  if (error) {
+    if (error.message.includes('job_has_applications')) {
+      return {
+        ok: false,
+        error:
+          'This job has candidates in its pipeline. Remove all candidates from the pipeline first, then delete.',
+      }
+    }
+    if (error.message.includes('job not found')) {
+      return { ok: false, error: 'Job not found.' }
+    }
+    Sentry.captureException(new Error(`delete_job failed: ${error.code ?? 'unknown'}`), {
+      tags: { layer: 'server-action', action: 'deleteJobAction', job_id: jobId },
+    })
+    return { ok: false, error: 'Couldn’t delete this job. Please try again.' }
+  }
+
+  revalidatePath('/jobs')
+  redirect('/jobs')
 }

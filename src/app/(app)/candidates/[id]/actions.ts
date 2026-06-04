@@ -1,6 +1,7 @@
 'use server'
 
 import { revalidatePath } from 'next/cache'
+import { redirect } from 'next/navigation'
 import * as Sentry from '@sentry/nextjs'
 import { z } from 'zod'
 
@@ -406,4 +407,100 @@ export async function acceptCVFieldsAction(rawInput: unknown): Promise<AcceptCVF
 
   revalidatePath(`/candidates/${cv.candidate_id}`)
   return { ok: true, fieldsPopulated: mergeResult.data.fieldsPopulated }
+}
+
+// ---------------------------------------------------------------------------
+// Delete a candidate (hard delete, tenant-safe, blocks on applications).
+//
+// Routes through the delete_candidate SECURITY DEFINER RPC (migration
+// 20260603120100): it asserts the candidate is in the caller's org, BLOCKS with
+// `candidate_has_applications` if they're in any pipeline/float so placement
+// history is never silently cascaded away, cleans up the polymorphic activities
+// + audit_log orphans, cascades candidate_cvs + ai_summaries via FK, and writes
+// a `delete` audit row. CV files in Storage have no DB->Storage cascade, so we
+// best-effort remove them here AFTER the RPC succeeds.
+// ---------------------------------------------------------------------------
+
+const deleteCandidateSchema = z.object({
+  candidateId: z.string().uuid('Invalid candidate id.'),
+})
+
+export type DeleteCandidateResult = { ok: true } | { ok: false; error: string }
+
+export async function deleteCandidateAction(rawInput: unknown): Promise<DeleteCandidateResult> {
+  const parsed = deleteCandidateSchema.safeParse(rawInput)
+  if (!parsed.success) {
+    const first = parsed.error.issues[0]?.message ?? 'Invalid request.'
+    return { ok: false, error: first }
+  }
+  const { candidateId } = parsed.data
+
+  const supabase = await createClient()
+  const {
+    data: { user },
+  } = await supabase.auth.getUser()
+  if (!user) return { ok: false, error: 'Not signed in.' }
+
+  // Resolve org up-front for the post-delete Storage cleanup.
+  const profileResult = await getProfile(supabase, user.id)
+  const organizationId = profileResult.ok ? profileResult.data.organization_id : null
+
+  // reason: delete_candidate isn't in the generated Database types until
+  // `pnpm db:types` re-runs after the migration push — use the untyped-client
+  // .rpc cast, mirroring the move_application pattern in lib/db/applications.ts.
+  const supabaseUntyped = supabase as unknown as {
+    rpc: (
+      fn: string,
+      args: Record<string, unknown>,
+    ) => Promise<{ error: { message: string; code?: string } | null }>
+  }
+  const { error } = await supabaseUntyped.rpc('delete_candidate', {
+    p_candidate_id: candidateId,
+  })
+
+  if (error) {
+    if (error.message.includes('candidate_has_applications')) {
+      return {
+        ok: false,
+        error:
+          'This candidate is in a job pipeline or has placement history. Remove them from all jobs and floats first, then delete.',
+      }
+    }
+    if (error.message.includes('candidate not found')) {
+      return { ok: false, error: 'Candidate not found.' }
+    }
+    Sentry.captureException(new Error(`delete_candidate failed: ${error.code ?? 'unknown'}`), {
+      tags: {
+        layer: 'server-action',
+        action: 'deleteCandidateAction',
+        candidate_id: candidateId,
+      },
+    })
+    return { ok: false, error: 'Couldn’t delete this candidate. Please try again.' }
+  }
+
+  // Best-effort Storage cleanup — the DB rows are already gone, so a failure
+  // here only orphans bytes (a cost, not a correctness issue). Never throw.
+  if (organizationId) {
+    try {
+      const prefix = `${organizationId}/${candidateId}`
+      const { data: files } = await supabase.storage.from('cvs').list(prefix)
+      if (files && files.length > 0) {
+        await supabase.storage.from('cvs').remove(files.map((f) => `${prefix}/${f.name}`))
+      }
+    } catch (err) {
+      const name = err instanceof Error ? err.name : 'UnknownError'
+      Sentry.captureException(new Error(`${name}: cvs cleanup failed after candidate delete`), {
+        tags: {
+          layer: 'server-action',
+          action: 'deleteCandidateAction',
+          subop: 'storage-cleanup',
+          candidate_id: candidateId,
+        },
+      })
+    }
+  }
+
+  revalidatePath('/candidates')
+  redirect('/candidates')
 }

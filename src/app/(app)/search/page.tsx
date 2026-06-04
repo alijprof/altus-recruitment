@@ -11,7 +11,7 @@ import {
 import { createClient } from '@/lib/supabase/server'
 
 import { SearchInput } from './search-input'
-import { SearchResults, TrigramResults } from './search-results'
+import { SearchResults, TrigramResults, type TrigramSearchResultsProps } from './search-results'
 
 // Plan 1 Task 1.2 — /search RSC page. Vertical-slice of ROADMAP success #1:
 // recruiter types natural language → embed query via Voyage → RRF hybrid
@@ -133,7 +133,6 @@ export default async function SearchPage({
   // (declared SECURITY DEFINER so RLS doesn't recurse).
   // -----------------------------------------------------------------------
   let rows: Awaited<ReturnType<typeof hybridSearchCandidates>> | null = null
-  let semanticError = false
   try {
     const orgRpc = await supabase.rpc('current_organization_id')
     const organizationId = typeof orgRpc.data === 'string' ? orgRpc.data : null
@@ -163,10 +162,37 @@ export default async function SearchPage({
       minCosineSimilarity: MIN_COSINE,
     })
   } catch (err) {
+    // The Voyage embed (or the hybrid RPC) threw — most often a transient
+    // Voyage rate-limit. Log it so it's visible in runtime logs, then fall
+    // back to keyword results below instead of dead-ending the recruiter.
+    console.error('semantic search failed; falling back to keyword:', err)
     Sentry.captureException(err, {
       tags: { layer: 'page', helper: 'SearchPage', branch: 'semantic-embed' },
     })
-    semanticError = true
+  }
+
+  // Fail soft: if semantic ranking didn't come back, run the keyword (trigram)
+  // path so the recruiter still sees candidates instead of a red dead-end.
+  let fallbackRows: TrigramSearchResultsProps['rows'] = []
+  if (!rows?.ok) {
+    const list = await listCandidates(supabase, {
+      q,
+      sort: 'created_at',
+      dir: 'desc',
+      offset: 0,
+      limit: RESULT_LIMIT,
+      mode: 'trigram',
+    })
+    fallbackRows = list.ok
+      ? list.data.rows.map((r) => ({
+          id: r.id,
+          full_name: r.full_name,
+          current_role_title: r.current_role_title,
+          current_company: r.current_company,
+          location: r.location,
+          market_status: r.market_status,
+        }))
+      : []
   }
 
   return (
@@ -176,12 +202,15 @@ export default async function SearchPage({
       </header>
       <SearchInput initialQuery={q} initialMode={mode} />
       {unembeddedCount > 0 ? <UnembeddedNudge count={unembeddedCount} /> : null}
-      {semanticError || !rows?.ok ? (
-        <div className="text-destructive rounded-md border border-destructive/40 bg-destructive/5 p-6 text-sm">
-          Search is temporarily unavailable. Try keyword mode for now.
-        </div>
-      ) : (
+      {rows?.ok ? (
         <SearchResults rows={rows.data} mode="semantic" />
+      ) : (
+        <>
+          <div className="rounded-md border border-amber-300/50 bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:border-amber-900/60 dark:bg-amber-950/40 dark:text-amber-300">
+            Showing keyword results — semantic ranking is momentarily unavailable.
+          </div>
+          <TrigramResults rows={fallbackRows} />
+        </>
       )}
     </div>
   )
