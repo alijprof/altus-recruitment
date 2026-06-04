@@ -1149,6 +1149,41 @@ export type Database = {
           },
         ]
       }
+      plan_overrides: {
+        Row: {
+          cap_multiplier: number | null
+          note: string | null
+          organization_id: string
+          trial_end_override: string | null
+          updated_at: string
+          updated_by: string | null
+        }
+        Insert: {
+          cap_multiplier?: number | null
+          note?: string | null
+          organization_id: string
+          trial_end_override?: string | null
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Update: {
+          cap_multiplier?: number | null
+          note?: string | null
+          organization_id?: string
+          trial_end_override?: string | null
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "plan_overrides_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: true
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       spec_drafts: {
         Row: {
           approved_at: string | null

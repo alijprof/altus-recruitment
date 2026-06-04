@@ -72,7 +72,7 @@ export async function POST(request: Request): Promise<NextResponse> {
   let event: Stripe.Event
   try {
     event = assertStripe().webhooks.constructEvent(body, sig, env.STRIPE_WEBHOOK_SECRET)
-  } catch (err) {
+  } catch {
     // Do NOT leak error detail in the response — just 400.
     Sentry.captureMessage('stripe_webhook_signature_failed', {
       level: 'warning',

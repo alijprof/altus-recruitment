@@ -17,7 +17,7 @@ import { z } from 'zod'
 import * as Sentry from '@sentry/nextjs'
 
 import { assertStripe, stripe } from '@/lib/stripe/client'
-import { PLANS, PLAN_PRICE_IDS } from '@/lib/stripe/plans'
+import { PLAN_PRICE_IDS } from '@/lib/stripe/plans'
 import type { PlanKey } from '@/lib/stripe/plans'
 import { getOrganization } from '@/lib/db/organizations'
 import { createClient } from '@/lib/supabase/server'
