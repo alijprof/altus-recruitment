@@ -68,6 +68,38 @@ export type Database = {
           },
         ]
       }
+      ai_cap_notifications: {
+        Row: {
+          bucket: string
+          created_at: string
+          id: string
+          notified_month: string
+          organization_id: string
+        }
+        Insert: {
+          bucket: string
+          created_at?: string
+          id?: string
+          notified_month: string
+          organization_id: string
+        }
+        Update: {
+          bucket?: string
+          created_at?: string
+          id?: string
+          notified_month?: string
+          organization_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "ai_cap_notifications_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       ai_summaries: {
         Row: {
           candidate_embedding_version: number | null
@@ -991,29 +1023,38 @@ export type Database = {
       organizations: {
         Row: {
           apply_form_enabled: boolean
+          brand_primary: string | null
+          brand_secondary: string | null
           created_at: string
           id: string
           logo_url: string | null
           name: string
           slug: string
+          stripe_customer_id: string | null
           updated_at: string
         }
         Insert: {
           apply_form_enabled?: boolean
+          brand_primary?: string | null
+          brand_secondary?: string | null
           created_at?: string
           id?: string
           logo_url?: string | null
           name: string
           slug: string
+          stripe_customer_id?: string | null
           updated_at?: string
         }
         Update: {
           apply_form_enabled?: boolean
+          brand_primary?: string | null
+          brand_secondary?: string | null
           created_at?: string
           id?: string
           logo_url?: string | null
           name?: string
           slug?: string
+          stripe_customer_id?: string | null
           updated_at?: string
         }
         Relationships: []
@@ -1213,6 +1254,74 @@ export type Database = {
           },
         ]
       }
+      stripe_webhook_events: {
+        Row: {
+          created_at: string
+          event_type: string | null
+          stripe_event_id: string
+        }
+        Insert: {
+          created_at?: string
+          event_type?: string | null
+          stripe_event_id: string
+        }
+        Update: {
+          created_at?: string
+          event_type?: string | null
+          stripe_event_id?: string
+        }
+        Relationships: []
+      }
+      subscriptions: {
+        Row: {
+          created_at: string
+          current_period_end: string | null
+          id: string
+          organization_id: string
+          plan_key: string
+          plan_seats: number
+          status: string
+          stripe_customer_id: string | null
+          stripe_subscription_id: string | null
+          trial_end: string | null
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          current_period_end?: string | null
+          id?: string
+          organization_id: string
+          plan_key?: string
+          plan_seats?: number
+          status?: string
+          stripe_customer_id?: string | null
+          stripe_subscription_id?: string | null
+          trial_end?: string | null
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          current_period_end?: string | null
+          id?: string
+          organization_id?: string
+          plan_key?: string
+          plan_seats?: number
+          status?: string
+          stripe_customer_id?: string | null
+          stripe_subscription_id?: string | null
+          trial_end?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "subscriptions_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: true
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       users: {
         Row: {
           created_at: string
@@ -1314,6 +1423,9 @@ export type Database = {
         }[]
       }
       current_organization_id: { Args: never; Returns: string }
+      delete_candidate: { Args: { p_candidate_id: string }; Returns: undefined }
+      delete_company: { Args: { p_company_id: string }; Returns: undefined }
+      delete_job: { Args: { p_job_id: string }; Returns: undefined }
       dormant_clients: {
         Args: { p_dormant_days?: number; p_long_dormant_days?: number }
         Returns: {
