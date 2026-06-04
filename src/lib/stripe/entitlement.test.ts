@@ -1,12 +1,41 @@
-// Unit tests for getEntitlement — 05-01 Task 1.1
-//
-// Mocks the DB helpers (getSubscriptionForOrg, getAiUsageThisMonth) and the
-// Supabase count queries so we can drive the entitlement logic in isolation.
-// Uses vi.mock — no real DB or Stripe calls.
-//
-// TDD gate: these tests are written BEFORE the implementation exists.
+/**
+ * @vitest-environment node
+ *
+ * Unit tests for getEntitlement — 05-01 Task 1.1
+ *
+ * Mocks the DB helpers (getSubscriptionForOrg, getAiUsageThisMonth) and the
+ * Supabase count queries so we can drive the entitlement logic in isolation.
+ * Uses vi.mock — no real DB or Stripe calls.
+ *
+ * TDD gate: these tests are written BEFORE the implementation exists.
+ */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+
+// server-only is a Next.js compile-time guard; in Vitest we stub it out.
+vi.mock('server-only', () => ({}))
+
+// Sentry — stub out to avoid needing DSN in tests.
+vi.mock('@sentry/nextjs', () => ({
+  captureException: vi.fn(),
+  captureMessage: vi.fn(),
+  addBreadcrumb: vi.fn(),
+}))
+
+// @t3-oss/env-nextjs validates env vars at import time; stub it so tests don't
+// require real env vars to be set.
+vi.mock('@/lib/env', () => ({
+  env: {
+    NEXT_PUBLIC_SUPABASE_URL: 'http://localhost:54321',
+    NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: 'test-key',
+    SUPABASE_SERVICE_ROLE_KEY: 'test-service-key',
+    ANTHROPIC_API_KEY: 'sk-ant-test',
+    INNGEST_EVENT_KEY: 'test',
+    INNGEST_SIGNING_KEY: 'test',
+    MAX_MONTHLY_MATCH_SPEND_PENCE: 10000,
+    NODE_ENV: 'test',
+  },
+}))
 
 // We mock the modules that getEntitlement depends on so we can test the logic
 // without a real DB. The mocks must be declared at the top level before any
@@ -48,19 +77,13 @@ const mockGetSubscription = getSubscriptionForOrg as Mock
 const mockGetUsage = getAiUsageThisMonth as Mock
 const mockCreateServiceClient = createServiceClient as Mock
 
-// Helper: build a fake Supabase chain that returns a given member count
+// Helper: build a fake Supabase service client that returns a given member count
+// for the .from('users').select('id', { count: 'exact', head: true }).eq(...) chain.
 function makeSupabaseWithCount(count: number) {
-  return {
-    from: () => ({
-      select: () => ({
-        eq: () => ({
-          // RLS count query resolves synchronously
-          then: (resolve: (v: { count: number | null; error: null }) => void) =>
-            resolve({ count, error: null }),
-        }),
-      }),
-    }),
-  }
+  const eqFn = () => Promise.resolve({ count, error: null, data: null, status: 200, statusText: 'OK' })
+  const selectFn = () => ({ eq: eqFn })
+  const fromFn = () => ({ select: selectFn })
+  return { from: fromFn }
 }
 
 const ZERO_USAGE = {
@@ -86,8 +109,8 @@ describe('getEntitlement', () => {
 
     expect(result.status).toBe('none')
     expect(result.planKey).toBe('none')
-    // Trial gets Pro caps
-    expect(result.aiCaps.matchScores).toBe(PLANS.pro.aiCaps.matchScores)
+    // Trial gets Pro caps × Pro seats (the full Pro plan allowance)
+    expect(result.aiCaps.matchScores).toBe(PLANS.pro.aiCaps.matchScores * PLANS.pro.seats)
     expect(result.softCapBreached).toBe(false)
     expect(result.hardCapBreached).toBe(false)
   })
