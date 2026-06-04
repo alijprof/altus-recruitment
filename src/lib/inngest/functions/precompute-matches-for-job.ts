@@ -2,6 +2,7 @@ import * as Sentry from '@sentry/nextjs'
 import { NonRetriableError } from 'inngest'
 
 import { buildMatchInputs, scoreCandidateForJob } from '@/lib/ai/match'
+import { CapExceededError } from '@/lib/ai/claude'
 import {
   getOrgMatchSpendThisMonth,
   getMatchSummary,
@@ -269,12 +270,35 @@ export const precomputeMatchesForJob = inngest.createFunction(
             return
           }
 
-          const score = await scoreCandidateForJob({
-            candidateSummary: inputs.data.candidateSummary,
-            jobSummary: inputs.data.jobSummary,
-            organizationId: organization_id,
-            userId: user_id,
-          })
+          let score
+          try {
+            score = await scoreCandidateForJob({
+              candidateSummary: inputs.data.candidateSummary,
+              jobSummary: inputs.data.jobSummary,
+              organizationId: organization_id,
+              userId: user_id,
+            })
+          } catch (scoreErr) {
+            // CapExceededError: hard AI cap reached. Mirror the existing
+            // spend-ceiling bail — Sentry warning, exit the loop, recruiter
+            // still sees vector-only results. No retries (same as cost ceiling).
+            if (scoreErr instanceof CapExceededError) {
+              Sentry.captureMessage(
+                `match scoring AI cap exceeded for org ${organization_id}`,
+                {
+                  level: 'warning',
+                  tags: {
+                    layer: 'inngest',
+                    function: 'precompute-matches-for-job',
+                    organization_id,
+                    bucket: scoreErr.bucket,
+                  },
+                },
+              )
+              return // exit this step.run — vector-only fallback stays
+            }
+            throw scoreErr
+          }
 
           const upsertResult = await upsertMatchSummary(supabase, {
             candidateId: candidate.id,

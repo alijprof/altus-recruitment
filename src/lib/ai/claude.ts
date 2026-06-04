@@ -5,6 +5,10 @@ import * as Sentry from '@sentry/nextjs'
 
 import { env } from '@/lib/env'
 import { createServiceClient } from '@/lib/supabase/service'
+import { checkCap, CapExceededError } from '@/lib/stripe/cap-enforcement'
+
+// Re-export CapExceededError so callers don't need to import cap-enforcement.
+export { CapExceededError }
 
 // Hard-coded model IDs from CLAUDE.md. Any new model needs explicit approval
 // (and a pricing entry below); the TS layer refuses unknown IDs.
@@ -63,6 +67,26 @@ type RunArgs = {
 const MAX_ATTEMPTS = 4 // 1 initial + 3 retries
 
 export async function runWithLogging(args: RunArgs): Promise<Anthropic.Message> {
+  // Cap enforcement — check BEFORE the Anthropic call (05-01 Task 1.4).
+  // Fail open: if checkCap throws, we let the call proceed rather than
+  // blocking all AI on a billing error. CapExceededError is propagated so
+  // callers can handle cached-only / queue paths.
+  try {
+    const capResult = await checkCap(args.organizationId, args.purpose)
+    if (!capResult.allow) {
+      // Hard cap: throw CapExceededError. Callers (match scoring, cv_parse
+      // Inngest) catch this and fall back to cached results or queue.
+      // NEVER throw for purposes that don't have on-demand fallbacks — those
+      // callers must handle the error (see precompute-matches-for-job).
+      throw new CapExceededError(capResult.bucket, args.purpose, args.organizationId)
+    }
+    // soft mode: call proceeds normally; email already queued by checkCap.
+  } catch (err) {
+    // CapExceededError is intentional — re-throw.
+    if (err instanceof CapExceededError) throw err
+    // Any other checkCap error: fail open (log via Sentry inside checkCap).
+  }
+
   const started = Date.now()
   let attempt = 0
   let lastError: unknown
