@@ -72,5 +72,17 @@ export async function getSourceAttribution(
     return { ok: false, code: 'internal' }
   }
 
-  return { ok: true, data: data ?? [] }
+  // PostgREST returns Postgres numeric/bigint columns as STRINGS. Coerce
+  // here at the helper boundary so every downstream consumer (page reduces,
+  // .toFixed at the source-attribution + buyer-value ROI sub-tables,
+  // formatPence) gets real numbers — string `.toFixed` throws, and
+  // `acc + total_fee_pence` would string-concat the Fee-revenue headline.
+  const coerced = (data ?? []).map((r) => ({
+    ...r,
+    placements_count: Number(r.placements_count) || 0,
+    total_fee_pence: Number(r.total_fee_pence) || 0,
+    avg_time_to_place_days: Number(r.avg_time_to_place_days) || 0,
+  }))
+
+  return { ok: true, data: coerced }
 }

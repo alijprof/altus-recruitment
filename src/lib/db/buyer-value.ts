@@ -111,12 +111,22 @@ export async function getPlacementsByRecruiterQuarter(
   supabase: SupabaseClient<Database>,
   args: BuyerValueRangeArgs,
 ): Promise<DbResult<PlacementsByRecruiterQuarterRow[]>> {
-  return callRpc<PlacementsByRecruiterQuarterRow>(
+  const res = await callRpc<PlacementsByRecruiterQuarterRow>(
     supabase,
     'placements_by_recruiter_quarter',
     { p_from: args.from, p_to: args.to },
     'getPlacementsByRecruiterQuarter',
   )
+  if (!res.ok) return res
+  // PostgREST returns Postgres numeric/bigint as STRINGS — coerce so the
+  // stacked bar and headline sums arithmetic correctly (string-concat bug).
+  return {
+    ok: true,
+    data: res.data.map((r) => ({
+      ...r,
+      placements_count: Number(r.placements_count) || 0,
+    })),
+  }
 }
 
 /**
@@ -127,12 +137,23 @@ export async function getTimeToFillBySector(
   supabase: SupabaseClient<Database>,
   args: BuyerValueRangeArgs,
 ): Promise<DbResult<TimeToFillBySectorRow[]>> {
-  return callRpc<TimeToFillBySectorRow>(
+  const res = await callRpc<TimeToFillBySectorRow>(
     supabase,
     'time_to_fill_by_sector',
     { p_from: args.from, p_to: args.to },
     'getTimeToFillBySector',
   )
+  if (!res.ok) return res
+  // Coerce numeric/bigint strings so `.toFixed` and chart axes don't break.
+  return {
+    ok: true,
+    data: res.data.map((r) => ({
+      ...r,
+      median_days: Number(r.median_days) || 0,
+      p90_days: Number(r.p90_days) || 0,
+      placements_count: Number(r.placements_count) || 0,
+    })),
+  }
 }
 
 /**
@@ -144,12 +165,21 @@ export async function getPipelineValueSparkline(
   supabase: SupabaseClient<Database>,
   args: BuyerValueRangeArgs,
 ): Promise<DbResult<PipelineValueSparklineRow[]>> {
-  return callRpc<PipelineValueSparklineRow>(
+  const res = await callRpc<PipelineValueSparklineRow>(
     supabase,
     'pipeline_value_sparkline',
     { p_from: args.from, p_to: args.to },
     'getPipelineValueSparkline',
   )
+  if (!res.ok) return res
+  // Coerce numeric/bigint strings so the sparkline + headline big number sum.
+  return {
+    ok: true,
+    data: res.data.map((r) => ({
+      ...r,
+      pipeline_value_pence: Number(r.pipeline_value_pence) || 0,
+    })),
+  }
 }
 
 /**
@@ -161,12 +191,24 @@ export async function getCommissionSummary(
   supabase: SupabaseClient<Database>,
   args: BuyerValueRangeArgs,
 ): Promise<DbResult<CommissionSummaryRow[]>> {
-  return callRpc<CommissionSummaryRow>(
+  const res = await callRpc<CommissionSummaryRow>(
     supabase,
     'commission_summary_by_recruiter',
     { p_from: args.from, p_to: args.to },
     'getCommissionSummary',
   )
+  if (!res.ok) return res
+  // Coerce numeric/bigint strings so formatGbpRound + the CommissionTable
+  // totals arithmetic correctly (otherwise fee/commission string-concat).
+  return {
+    ok: true,
+    data: res.data.map((r) => ({
+      ...r,
+      placements_count: Number(r.placements_count) || 0,
+      total_fee_pence: Number(r.total_fee_pence) || 0,
+      estimated_commission_pence: Number(r.estimated_commission_pence) || 0,
+    })),
+  }
 }
 
 /**

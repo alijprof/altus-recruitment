@@ -31,6 +31,12 @@ const REPORTS: ReportCard[] = [
     description:
       'Placements grouped by candidate source — counts, fee revenue, and average time-to-place per channel.',
   },
+  {
+    href: '/reports/buyer-value',
+    title: 'Buyer-value report',
+    description:
+      'Acquirer due-diligence metrics — placements per recruiter, time-to-fill, source ROI, pipeline value, and commission.',
+  },
 ]
 
 export default async function ReportsPage() {
