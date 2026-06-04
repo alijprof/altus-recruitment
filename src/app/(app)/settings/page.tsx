@@ -164,6 +164,27 @@ export default async function SettingsPage() {
 
       <Separator />
 
+      {/* Phase 5 Plan 05-02 — per-org branding (owner-only). */}
+      {isOwner ? (
+        <Link href="/settings/branding" className="block">
+          <Card className="transition-colors hover:bg-accent/40">
+            <CardHeader>
+              <div className="flex items-center justify-between">
+                <div className="space-y-1">
+                  <CardTitle className="text-base font-semibold">Branding</CardTitle>
+                  <CardDescription>
+                    Customise your public apply page with your agency&apos;s logo and brand colours.
+                  </CardDescription>
+                </div>
+                <ChevronRight className="text-muted-foreground size-5" aria-hidden="true" />
+              </div>
+            </CardHeader>
+          </Card>
+        </Link>
+      ) : null}
+
+      <Separator />
+
       {/* Phase 5 Plan 05-01 — billing + plan management (owner-only). */}
       {isOwner ? (
         <Link href="/settings/billing" className="block">
