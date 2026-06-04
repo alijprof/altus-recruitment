@@ -65,6 +65,10 @@ export type ApplyFormProps = {
   orgSlug: string
   orgName: string
   consentText: string
+  /** Pre-validated 6-digit hex (safeHex applied by page.tsx). Used for button accent. */
+  brandPrimary: string
+  /** Pre-validated 6-digit hex (safeHex applied by page.tsx). */
+  brandSecondary: string
 }
 
 export function ApplyForm({ orgSlug, orgName, consentText }: ApplyFormProps) {
@@ -487,10 +491,17 @@ export function ApplyForm({ orgSlug, orgName, consentText }: ApplyFormProps) {
         </div>
 
         <div className="flex items-center justify-end gap-3">
+          {/* Brand primary colour applied via var(--brand-primary), which is set as a
+              CSS custom property on the page wrapper div in page.tsx (style object,
+              never a <style> tag). The colour value never touches this className. */}
           <Button
             type="submit"
             className="h-11 md:h-10"
             disabled={submitDisabled}
+            style={{
+              backgroundColor: 'var(--brand-primary)',
+              borderColor: 'var(--brand-primary)',
+            }}
           >
             {isPending ? 'Submitting…' : 'Submit application'}
           </Button>
