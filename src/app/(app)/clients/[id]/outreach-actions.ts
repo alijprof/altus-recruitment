@@ -279,6 +279,9 @@ export async function sendOutreachAction(rawInput: unknown): Promise<SendOutreac
   // user-scoped path and need to update metadata atomically — RLS would
   // permit it as the recruiter, but the helper composes the metadata patch
   // explicitly so we keep it simple.
+  // Single send timestamp shared by the activity metadata AND the company
+  // last_contacted_at bump so the timeline and the Dormant badge agree.
+  const sentAt = new Date().toISOString()
   try {
     const service = createServiceClient()
     const filterKind = 'email_draft' as unknown as 'email'
@@ -294,7 +297,9 @@ export async function sendOutreachAction(rawInput: unknown): Promise<SendOutreac
       .maybeSingle()
     if (existing?.id) {
       const prevMeta = (existing.metadata ?? {}) as Record<string, unknown>
-      await service
+      // Capture the flip UPDATE error instead of discarding it — a silent
+      // failure here leaves the timeline showing a draft for a sent email.
+      const { error: flipError } = await service
         .from('activities')
         .update({
           // 'email' is part of the enum from Phase 1 — no cast needed.
@@ -304,7 +309,7 @@ export async function sendOutreachAction(rawInput: unknown): Promise<SendOutreac
             ...prevMeta,
             subject,
             body_html,
-            sent_at: new Date().toISOString(),
+            sent_at: sentAt,
             sent_to: contact.email,
           },
         })
@@ -312,6 +317,19 @@ export async function sendOutreachAction(rawInput: unknown): Promise<SendOutreac
         // (resolved up-front) so a forged id can't cross tenants (M-6a).
         .eq('id', existing.id)
         .eq('organization_id', profile.organization_id)
+      if (flipError) {
+        // Name-only Sentry capture (no email/body PII). The email already
+        // sent, so a flip failure is logged, not fatal.
+        const name = flipError instanceof Error ? flipError.name : 'PostgrestError'
+        Sentry.captureException(new Error(`${name}: outreach draft flip failed`), {
+          tags: {
+            phase: 'p3',
+            layer: 'action',
+            helper: 'sendOutreachAction',
+            subop: 'flip-draft',
+          },
+        })
+      }
     } else {
       // No prior draft row — create a fresh email activity so the timeline
       // reflects the send. This branch only triggers if the recruiter sent
@@ -324,7 +342,28 @@ export async function sendOutreachAction(rawInput: unknown): Promise<SendOutreac
         entity_id: clientId,
         body: subject,
         actor_user_id: user.id,
-        metadata: { subject, body_html, sent_at: new Date().toISOString(), sent_to: contact.email },
+        metadata: { subject, body_html, sent_at: sentAt, sent_to: contact.email },
+      })
+    }
+
+    // The activities_bump_last_contacted trigger fires AFTER INSERT only, so
+    // flipping the draft via UPDATE never bumps companies.last_contacted_at and
+    // the Dormant badge never clears. Bump it explicitly, org-scoped. Failure
+    // is logged name-only, not fatal — the email already sent.
+    const { error: bumpError } = await service
+      .from('companies')
+      .update({ last_contacted_at: sentAt })
+      .eq('id', clientId)
+      .eq('organization_id', profile.organization_id)
+    if (bumpError) {
+      const name = bumpError instanceof Error ? bumpError.name : 'PostgrestError'
+      Sentry.captureException(new Error(`${name}: last_contacted_at bump failed`), {
+        tags: {
+          phase: 'p3',
+          layer: 'action',
+          helper: 'sendOutreachAction',
+          subop: 'bump-last-contacted',
+        },
       })
     }
   } catch (err) {
