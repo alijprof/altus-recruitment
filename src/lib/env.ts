@@ -118,6 +118,29 @@ export const env = createEnv({
     // outbound email and logs a `no_recipient_configured` Sentry warning
     // when unset. The DB row is still canonical.
     RESEND_FEEDBACK_RECIPIENT: z.string().email().optional(),
+
+    // --- Phase 5: Stripe billing (Plans 05-01, 05-03, 05-05) -------------
+    //
+    // ALL Stripe vars are `.optional()` so `pnpm build` (and the dev server)
+    // boot cleanly when Stripe is not yet configured — e.g., while the
+    // founder is setting up Stripe products and price IDs in TEST mode.
+    //
+    // The Stripe client (src/lib/stripe/client.ts) fails CLOSED at CALL
+    // TIME: it exports `null` when STRIPE_SECRET_KEY is absent, and
+    // individual callers call `assertStripe()` to get a typed Stripe
+    // instance or throw a clear "Stripe is not configured" error. This
+    // prevents build-time crashes from killing unrelated development work.
+    //
+    // Production deployments MUST set all five vars; the billing
+    // entitlement helper (05-01) enforces this at runtime by returning a
+    // degraded "none" plan rather than crashing the app.
+    STRIPE_SECRET_KEY: z.string().startsWith('sk_').optional(),
+    STRIPE_WEBHOOK_SECRET: z.string().startsWith('whsec_').optional(),
+    // Price IDs for the three recurring GBP plans created in Stripe Dashboard
+    // (TEST mode first, then LIVE). Values look like `price_1Abc...`.
+    STRIPE_PRICE_STARTER: z.string().min(1).optional(),
+    STRIPE_PRICE_PRO: z.string().min(1).optional(),
+    STRIPE_PRICE_SCALE: z.string().min(1).optional(),
   },
   client: {
     NEXT_PUBLIC_SUPABASE_URL: z.string().url(),
