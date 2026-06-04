@@ -27,7 +27,9 @@ function capsToFeatures(
     `${caps.searches.toLocaleString()} semantic searches / seat / mo`,
     `${caps.specMinutes} spec-call minutes / seat / mo`,
     `${caps.writingCalls} AI writing calls / seat / mo`,
-    planKey === 'scale' ? 'Unlimited seats (8+)' : `Up to ${PLANS[planKey].seats} seats`,
+    planKey === 'scale'
+      ? `Unlimited seats (${PLANS.pro.seats}+)`
+      : `Up to ${PLANS[planKey].seats} seats`,
   ]
 }
 

@@ -84,7 +84,10 @@ export default async function ApplyPage({ params }: Props) {
                 externally-hosted logos until we control the domain list.
                 The src comes from the DB (service-role read of a non-secret
                 URL); it renders in an <img> context only, not a script context.
-                Validation: logo_url passed through z.string().url() on write. */}
+                Validation: on write, logo_url is checked against a
+                /^https:\/\//i prefix regex (settings/branding/schema.ts and
+                settings/schema.ts) plus a 2048-char max — not a full
+                z.string().url() parse. */}
             <Image
               src={org.logo_url}
               alt={`${org.name} logo`}
@@ -111,13 +114,7 @@ export default async function ApplyPage({ params }: Props) {
         </div>
       </header>
 
-      <ApplyForm
-        orgSlug={org.slug}
-        orgName={org.name}
-        consentText={consentText}
-        brandPrimary={brandPrimary}
-        brandSecondary={brandSecondary}
-      />
+      <ApplyForm orgSlug={org.slug} orgName={org.name} consentText={consentText} />
     </div>
   )
 }

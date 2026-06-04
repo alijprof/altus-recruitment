@@ -1,8 +1,9 @@
 'use server'
 
 // T-05-03-01: PapaParse yields strings only. Every cell is treated as an
-// inert string — no formula evaluation. Fields are re-validated by the
-// existing createCandidate path before any DB write.
+// inert string — no formula evaluation. A non-empty email is shape-validated
+// (EMAIL_RE) in this action before any DB write; createCandidate itself does
+// no validation, so this is the only guard against storing junk emails.
 // T-05-03-02: Only counts/tags are sent to Sentry — never candidate names
 // or emails (CLAUDE.md PII rule).
 // T-05-03-03: All writes go through RLS-scoped createCandidate. The org is
@@ -11,6 +12,7 @@
 // T-05-03-04: Batch capped at MAX_IMPORT_ROWS to prevent runaway action time.
 
 import * as Sentry from '@sentry/nextjs'
+import { revalidatePath } from 'next/cache'
 import Papa from 'papaparse'
 
 import { findCandidateByEmail, createCandidate } from '@/lib/db/candidates'
@@ -21,6 +23,12 @@ import { mapRow, type MappedCandidate } from './column-map'
 
 // Hard cap: avoids runaway Server Action time and DB pressure.
 const MAX_IMPORT_ROWS = 500
+
+// Minimal email shape check. candidates.email has no DB CHECK and
+// createCandidate does no validation, so a non-empty-but-malformed email
+// would otherwise be stored verbatim. We never store junk: a non-empty email
+// that fails this is counted as an error row so it surfaces in the summary.
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 
 export type ImportSummary = {
   created: number
@@ -38,6 +46,11 @@ export type ImportCandidatesResult =
 /**
  * Server Action: parse a CSV string (from the client wizard) and create
  * candidates via the existing createCandidate path.
+ *
+ * Validation: a non-empty email is shape-checked against EMAIL_RE here (this
+ * action is the only validation layer — createCandidate does none). Rows with
+ * a malformed email are counted as `errors` and skipped, never stored. An
+ * empty/absent email is allowed (email is optional on candidates).
  *
  * Deduplication: email is lowercased + trimmed. If an email already exists
  * in the caller's org, the row is counted as `skippedDuplicate` and skipped.
@@ -113,6 +126,14 @@ export async function importCandidatesAction(
     if (mapped.email) {
       const normEmail = mapped.email.toLowerCase().trim()
       if (normEmail) {
+        // Reject malformed emails: candidates.email has no DB CHECK and
+        // createCandidate does no validation, so storing this would persist
+        // junk. Count as an error row (surfaces in summary) and skip — never
+        // store. (Empty emails fall through this block and are allowed.)
+        if (!EMAIL_RE.test(normEmail)) {
+          summary.errors++
+          continue
+        }
         const existingResult = await findCandidateByEmail(supabase, normEmail, orgId as string)
         if (existingResult.ok && existingResult.data !== null) {
           summary.skippedDuplicate++
@@ -154,6 +175,13 @@ export async function importCandidatesAction(
       // createCandidate already logs to Sentry with tags only (no PII).
       summary.errors++
     }
+  }
+
+  // Invalidate cached candidate listings so newly imported rows appear without
+  // a hard refresh. Mirrors the createCandidateAction (candidates/new) pattern.
+  if (summary.created > 0) {
+    revalidatePath('/candidates')
+    revalidatePath('/')
   }
 
   return { ok: true, summary }

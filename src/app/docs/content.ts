@@ -12,6 +12,30 @@
 // These docs are suitable for sharing with prospects; avoid referencing
 // internal implementation details or unshipped features.
 
+import { PLANS } from '@/lib/stripe/plans'
+
+// Plan figures in the billing article are derived from PLANS (the single
+// source of truth) at module load, so the docs can never drift from the
+// pricing page or Stripe configuration.
+function formatGBP(pence: number): string {
+  return new Intl.NumberFormat('en-GB', {
+    style: 'currency',
+    currency: 'GBP',
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 0,
+  }).format(pence / 100)
+}
+
+const PLANS_SUMMARY = `${PLANS.starter.label} (${formatGBP(
+  PLANS.starter.pricePence,
+)}/seat/month), ${PLANS.pro.label} (${formatGBP(
+  PLANS.pro.pricePence,
+)}/seat/month), and ${PLANS.scale.label} (${formatGBP(
+  PLANS.scale.pricePence,
+)}/seat/month)`
+
+const PRO_SEATS_SUMMARY = `up to ${PLANS.pro.seats} seats`
+
 export interface DocSection {
   heading: string
   body: string[]
@@ -320,8 +344,8 @@ export const DOC_ARTICLES: DocArticle[] = [
       {
         heading: 'Plans',
         body: [
-          'Altus offers three plans: Starter (£59/seat/month), Pro (£89/seat/month), and Scale (£129/seat/month). AI usage is bundled — there are no AI add-on tiers.',
-          'Pro is the recommended plan for most agencies: up to 8 seats and generous AI caps across CV parsing, match scoring, search, and spec-call transcription.',
+          `Altus offers three plans: ${PLANS_SUMMARY}. AI usage is bundled — there are no AI add-on tiers.`,
+          `Pro is the recommended plan for most agencies: ${PRO_SEATS_SUMMARY} and generous AI caps across CV parsing, match scoring, search, and spec-call transcription.`,
         ],
       },
       {

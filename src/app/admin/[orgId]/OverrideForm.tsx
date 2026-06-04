@@ -52,8 +52,12 @@ export function OverrideForm({ orgId, override }: Props) {
       return
     }
 
-    // Convert local datetime-local value to UTC ISO string
-    const utcIso = new Date(trialEnd).toISOString()
+    // Treat the datetime-local value as UTC wall-clock time. This MUST match the
+    // reload-display convention below (`trialEndOverride.slice(0, 16)`, which
+    // reads the stored UTC ISO verbatim) — otherwise the value shifts by the
+    // browser's UTC offset on every round-trip. Appending 'Z' parses the input
+    // as UTC; `.000Z` normalises to a full ISO-8601 offset datetime string.
+    const utcIso = new Date(trialEnd + ':00.000Z').toISOString()
 
     startTrialTransition(async () => {
       try {
@@ -75,6 +79,11 @@ export function OverrideForm({ orgId, override }: Props) {
 
     if (multiplierValue !== null && (isNaN(multiplierValue) || multiplierValue <= 0)) {
       toast.error('Cap multiplier must be a positive number (e.g. 1.5 for +50%).')
+      return
+    }
+
+    if (multiplierValue !== null && multiplierValue > 10) {
+      toast.error(`Cap multiplier ${multiplierValue} is too high — the maximum is 10×.`)
       return
     }
 
@@ -111,7 +120,7 @@ export function OverrideForm({ orgId, override }: Props) {
         <div className="flex items-end gap-3">
           <div className="flex-1 space-y-1">
             <Label htmlFor="trial-end" className="text-xs">
-              New trial end (local time, converted to UTC on save)
+              New trial end (UTC)
             </Label>
             <Input
               id="trial-end"
@@ -132,7 +141,8 @@ export function OverrideForm({ orgId, override }: Props) {
         </div>
         {override?.trialEndOverride && (
           <p className="text-xs text-amber-700">
-            Current override: {new Date(override.trialEndOverride).toLocaleString('en-GB')}
+            Current override:{' '}
+            {new Date(override.trialEndOverride).toLocaleString('en-GB', { timeZone: 'UTC' })} UTC
           </p>
         )}
       </div>
@@ -158,6 +168,7 @@ export function OverrideForm({ orgId, override }: Props) {
               type="number"
               step="0.1"
               min="0.1"
+              max="10"
               placeholder="1.0 (no override)"
               value={capMultiplier}
               onChange={(e) => setCapMultiplier(e.target.value)}

@@ -8,8 +8,10 @@
 // CSV-injection guard (T-05-03-01): PapaParse yields plain strings. No
 // eval/formula execution happens here — we treat every cell value as an
 // inert string regardless of leading characters (=, +, -, @, etc.).
-// Validation (Zod) inside createCandidate enforces field constraints before
-// the DB write.
+// mapRow does NOT validate field shapes — it only maps headers to canonical
+// fields and trims blanks to null. Email shape validation lives in
+// importCandidatesAction (EMAIL_RE), which is the only validation layer
+// before the DB write (createCandidate performs no validation).
 
 export const HEADER_ALIASES: Record<string, string> = {
   // full_name

@@ -40,7 +40,7 @@ function statusBadgeVariant(
 }
 
 export default async function AdminOverviewPage() {
-  const orgs = await getAllOrgsBillingOverview()
+  const { rows: orgs, dataIncomplete } = await getAllOrgsBillingOverview()
 
   return (
     <div className="space-y-6">
@@ -51,6 +51,12 @@ export default async function AdminOverviewPage() {
           cost (highest first)
         </p>
       </div>
+
+      {dataIncomplete ? (
+        <div className="rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+          Some data could not be loaded — figures may be incomplete.
+        </div>
+      ) : null}
 
       {orgs.length === 0 ? (
         <div className="rounded-lg border bg-white p-8 text-center text-sm text-slate-500">

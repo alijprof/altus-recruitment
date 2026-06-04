@@ -18,12 +18,14 @@ const hexField = z
   .or(z.literal(''))
   .optional()
 
+// logo_url renders into next/image, so require https:// (no http://).
+// Empty string is still allowed → "clear the logo".
 const optionalUrl = z
   .string()
   .trim()
   .max(2048, 'URL too long')
   .refine(
-    (v) => !v || /^https?:\/\//i.test(v),
+    (v) => !v || /^https:\/\//i.test(v),
     'Use a full URL starting with https://',
   )
   .or(z.literal(''))

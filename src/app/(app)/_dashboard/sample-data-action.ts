@@ -13,6 +13,7 @@
 // session. No service-role key; no explicit org_id in payload.
 
 import * as Sentry from '@sentry/nextjs'
+import { revalidatePath } from 'next/cache'
 
 import { createCandidate } from '@/lib/db/candidates'
 import { createClient as createClientRecord } from '@/lib/db/clients'
@@ -123,6 +124,10 @@ export async function seedSampleDataAction(): Promise<SeedSampleDataResult> {
       }
     }
   }
+
+  // Refresh the dashboard so the onboarding checklist and counts reflect
+  // the freshly seeded candidates/clients/jobs.
+  revalidatePath('/')
 
   return {
     ok: true,

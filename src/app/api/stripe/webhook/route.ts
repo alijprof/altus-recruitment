@@ -47,10 +47,32 @@ function buildPriceIdToPlanKey(): Map<string, PlanKey> {
 }
 
 // Derive planKey from a subscription object's first price ID.
-function derivePlanKey(subscription: Stripe.Subscription): PlanKey {
+// Returns null when the price ID is not one of our known plan prices — callers
+// MUST NOT default to a paid plan (that silently over-grants entitlements when
+// a price is rotated or a legacy/dashboard price is used); they surface the
+// anomaly to Sentry and skip the write instead.
+function derivePlanKey(subscription: Stripe.Subscription): PlanKey | null {
   const priceIdMap = buildPriceIdToPlanKey()
   const priceId = subscription.items.data[0]?.price.id ?? ''
-  return priceIdMap.get(priceId) ?? 'pro' // fallback to pro if unknown
+  return priceIdMap.get(priceId) ?? null
+}
+
+// Single source of truth for plan seat counts, tolerant of the cancelled
+// 'none' pseudo-plan (which carries 0 seats and no entitlement).
+function seatsForPlan(planKey: PlanKey | 'none'): number {
+  return planKey === 'none' ? 0 : PLANS[planKey].seats
+}
+
+// Surface an unknown-price anomaly without leaking PII.
+function reportUnknownPrice(subscription: Stripe.Subscription, orgId: string, eventType: string): void {
+  Sentry.captureMessage('stripe_webhook_unknown_price', {
+    level: 'error',
+    tags: { layer: 'stripe', handler: 'webhook', event_type: eventType, org_id: orgId },
+    extra: {
+      price_id: subscription.items.data[0]?.price.id ?? 'none',
+      subscription_id: subscription.id,
+    },
+  })
 }
 
 // Extract organization_id from subscription or session metadata.
@@ -83,42 +105,57 @@ export async function POST(request: Request): Promise<NextResponse> {
 
   const serviceClient = createServiceClient()
 
-  // SECURITY INVARIANT 4: idempotency — insert BEFORE processing.
-  // stripe_webhook_events has a unique index on stripe_event_id.
-  const { error: insertErr, data: insertedRow } = await serviceClient
+  // SECURITY INVARIANT 4: idempotency — record COMPLETION, not receipt.
+  // The stripe_webhook_events ledger holds only events we have FINISHED
+  // processing. We pre-check it to short-circuit true replays, process the
+  // event, and record the row ONLY after success. If processing throws we do
+  // NOT record the event and return a non-2xx so Stripe re-delivers and the
+  // retry actually re-drives processing (previously the row was inserted
+  // before processing, so a single transient failure de-duped the event away
+  // forever — a paid customer could end up with no subscription row).
+  const { data: alreadyProcessed, error: seenErr } = await serviceClient
     .from('stripe_webhook_events')
-    .insert({ stripe_event_id: event.id, event_type: event.type })
     .select('stripe_event_id')
+    .eq('stripe_event_id', event.id)
     .maybeSingle()
 
-  if (insertErr) {
-    if (insertErr.code === '23505') {
-      // Duplicate event — already processed. Idempotent short-circuit.
-      return NextResponse.json({ received: true })
-    }
-    // Any other insert failure — log and 500 so Stripe retries.
-    Sentry.captureException(insertErr, {
+  if (seenErr) {
+    Sentry.captureException(seenErr, {
       tags: { layer: 'stripe', handler: 'webhook', event_type: event.type },
     })
     return NextResponse.json({ error: 'Internal error' }, { status: 500 })
   }
-
-  // insertedRow null means the unique-conflict path; belt-and-braces.
-  if (!insertedRow) {
+  if (alreadyProcessed) {
+    // Already processed to completion — idempotent replay.
     return NextResponse.json({ received: true })
   }
 
-  // Process the event. Errors here are logged but we still return 200 to
-  // prevent Stripe from retrying an event we've already de-duped.
   try {
     await handleStripeEvent(event, serviceClient)
   } catch (err) {
     Sentry.captureException(err, {
       tags: { layer: 'stripe', handler: 'webhook', event_type: event.type },
     })
-    // Still return 200 — the idempotency row is in place; a retry would be a
-    // no-op for processing anyway. We rely on the Sentry alert for manual
-    // investigation.
+    // Do NOT record the event — return 500 so Stripe retries and re-drives it.
+    return NextResponse.json({ error: 'Processing failed' }, { status: 500 })
+  }
+
+  // Processing succeeded — record completion. ignoreDuplicates covers the rare
+  // concurrent-duplicate delivery (both pass the pre-check); the handlers are
+  // idempotent upserts, so a double-process is harmless.
+  const { error: recordErr } = await serviceClient
+    .from('stripe_webhook_events')
+    .upsert(
+      { stripe_event_id: event.id, event_type: event.type },
+      { onConflict: 'stripe_event_id', ignoreDuplicates: true },
+    )
+
+  if (recordErr) {
+    // Processing already succeeded; failing to record only risks a harmless
+    // idempotent reprocess on a future retry. Log and still return 200.
+    Sentry.captureException(recordErr, {
+      tags: { layer: 'stripe', handler: 'webhook', event_type: event.type },
+    })
   }
 
   return NextResponse.json({ received: true })
@@ -178,20 +215,23 @@ async function handleStripeEvent(
       const orgId = extractOrgId(subscription)
       if (!orgId) break
 
-      const planKey = derivePlanKey(subscription)
-      await upsertSubscriptionFromStripe(serviceClient, {
+      // Cancelled subscriptions carry no entitlement regardless of plan, so an
+      // unknown price here is harmless — fall back to the 'none' pseudo-plan.
+      const planKey: PlanKey | 'none' = derivePlanKey(subscription) ?? 'none'
+      const result = await upsertSubscriptionFromStripe(serviceClient, {
         organizationId: orgId,
         stripeCustomerId:
           typeof subscription.customer === 'string' ? subscription.customer : subscription.customer.id,
         stripeSubscriptionId: subscription.id,
         planKey,
-        planSeats: PLANS[planKey].seats,
+        planSeats: seatsForPlan(planKey),
         status: 'cancelled',
         trialEnd: subscription.trial_end
           ? new Date(subscription.trial_end * 1000).toISOString()
           : null,
         currentPeriodEnd: getCurrentPeriodEnd(subscription),
       })
+      if (!result.ok) throw new Error(`subscription upsert failed (deleted): ${result.code}`)
       break
     }
 
@@ -207,41 +247,59 @@ async function handleStripeEvent(
 
     case 'invoice.payment_failed': {
       const invoice = event.data.object as Stripe.Invoice
-      const orgId = invoice.metadata?.organization_id ?? null
-      if (!orgId) break
 
-      // Retrieve the subscription from the invoice's parent (Stripe v22 API).
-      // invoice.parent.subscription_details.subscription holds the ID.
+      // Resolve the subscription id from the invoice parent (Stripe v22 API).
       const subscriptionId =
         invoice.parent?.type === 'subscription_details'
           ? (invoice.parent.subscription_details?.subscription ?? null)
           : null
+      if (!subscriptionId) break
 
-      if (subscriptionId) {
-        const s = assertStripe()
-        const subscriptionIdStr =
-          typeof subscriptionId === 'string' ? subscriptionId : subscriptionId.id
-        const subscription = await s.subscriptions.retrieve(subscriptionIdStr)
-        const planKey = derivePlanKey(subscription)
-        await upsertSubscriptionFromStripe(serviceClient, {
-          organizationId: orgId,
-          stripeCustomerId:
-            typeof subscription.customer === 'string'
-              ? subscription.customer
-              : subscription.customer.id,
-          stripeSubscriptionId: subscription.id,
-          planKey,
-          planSeats: PLANS[planKey].seats,
-          status: 'past_due',
-          trialEnd: subscription.trial_end
-            ? new Date(subscription.trial_end * 1000).toISOString()
-            : null,
-          currentPeriodEnd: getCurrentPeriodEnd(subscription),
+      const s = assertStripe()
+      const subscriptionIdStr =
+        typeof subscriptionId === 'string' ? subscriptionId : subscriptionId.id
+      const subscription = await s.subscriptions.retrieve(subscriptionIdStr)
+
+      // IMPORTANT: invoice.metadata.organization_id is NEVER populated — Stripe
+      // does not copy subscription/customer metadata onto invoice objects. The
+      // org id lives on the subscription's own metadata (set by checkout via
+      // subscription_data.metadata). Reading invoice.metadata here previously
+      // made this entire handler dead — past_due flip + dunning never fired.
+      const orgId = extractOrgId(subscription)
+      if (!orgId) {
+        Sentry.captureMessage('stripe_webhook: invoice.payment_failed missing org_id on subscription', {
+          level: 'warning',
+          tags: { layer: 'stripe', handler: 'webhook', event_type: event.type },
         })
+        break
       }
 
-      // Best-effort payment-failed email.
+      // Dunning email fires for any resolved org whose renewal payment failed,
+      // independent of plan resolution below.
       void sendPaymentFailedEmail({ organizationId: orgId })
+
+      const planKey = derivePlanKey(subscription)
+      if (!planKey) {
+        reportUnknownPrice(subscription, orgId, event.type)
+        break
+      }
+
+      const result = await upsertSubscriptionFromStripe(serviceClient, {
+        organizationId: orgId,
+        stripeCustomerId:
+          typeof subscription.customer === 'string'
+            ? subscription.customer
+            : subscription.customer.id,
+        stripeSubscriptionId: subscription.id,
+        planKey,
+        planSeats: PLANS[planKey].seats,
+        status: 'past_due',
+        trialEnd: subscription.trial_end
+          ? new Date(subscription.trial_end * 1000).toISOString()
+          : null,
+        currentPeriodEnd: getCurrentPeriodEnd(subscription),
+      })
+      if (!result.ok) throw new Error(`subscription upsert failed (payment_failed): ${result.code}`)
       break
     }
 
@@ -280,10 +338,15 @@ async function upsertFromSubscription(
   orgId: string,
 ): Promise<void> {
   const planKey = derivePlanKey(subscription)
+  if (!planKey) {
+    // Unknown price — surface and SKIP rather than silently over-grant Pro.
+    reportUnknownPrice(subscription, orgId, 'subscription.upsert')
+    return
+  }
   const planSeats = PLANS[planKey].seats
   const status = mapStripeStatus(subscription.status)
 
-  await upsertSubscriptionFromStripe(serviceClient, {
+  const result = await upsertSubscriptionFromStripe(serviceClient, {
     organizationId: orgId,
     stripeCustomerId:
       typeof subscription.customer === 'string' ? subscription.customer : subscription.customer.id,
@@ -296,4 +359,7 @@ async function upsertFromSubscription(
       : null,
     currentPeriodEnd: getCurrentPeriodEnd(subscription),
   })
+  // H1: propagate a failed DB write so the webhook returns 500 and Stripe
+  // retries — previously the {ok:false} was ignored and the write was lost.
+  if (!result.ok) throw new Error(`subscription upsert failed: ${result.code}`)
 }

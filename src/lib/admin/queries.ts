@@ -81,6 +81,8 @@ type AdminServiceClient = {
 // Month boundary helpers
 // ---------------------------------------------------------------------------
 
+// Month boundary is intentionally UTC while display formatting is en-GB local
+// (known minor TZ seam — internal admin tool only, no customer-facing impact).
 function currentMonthStart(): string {
   const now = new Date()
   return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)).toISOString()
@@ -106,6 +108,14 @@ export type OrgBillingOverview = {
   overrideNote: string | null
 }
 
+// Wrapper carrying the overview rows plus a flag indicating whether any
+// sub-query (subscriptions, ai_usage, seats) errored — so the page can warn
+// that displayed figures may be incomplete without blocking the whole table.
+export type AllOrgsBillingOverview = {
+  rows: OrgBillingOverview[]
+  dataIncomplete: boolean
+}
+
 // ---------------------------------------------------------------------------
 // getAllOrgsBillingOverview — cross-org overview for the admin /admin page.
 //
@@ -115,7 +125,7 @@ export type OrgBillingOverview = {
 //
 // GATE: requireSuperAdmin() runs first, service-role after.
 // ---------------------------------------------------------------------------
-export async function getAllOrgsBillingOverview(): Promise<OrgBillingOverview[]> {
+export async function getAllOrgsBillingOverview(): Promise<AllOrgsBillingOverview> {
   // GATE — must be first; createServiceClient() must not be called before this.
   await requireSuperAdmin()
 
@@ -124,6 +134,10 @@ export async function getAllOrgsBillingOverview(): Promise<OrgBillingOverview[]>
   // Cast to AdminServiceClient for orgs query (basic shape, orgs is in DB types
   // but the generic SupabaseClient doesn't infer select shapes narrowly enough).
   const adminClient = serviceClient as unknown as AdminServiceClient
+
+  // Tracks whether any non-orgs sub-query (subscriptions, ai_usage, seats)
+  // errored — surfaced to the page so it can flag incomplete figures.
+  let dataIncomplete = false
 
   // Fetch all organisations.
   const { data: orgsData, error: orgsError } = await adminClient
@@ -134,10 +148,10 @@ export async function getAllOrgsBillingOverview(): Promise<OrgBillingOverview[]>
     Sentry.captureException(orgsError, {
       tags: { layer: 'admin', helper: 'getAllOrgsBillingOverview' },
     })
-    return []
+    return { rows: [], dataIncomplete: true }
   }
   const orgs: OrgRow[] = orgsData ?? []
-  if (orgs.length === 0) return []
+  if (orgs.length === 0) return { rows: [], dataIncomplete: false }
 
   const orgIds = orgs.map((o) => o.id)
   const monthStart = currentMonthStart()
@@ -163,6 +177,7 @@ export async function getAllOrgsBillingOverview(): Promise<OrgBillingOverview[]>
     .in('organization_id', orgIds)
 
   if (subsError) {
+    dataIncomplete = true
     Sentry.captureException(subsError, {
       tags: { layer: 'admin', helper: 'getAllOrgsBillingOverview.subscriptions' },
     })
@@ -192,6 +207,7 @@ export async function getAllOrgsBillingOverview(): Promise<OrgBillingOverview[]>
     .gte('created_at', monthStart)
 
   if (usageError) {
+    dataIncomplete = true
     Sentry.captureException(usageError, {
       tags: { layer: 'admin', helper: 'getAllOrgsBillingOverview.ai_usage' },
     })
@@ -218,36 +234,30 @@ export async function getAllOrgsBillingOverview(): Promise<OrgBillingOverview[]>
   }
 
   let overridesByOrg = new Map<string, PlanOverrideRow>()
-  try {
-    const { data: overrideData, error: overrideError } = await overridesClient
-      .from('plan_overrides')
-      .select('organization_id, trial_end_override, cap_multiplier, note, updated_by, updated_at')
-      .in('organization_id', orgIds)
+  const { data: overrideData, error: overrideError } = await overridesClient
+    .from('plan_overrides')
+    .select('organization_id, trial_end_override, cap_multiplier, note, updated_by, updated_at')
+    .in('organization_id', orgIds)
 
-    if (!overrideError && overrideData) {
-      overridesByOrg = new Map<string, PlanOverrideRow>(
-        overrideData.map((o) => [o.organization_id, o]),
-      )
+  if (overrideError) {
+    // supabase-js returns { error } rather than throwing on PostgREST errors.
+    // Only treat "relation does not exist" (42P01) as fail-open — the table is
+    // not pushed yet (Task 5.3 [BLOCKING]). Any other error (permissions,
+    // transient) must be reported, not silently swallowed.
+    const code = (overrideError as { code?: string }).code
+    if (code !== '42P01') {
+      Sentry.captureException(overrideError, {
+        tags: { layer: 'admin', helper: 'getAllOrgsBillingOverview.plan_overrides' },
+      })
     }
-  } catch {
-    // Fail-open: plan_overrides table does not exist yet (pre-push). Overrides
-    // will not be displayed until after Task 5.3 migration push.
+  } else if (overrideData) {
+    overridesByOrg = new Map<string, PlanOverrideRow>(
+      overrideData.map((o) => [o.organization_id, o]),
+    )
   }
 
   // Fetch active seat counts for all orgs.
   // reason: cross-org users read via service-role.
-  const usersClient = serviceClient as unknown as {
-    from: (table: 'users') => {
-      select: (cols: string, opts: { count: 'exact' }) => {
-        in: (col: string, vals: string[]) => Promise<{
-          data: { organization_id: string }[] | null
-          error: unknown
-          count: number | null
-        }>
-      }
-    }
-  }
-
   // For seat counts, we fetch the rows and aggregate in JS (Supabase does not
   // support GROUP BY directly via the JS client without a custom RPC).
   const seatsClient = serviceClient as unknown as {
@@ -261,11 +271,17 @@ export async function getAllOrgsBillingOverview(): Promise<OrgBillingOverview[]>
     }
   }
 
-  void usersClient // suppress unused warning
-  const { data: usersData } = await seatsClient
+  const { data: usersData, error: usersError } = await seatsClient
     .from('users')
     .select('organization_id')
     .in('organization_id', orgIds)
+
+  if (usersError) {
+    dataIncomplete = true
+    Sentry.captureException(usersError, {
+      tags: { layer: 'admin', helper: 'getAllOrgsBillingOverview.seats' },
+    })
+  }
 
   const seatsByOrg = new Map<string, number>()
   for (const u of usersData ?? []) {
@@ -299,7 +315,8 @@ export async function getAllOrgsBillingOverview(): Promise<OrgBillingOverview[]>
   })
 
   // Sort by AI cost descending (margin-outlier view).
-  return overview.sort((a, b) => b.monthAiCostPence - a.monthAiCostPence)
+  overview.sort((a, b) => b.monthAiCostPence - a.monthAiCostPence)
+  return { rows: overview, dataIncomplete }
 }
 
 // ---------------------------------------------------------------------------
@@ -337,6 +354,9 @@ export type OrgAdminDetail = {
     note: string | null
     updatedAt: string | null
   } | null
+  // True if any sub-query (subscription, ai_usage, seats, overrides) errored —
+  // the org row itself loaded but some figures below may be incomplete.
+  dataIncomplete: boolean
 }
 
 // ---------------------------------------------------------------------------
@@ -424,17 +444,31 @@ export async function getOrgAdminDetail(orgId: string): Promise<OrgAdminDetail |
     seatsDetailClient.from('users').select('id').eq('organization_id', orgId),
   ])
 
+  // Tracks whether any sub-query (subscription, ai_usage, seats, overrides)
+  // errored — surfaced to the page so it can flag incomplete figures.
+  let dataIncomplete = false
+
   // Fetch override separately (fail-open for pre-push state).
   let overrideRow: PlanOverrideRow | null = null
-  try {
-    const { data: od } = await overrideDetailClient
-      .from('plan_overrides')
-      .select('organization_id, trial_end_override, cap_multiplier, note, updated_by, updated_at')
-      .eq('organization_id', orgId)
-      .maybeSingle()
+  const { data: od, error: overrideError } = await overrideDetailClient
+    .from('plan_overrides')
+    .select('organization_id, trial_end_override, cap_multiplier, note, updated_by, updated_at')
+    .eq('organization_id', orgId)
+    .maybeSingle()
+
+  if (overrideError) {
+    // supabase-js returns { error } rather than throwing on PostgREST errors.
+    // Only treat "relation does not exist" (42P01) as fail-open — the table is
+    // not pushed yet. Any other error must be reported, not swallowed.
+    const code = (overrideError as { code?: string }).code
+    if (code !== '42P01') {
+      dataIncomplete = true
+      Sentry.captureException(overrideError, {
+        tags: { layer: 'admin', helper: 'getOrgAdminDetail.plan_overrides', org_id: orgId },
+      })
+    }
+  } else {
     overrideRow = od
-  } catch {
-    // Fail-open: plan_overrides not pushed yet.
   }
 
   if (orgResult.error || !orgResult.data) {
@@ -444,6 +478,26 @@ export async function getOrgAdminDetail(orgId: string): Promise<OrgAdminDetail |
       })
     }
     return null
+  }
+
+  // Capture sub-query errors (org loaded, but these figures may be incomplete).
+  if (subResult.error) {
+    dataIncomplete = true
+    Sentry.captureException(subResult.error, {
+      tags: { layer: 'admin', helper: 'getOrgAdminDetail.subscription', org_id: orgId },
+    })
+  }
+  if (usageResult.error) {
+    dataIncomplete = true
+    Sentry.captureException(usageResult.error, {
+      tags: { layer: 'admin', helper: 'getOrgAdminDetail.ai_usage', org_id: orgId },
+    })
+  }
+  if (seatsResult.error) {
+    dataIncomplete = true
+    Sentry.captureException(seatsResult.error, {
+      tags: { layer: 'admin', helper: 'getOrgAdminDetail.seats', org_id: orgId },
+    })
   }
 
   const org = orgResult.data
@@ -497,5 +551,6 @@ export async function getOrgAdminDetail(orgId: string): Promise<OrgAdminDetail |
           updatedAt: overrideRow.updated_at,
         }
       : null,
+    dataIncomplete,
   }
 }

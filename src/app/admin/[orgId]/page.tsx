@@ -81,6 +81,12 @@ export default async function AdminOrgDetailPage({ params }: Props) {
         </Link>
       </div>
 
+      {detail.dataIncomplete ? (
+        <div className="rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+          Some data could not be loaded — figures may be incomplete.
+        </div>
+      ) : null}
+
       {/* Header */}
       <div className="flex items-start justify-between">
         <div>

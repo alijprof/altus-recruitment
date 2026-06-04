@@ -52,6 +52,11 @@ export type EntitlementStatus = {
   activeSeats: number
   // Subscription lifecycle status.
   status: SubscriptionStatus
+  // Trial end date (ISO string) when trialing, or null. Honours
+  // trial_end_override when an admin override extends the trial.
+  trialEnd: string | null
+  // Current billing period end (ISO string) for the next renewal, or null.
+  currentPeriodEnd: string | null
   // The AI caps for the current plan tier (all zeros when planKey='none').
   aiCaps: AiCaps
   // Actual AI usage this calendar month (from ai_usage table).

@@ -57,14 +57,23 @@ export async function POST(request: Request): Promise<NextResponse> {
   }
   const { planKey } = parsed.data
 
-  // Resolve caller's org from their session (RLS-scoped — cannot be forged).
+  // Resolve caller's org + role from their session (RLS-scoped — cannot be forged).
   const orgResult = await supabase
     .from('users')
-    .select('organization_id')
+    .select('organization_id, role')
     .eq('id', user.id)
     .maybeSingle()
   if (orgResult.error || !orgResult.data) {
     return NextResponse.json({ error: 'Could not load your profile' }, { status: 400 })
+  }
+  // Billing is OWNER-ONLY — same contract the portal route + settings UI enforce.
+  // Without this gate, any authenticated member could bind a Stripe customer to
+  // the org and start a subscription/trial.
+  if (orgResult.data.role !== 'owner') {
+    return NextResponse.json(
+      { error: 'Only organisation owners can manage billing' },
+      { status: 403 },
+    )
   }
   const organizationId = orgResult.data.organization_id
 
@@ -78,6 +87,21 @@ export async function POST(request: Request): Promise<NextResponse> {
   if (!priceId) {
     return NextResponse.json(
       { error: `Price ID for plan '${planKey}' is not configured` },
+      { status: 503 },
+    )
+  }
+
+  // Stripe requires ABSOLUTE success/cancel URLs. NEXT_PUBLIC_SITE_URL is
+  // .optional() (so the build never breaks), but if it is unset here the URLs
+  // would be relative and Stripe rejects them with an opaque error. Fail loud.
+  const siteUrl = env.NEXT_PUBLIC_SITE_URL
+  if (!siteUrl) {
+    Sentry.captureMessage('stripe_checkout: NEXT_PUBLIC_SITE_URL not configured', {
+      level: 'error',
+      tags: { layer: 'stripe', handler: 'checkout' },
+    })
+    return NextResponse.json(
+      { error: 'Billing is not fully configured (site URL missing). Contact support.' },
       { status: 503 },
     )
   }
@@ -135,8 +159,8 @@ export async function POST(request: Request): Promise<NextResponse> {
         metadata: { organization_id: organizationId },
       },
       line_items: [{ price: priceId, quantity: 1 }],
-      success_url: `${env.NEXT_PUBLIC_SITE_URL ?? ''}/stripe/return?session_id={CHECKOUT_SESSION_ID}`,
-      cancel_url: `${env.NEXT_PUBLIC_SITE_URL ?? ''}/pricing`,
+      success_url: `${siteUrl}/stripe/return?session_id={CHECKOUT_SESSION_ID}`,
+      cancel_url: `${siteUrl}/pricing`,
       metadata: { organization_id: organizationId },
     })
 

@@ -58,6 +58,18 @@ function formatPenceGbp(pence: number): string {
   }).format(pence / 100)
 }
 
+// Format an ISO date string as a UK-locale date, or null if absent/invalid.
+function formatDate(iso: string | null): string | null {
+  if (!iso) return null
+  const date = new Date(iso)
+  if (Number.isNaN(date.getTime())) return null
+  return date.toLocaleDateString('en-GB', {
+    day: 'numeric',
+    month: 'long',
+    year: 'numeric',
+  })
+}
+
 const CAP_LABELS: Record<string, string> = {
   matchScores: 'Match scoring',
   cvParses: 'CV parsing',
@@ -149,8 +161,7 @@ export default async function BillingPage() {
             <p className="text-muted-foreground text-sm">
               Trial ends:{' '}
               <span className="text-foreground font-medium">
-                {/* trial_end comes from the subscription row via getEntitlement */}
-                soon
+                {formatDate(entitlement.trialEnd) ?? 'soon'}
               </span>
             </p>
           )}

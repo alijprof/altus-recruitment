@@ -7,13 +7,13 @@
 // never close/navigate on failure.
 
 import { useState } from 'react'
-import { useRouter } from 'next/navigation'
+import { toast } from 'sonner'
+import * as Sentry from '@sentry/nextjs'
 
 import { Button } from '@/components/ui/button'
 
 export function ManageBillingButton() {
   const [loading, setLoading] = useState(false)
-  const router = useRouter()
 
   async function handleClick() {
     setLoading(true)
@@ -22,18 +22,22 @@ export function ManageBillingButton() {
       if (!res.ok) {
         const data = (await res.json()) as { error?: string }
         // Surface error without crashing (CLAUDE.md: don't navigate on failure).
-        alert(data.error ?? 'Could not open billing portal. Please try again.')
+        toast.error(data.error ?? 'Could not open billing portal. Please try again.')
         return
       }
       const data = (await res.json()) as { url?: string }
       if (data.url) {
-        router.push(data.url)
+        // Stripe portal is a cross-origin URL — use a full-page navigation.
+        // next/navigation router.push does NOT reliably navigate to an external
+        // origin (it is for in-app route transitions). Matches the established
+        // window.location.href pattern in connect-outlook-card / apply-form.
+        window.location.href = data.url
       } else {
-        alert('No portal URL returned. Please try again.')
+        toast.error('No portal URL returned. Please try again.')
       }
     } catch (err) {
-      console.error('portal request failed:', err)
-      alert('Could not open billing portal. Please try again.')
+      Sentry.captureException(err, { tags: { layer: 'billing', component: 'ManageBillingButton' } })
+      toast.error('Could not open billing portal. Please try again.')
     } finally {
       setLoading(false)
     }

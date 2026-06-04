@@ -90,6 +90,15 @@ export function ImportWizard() {
       return
     }
 
+    // Partial parse: some rows parsed but others errored. Surface a
+    // non-blocking warning so the user knows the import will be incomplete.
+    if (result.errors.length > 0 && result.data.length > 0) {
+      const skipped = result.errors.length
+      toast.warning(
+        `${skipped} row${skipped === 1 ? '' : 's'} could not be parsed and ${skipped === 1 ? 'was' : 'were'} skipped.`,
+      )
+    }
+
     const rawHeaders = result.meta.fields ?? []
     setCsvText(text)
     setHeaders(rawHeaders)
@@ -448,5 +457,9 @@ function applyMappingOverrides(csvText: string, mapping: MappingOverride): strin
     return out
   })
 
-  return Papa.unparse(remappedRows)
+  // Pass an explicit columns array from the canonical mapped field set.
+  // Without this, PapaParse infers output columns from Object.keys of the
+  // FIRST row — a ragged/short first row (e.g. missing a trailing email cell)
+  // would silently drop that column for ALL rows, defeating dedup downstream.
+  return Papa.unparse(remappedRows, { columns: headerRemap.map((h) => h.to) })
 }

@@ -81,10 +81,15 @@ async function getPlanOverride(
 //   - App layout banner (softCapBreached, hardCapBreached)
 //   - cap-enforcement.ts (indirectly via checkCap)
 //
-// @param orgId  The organisation UUID.
-// @param supabase  Optional: pass the caller's RLS-scoped client to avoid a
-//   second createServiceClient call. When absent (e.g. from claude.ts which
-//   has no session), a fresh service-role client is used.
+// IMPORTANT: This always uses the service-role client internally, regardless of
+// the `_supabase` argument. It is intentionally callable from both authenticated
+// requests AND background contexts (Inngest cap-enforcement, claude.ts) that have
+// no session client. Because RLS is bypassed by service-role, the org boundary is
+// enforced solely by the `orgId` argument — callers MUST pass the correct,
+// already-authorised org id. There is no RLS safety net here.
+//
+// @param orgId  The organisation UUID. This is the only org-isolation boundary.
+// @param _supabase  Ignored. Kept to avoid call-site churn; do not rely on it.
 // ---------------------------------------------------------------------------
 
 const SOFT_CAP_THRESHOLD = 0.8 // 80%
@@ -142,10 +147,9 @@ async function countActiveSeats(serviceClient: SupabaseClient<Database>, orgId: 
 
 export async function getEntitlement(
   orgId: string,
-  // Allow callers to pass their existing RLS-scoped client for usage reads.
-  // Currently all reads use the service-role client for consistency (the caller's
-  // RLS client may not have the SELECT policy needed for subscriptions). This
-  // parameter is reserved for future optimisation and is currently unused.
+  // Ignored — see the doc block above. This function always uses the
+  // service-role client so it can run in background contexts without a session.
+  // The param is retained only to avoid churning existing call sites.
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   _supabase?: SupabaseClient<Database>,
 ): Promise<EntitlementStatus> {
@@ -187,6 +191,8 @@ export async function getEntitlement(
       planSeats: PLANS.pro.seats,
       activeSeats,
       status: 'none',
+      trialEnd: null,
+      currentPeriodEnd: null,
       aiCaps: trialCaps,
       aiUsageThisMonth,
       softCapBreached,
@@ -209,6 +215,9 @@ export async function getEntitlement(
   // If the subscription is trialing and trial_end_override is set to a future
   // date, the org retains trialing status even if trial_end has passed.
   let effectiveStatus = sub.status as EntitlementStatus['status']
+  // Effective trial end mirrors effectiveStatus: defaults to the subscription's
+  // trial_end, but is replaced by trial_end_override when the override applies.
+  let trialEnd = sub.trial_end
   if (
     override?.trial_end_override &&
     (effectiveStatus === 'trialing' || effectiveStatus === 'none')
@@ -217,6 +226,7 @@ export async function getEntitlement(
     if (overrideEnd > new Date()) {
       // Override extends the trial — treat as still trialing.
       effectiveStatus = 'trialing'
+      trialEnd = override.trial_end_override
     }
   }
 
@@ -228,6 +238,8 @@ export async function getEntitlement(
     planSeats,
     activeSeats,
     status: effectiveStatus,
+    trialEnd,
+    currentPeriodEnd: sub.current_period_end,
     aiCaps: caps,
     aiUsageThisMonth,
     softCapBreached,

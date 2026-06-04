@@ -2,14 +2,28 @@ import Link from 'next/link'
 import { Check } from 'lucide-react'
 
 import { PricingTable } from '@/components/marketing/pricing-table'
+import { PLANS } from '@/lib/stripe/plans'
 
 // COPY PLACEHOLDER — the founder should review and refine all marketing copy
 // before sharing this URL with prospects.
 
+// Format pence to a GBP display string: 5900 → "£59"
+function formatGBP(pence: number): string {
+  return new Intl.NumberFormat('en-GB', {
+    style: 'currency',
+    currency: 'GBP',
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 0,
+  }).format(pence / 100)
+}
+
 export const metadata = {
   title: 'Pricing — Altus',
-  description:
-    'Simple per-seat pricing with AI bundled. Starter £59, Pro £89, Scale £129 per seat per month.',
+  description: `Simple per-seat pricing with AI bundled. ${PLANS.starter.label} ${formatGBP(
+    PLANS.starter.pricePence,
+  )}, ${PLANS.pro.label} ${formatGBP(PLANS.pro.pricePence)}, ${PLANS.scale.label} ${formatGBP(
+    PLANS.scale.pricePence,
+  )} per seat per month.`,
 }
 
 const FAQ_ITEMS = [

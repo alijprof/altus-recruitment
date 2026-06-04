@@ -81,8 +81,8 @@ export default function WelcomePage() {
               <Button
                 asChild
                 size="lg"
-                className="h-12 px-8 text-base font-semibold text-white"
-                style={{ backgroundColor: '#5DCAA5' }}
+                className="h-12 px-8 text-base font-semibold hover:bg-white/90"
+                style={{ backgroundColor: '#fff', color: '#0A3D5C' }}
               >
                 <Link href="/sign-up">
                   Get started free
@@ -99,7 +99,7 @@ export default function WelcomePage() {
                 <Link href="/pricing">View pricing</Link>
               </Button>
             </div>
-            <p className="text-muted mt-4 text-xs text-white/50">
+            <p className="mt-4 text-xs text-white/70">
               No credit card required to start. Cancel anytime.
             </p>
           </div>
@@ -191,8 +191,8 @@ export default function WelcomePage() {
             <Button
               asChild
               size="lg"
-              className="mt-10 h-12 px-8 text-base font-semibold text-white"
-              style={{ backgroundColor: '#5DCAA5' }}
+              className="mt-10 h-12 px-8 text-base font-semibold hover:bg-white/90"
+              style={{ backgroundColor: '#fff', color: '#0A3D5C' }}
             >
               <Link href="/sign-up">
                 Get started free

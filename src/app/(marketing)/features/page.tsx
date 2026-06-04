@@ -182,7 +182,7 @@ export default function FeaturesPage() {
                 {category}
               </h2>
               {badge && (
-                <Badge className="text-white" style={{ backgroundColor: '#5DCAA5' }}>
+                <Badge style={{ backgroundColor: '#5DCAA5', color: '#0A3D5C' }}>
                   {badge}
                 </Badge>
               )}
@@ -226,8 +226,8 @@ export default function FeaturesPage() {
             <Button
               asChild
               size="lg"
-              className="mt-8 h-12 px-8 text-base font-semibold text-white"
-              style={{ backgroundColor: '#5DCAA5' }}
+              className="mt-8 h-12 px-8 text-base font-semibold hover:bg-white/90"
+              style={{ backgroundColor: '#fff', color: '#0A3D5C' }}
             >
               <Link href="/sign-up">
                 Get started free

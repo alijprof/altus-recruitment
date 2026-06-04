@@ -65,10 +65,6 @@ export type ApplyFormProps = {
   orgSlug: string
   orgName: string
   consentText: string
-  /** Pre-validated 6-digit hex (safeHex applied by page.tsx). Used for button accent. */
-  brandPrimary: string
-  /** Pre-validated 6-digit hex (safeHex applied by page.tsx). */
-  brandSecondary: string
 }
 
 export function ApplyForm({ orgSlug, orgName, consentText }: ApplyFormProps) {

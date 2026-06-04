@@ -61,10 +61,24 @@ export async function POST(): Promise<NextResponse> {
     )
   }
 
+  // Stripe requires an ABSOLUTE return_url; NEXT_PUBLIC_SITE_URL is optional so
+  // guard against the relative-URL-rejection case with a clear error.
+  const siteUrl = env.NEXT_PUBLIC_SITE_URL
+  if (!siteUrl) {
+    Sentry.captureMessage('stripe_portal: NEXT_PUBLIC_SITE_URL not configured', {
+      level: 'error',
+      tags: { layer: 'stripe', handler: 'portal' },
+    })
+    return NextResponse.json(
+      { error: 'Billing is not fully configured (site URL missing). Contact support.' },
+      { status: 503 },
+    )
+  }
+
   try {
     const portalSession = await assertStripe().billingPortal.sessions.create({
       customer: stripeCustomerId,
-      return_url: `${env.NEXT_PUBLIC_SITE_URL ?? ''}/settings/billing`,
+      return_url: `${siteUrl}/settings/billing`,
     })
 
     return NextResponse.json({ url: portalSession.url })

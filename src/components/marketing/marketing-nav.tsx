@@ -19,7 +19,7 @@ export function MarketingNav() {
           </span>
           <span
             className="hidden rounded px-1.5 py-0.5 text-xs font-semibold sm:block"
-            style={{ backgroundColor: '#5DCAA5', color: '#fff' }}
+            style={{ backgroundColor: '#5DCAA5', color: '#0A3D5C' }}
           >
             AI
           </span>

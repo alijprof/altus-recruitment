@@ -14,15 +14,25 @@ import { createClient } from '@/lib/supabase/server'
 
 type ComponentStatus = 'operational' | 'degraded'
 
+// Cap the probe so a slow/unreachable DB can't stall the force-dynamic render.
+// On timeout we report 'degraded' (timed-out) and let the page render promptly.
+const PROBE_TIMEOUT_MS = 4000
+
+async function runProbe(): Promise<ComponentStatus> {
+  const supabase = await createClient()
+  // Lightweight reachability probe — count on a small public-schema table.
+  // We use organizations because it always exists and is extremely small.
+  // RLS allows anon to see 0 rows; the important thing is the query succeeds.
+  const { error } = await supabase.from('organizations').select('id', { count: 'exact', head: true })
+  return error ? 'degraded' : 'operational'
+}
+
 async function checkDatabase(): Promise<ComponentStatus> {
   try {
-    const supabase = await createClient()
-    // Lightweight reachability probe — count on a small public-schema table.
-    // We use organizations because it always exists and is extremely small.
-    // RLS allows anon to see 0 rows; the important thing is the query succeeds.
-    const { error } = await supabase.from('organizations').select('id', { count: 'exact', head: true })
-    if (error) return 'degraded'
-    return 'operational'
+    const timeout = new Promise<ComponentStatus>((resolve) =>
+      setTimeout(() => resolve('degraded'), PROBE_TIMEOUT_MS),
+    )
+    return await Promise.race([runProbe(), timeout])
   } catch {
     return 'degraded'
   }

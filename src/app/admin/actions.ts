@@ -54,6 +54,23 @@ type PlanOverridesWriteClient = {
     ) => {
       select: (cols: string) => Promise<{ data: unknown; error: unknown }>
     }
+    delete: () => {
+      eq: (col: string, val: string) => Promise<{ data: unknown; error: unknown }>
+    }
+    select: (cols: string) => {
+      eq: (
+        col: string,
+        val: string,
+      ) => {
+        maybeSingle: () => Promise<{
+          data: {
+            trial_end_override: string | null
+            cap_multiplier: number | null
+          } | null
+          error: unknown
+        }>
+      }
+    }
   }
 }
 
@@ -68,7 +85,12 @@ type PlanOverridesWriteClient = {
 
 const extendTrialSchema = z.object({
   orgId: z.string().uuid(),
-  newTrialEnd: z.string().datetime({ offset: true }),
+  newTrialEnd: z
+    .string()
+    .datetime({ offset: true })
+    .refine((value) => new Date(value).getTime() > Date.now(), {
+      message: 'Trial end must be in the future.',
+    }),
 })
 
 export async function extendTrialAction(
@@ -135,7 +157,7 @@ export async function extendTrialAction(
 
 const capOverrideSchema = z.object({
   orgId: z.string().uuid(),
-  capMultiplier: z.number().positive().nullable(),
+  capMultiplier: z.number().positive().max(10).nullable(),
   note: z.string().max(500).optional(),
 })
 
@@ -156,25 +178,83 @@ export async function setCapOverrideAction(
   const writeClient = serviceClient as unknown as PlanOverridesWriteClient
 
   try {
-    const { error } = await writeClient
-      .from('plan_overrides')
-      .upsert(
-        {
-          organization_id: orgId,
-          cap_multiplier: capMultiplier,
-          ...(note !== undefined ? { note } : {}),
-          updated_by: admin.id,
-          updated_at: new Date().toISOString(),
-        },
-        { onConflict: 'organization_id' },
-      )
-      .select('organization_id, cap_multiplier')
+    if (capMultiplier === null) {
+      // Clearing the cap. Read the current row to decide whether anything
+      // meaningful remains. If the row has no trial_end_override either, there
+      // is no reason to keep an empty shell with a stale note — DELETE it so
+      // queries.ts hasOverride (computed from row existence / fields) stays
+      // consistent. Otherwise, upsert with cap_multiplier=null AND note=null —
+      // clearing the cap also clears the note (the note describes the cap).
+      const { data: current, error: readError } = await writeClient
+        .from('plan_overrides')
+        .select('trial_end_override, cap_multiplier')
+        .eq('organization_id', orgId)
+        .maybeSingle()
 
-    if (error) {
-      Sentry.captureException(error, {
-        tags: { layer: 'admin', action: 'setCapOverrideAction', org_id: orgId },
-      })
-      return { ok: false, error: 'Database write failed. Check Sentry for details.' }
+      if (readError) {
+        Sentry.captureException(readError, {
+          tags: { layer: 'admin', action: 'setCapOverrideAction', org_id: orgId },
+        })
+        return { ok: false, error: 'Database read failed. Check Sentry for details.' }
+      }
+
+      if (!current || current.trial_end_override === null) {
+        // Nothing meaningful left — remove the row entirely.
+        const { error: deleteError } = await writeClient
+          .from('plan_overrides')
+          .delete()
+          .eq('organization_id', orgId)
+
+        if (deleteError) {
+          Sentry.captureException(deleteError, {
+            tags: { layer: 'admin', action: 'setCapOverrideAction', org_id: orgId },
+          })
+          return { ok: false, error: 'Database write failed. Check Sentry for details.' }
+        }
+      } else {
+        // Trial override remains — keep the row but clear cap_multiplier and note.
+        const { error } = await writeClient
+          .from('plan_overrides')
+          .upsert(
+            {
+              organization_id: orgId,
+              cap_multiplier: null,
+              note: null,
+              updated_by: admin.id,
+              updated_at: new Date().toISOString(),
+            },
+            { onConflict: 'organization_id' },
+          )
+          .select('organization_id, cap_multiplier')
+
+        if (error) {
+          Sentry.captureException(error, {
+            tags: { layer: 'admin', action: 'setCapOverrideAction', org_id: orgId },
+          })
+          return { ok: false, error: 'Database write failed. Check Sentry for details.' }
+        }
+      }
+    } else {
+      const { error } = await writeClient
+        .from('plan_overrides')
+        .upsert(
+          {
+            organization_id: orgId,
+            cap_multiplier: capMultiplier,
+            ...(note !== undefined ? { note } : {}),
+            updated_by: admin.id,
+            updated_at: new Date().toISOString(),
+          },
+          { onConflict: 'organization_id' },
+        )
+        .select('organization_id, cap_multiplier')
+
+      if (error) {
+        Sentry.captureException(error, {
+          tags: { layer: 'admin', action: 'setCapOverrideAction', org_id: orgId },
+        })
+        return { ok: false, error: 'Database write failed. Check Sentry for details.' }
+      }
     }
   } catch (err) {
     Sentry.captureException(err, {
