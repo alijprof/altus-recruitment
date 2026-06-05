@@ -2,12 +2,14 @@ import { redirect } from 'next/navigation'
 
 import { CapWarningBanner } from '@/components/app/cap-warning-banner'
 import { FloatingFeedbackButton } from '@/components/app/floating-feedback-button'
+import { PaywallScreen } from '@/components/app/paywall-screen'
 import { TopNav } from '@/components/app/top-nav'
 import { getOrganization } from '@/lib/db/organizations'
 import { getProfile } from '@/lib/db/profiles'
 import { setRequestScope } from '@/lib/observability/sentry'
 import { getEntitlement } from '@/lib/stripe/entitlement'
 import { createClient } from '@/lib/supabase/server'
+import type { EntitlementStatus } from '@/types/billing'
 
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
   const supabase = await createClient()
@@ -30,17 +32,36 @@ export default async function AppLayout({ children }: { children: React.ReactNod
 
   setRequestScope(user.id, profile.data.organization_id)
 
-  // Entitlement for the cap-warning banner. Fetch in parallel with the page
-  // content (layout renders concurrently with children in Next.js RSC).
-  // Fail open: if getEntitlement throws, the banner simply doesn't show.
+  // Entitlement for the access gate and cap-warning banner.
+  // Fail open: defaults ensure a billing blip never locks paying customers out.
   let softCapBreached = false
   let hardCapBreached = false
+  // Gate defaults — MUST be "entitled" so a DB/billing error fails open.
+  let entitled = true
+  let entitlementStatus: EntitlementStatus['status'] = 'active'
   try {
     const entitlement = await getEntitlement(profile.data.organization_id)
     softCapBreached = entitlement.softCapBreached
     hardCapBreached = entitlement.hardCapBreached
+    entitlementStatus = entitlement.status
+    entitled = entitlement.status === 'trialing' || entitlement.status === 'active'
   } catch {
     // Ignore — billing unavailable should not block the whole app.
+  }
+
+  // Return the paywall instead of the CRM for gated orgs.
+  // Do NOT redirect — /settings/billing lives under this layout; redirecting
+  // would create an infinite loop. Rendering in place lets owners check out
+  // directly from the paywall.
+  if (!entitled) {
+    return (
+      <PaywallScreen
+        orgName={organization.ok ? organization.data.name : null}
+        status={entitlementStatus}
+        isOwner={profile.data.role === 'owner'}
+        userEmail={profile.data.email ?? user.email ?? ''}
+      />
+    )
   }
 
   return (
