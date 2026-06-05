@@ -24,11 +24,12 @@ import { Separator } from '@/components/ui/separator'
 import { getProfile } from '@/lib/db/profiles'
 import { createClient } from '@/lib/supabase/server'
 import { getEntitlement } from '@/lib/stripe/entitlement'
-import { PLANS } from '@/lib/stripe/plans'
+import { PLANS, type PlanKey } from '@/lib/stripe/plans'
 import { stripe } from '@/lib/stripe/client'
 import type { SubscriptionStatus } from '@/types/billing'
 
 import { ManageBillingButton } from './manage-billing-button'
+import { StartCheckoutButton } from './start-checkout-button'
 
 // ---- Helpers ----------------------------------------------------------------
 
@@ -185,17 +186,38 @@ export default async function BillingPage() {
           <Separator />
 
           {/* Actions */}
-          <div className="flex flex-wrap gap-3 pt-1">
+          <div className="pt-1">
             {stripeConfigured && entitlement.status !== 'none' ? (
               <ManageBillingButton />
-            ) : (
-              <Link
-                href="/pricing"
-                className="inline-flex items-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90"
-              >
-                Choose a plan
-              </Link>
-            )}
+            ) : stripeConfigured && entitlement.status === 'none' ? (
+              <div className="space-y-3">
+                <div className="grid gap-3 sm:grid-cols-3">
+                  {(['starter', 'pro', 'scale'] as const).map((key: PlanKey) => {
+                    const plan = PLANS[key]
+                    return (
+                      <div key={key} className="rounded-md border p-3 space-y-2">
+                        <div>
+                          <p className="text-sm font-semibold">{plan.label}</p>
+                          <p className="text-muted-foreground text-xs">
+                            {formatPenceGbp(plan.pricePence)} / seat / month
+                          </p>
+                          <p className="text-muted-foreground text-xs">
+                            Up to {plan.seats === 99 ? 'unlimited' : plan.seats} seats
+                          </p>
+                        </div>
+                        <StartCheckoutButton planKey={key} label="Start 14-day trial" />
+                      </div>
+                    )
+                  })}
+                </div>
+                <Link
+                  href="/pricing"
+                  className="text-muted-foreground hover:text-foreground text-sm"
+                >
+                  Compare all plans
+                </Link>
+              </div>
+            ) : null}
           </div>
         </CardContent>
       </Card>
