@@ -20,6 +20,7 @@ import { assertStripe, stripe } from '@/lib/stripe/client'
 import { PLAN_PRICE_IDS } from '@/lib/stripe/plans'
 import type { PlanKey } from '@/lib/stripe/plans'
 import { getOrganization } from '@/lib/db/organizations'
+import { getSubscriptionForOrg } from '@/lib/db/subscriptions'
 import { createClient } from '@/lib/supabase/server'
 import { createServiceClient } from '@/lib/supabase/service'
 import { env } from '@/lib/env'
@@ -76,6 +77,18 @@ export async function POST(request: Request): Promise<NextResponse> {
     )
   }
   const organizationId = orgResult.data.organization_id
+
+  // Defence-in-depth: never start a SECOND subscription. The billing UI only
+  // shows the checkout buttons when status is 'none', but a direct POST must
+  // also be rejected — otherwise an owner can create duplicate Stripe
+  // subscriptions, which are painful to reconcile against the webhook ledger.
+  const existing = await getSubscriptionForOrg(createServiceClient(), organizationId)
+  if (existing.ok && ['active', 'trialing', 'past_due'].includes(existing.data.status)) {
+    return NextResponse.json(
+      { error: 'You already have an active subscription. Use "Manage billing" to make changes.' },
+      { status: 409 },
+    )
+  }
 
   const orgDetails = await getOrganization(supabase, organizationId)
   if (!orgDetails.ok) {
@@ -164,6 +177,16 @@ export async function POST(request: Request): Promise<NextResponse> {
       metadata: { organization_id: organizationId },
     })
 
+    if (!session.url) {
+      Sentry.captureMessage('stripe_checkout: Stripe returned a session with no url', {
+        level: 'error',
+        tags: { layer: 'stripe', handler: 'checkout' },
+      })
+      return NextResponse.json(
+        { error: 'Checkout could not be started. Please try again.' },
+        { status: 500 },
+      )
+    }
     return NextResponse.json({ url: session.url })
   } catch (err) {
     // PII discipline: do not log user email or org name.

@@ -19,13 +19,13 @@ export function ManageBillingButton() {
     setLoading(true)
     try {
       const res = await fetch('/api/stripe/portal', { method: 'POST' })
+      // Parse body ONCE — calling res.json() twice throws "body already read".
+      const data = (await res.json()) as { url?: string; error?: string }
       if (!res.ok) {
-        const data = (await res.json()) as { error?: string }
         // Surface error without crashing (CLAUDE.md: don't navigate on failure).
         toast.error(data.error ?? 'Could not open billing portal. Please try again.')
         return
       }
-      const data = (await res.json()) as { url?: string }
       if (data.url) {
         // Stripe portal is a cross-origin URL — use a full-page navigation.
         // next/navigation router.push does NOT reliably navigate to an external

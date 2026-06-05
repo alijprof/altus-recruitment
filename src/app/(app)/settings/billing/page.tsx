@@ -178,7 +178,7 @@ export default async function BillingPage() {
               </span>
             </div>
             <Progress
-              value={Math.min(100, Math.round((entitlement.activeSeats / entitlement.planSeats) * 100))}
+              value={Math.min(100, Math.round((entitlement.activeSeats / Math.max(1, entitlement.planSeats)) * 100))}
               aria-label="seat usage"
             />
           </div>
@@ -202,7 +202,7 @@ export default async function BillingPage() {
                             {formatPenceGbp(plan.pricePence)} / seat / month
                           </p>
                           <p className="text-muted-foreground text-xs">
-                            Up to {plan.seats === 99 ? 'unlimited' : plan.seats} seats
+                            {key === 'scale' ? 'Unlimited seats' : `Up to ${plan.seats} seats`}
                           </p>
                         </div>
                         <StartCheckoutButton planKey={key} label="Start 14-day trial" />
