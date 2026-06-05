@@ -319,7 +319,7 @@ function mapStripeStatus(stripeStatus: string): string {
     unpaid: 'past_due',
     incomplete: 'none',
     incomplete_expired: 'none',
-    paused: 'none',
+    paused: 'past_due', // show "update payment", not trial cards, on the paywall
   }
   return statusMap[stripeStatus] ?? 'none'
 }

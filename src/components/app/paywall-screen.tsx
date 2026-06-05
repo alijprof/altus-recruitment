@@ -26,15 +26,21 @@ export function PaywallScreen({ orgName, status, isOwner, userEmail }: PaywallSc
         ? 'Your subscription has ended'
         : 'Start your 14-day free trial'
 
+  // Sub-copy must match the status — the "14 days free" trial framing is only
+  // correct for a brand-new (none) org, not a lapsed/failed subscriber.
+  const descriptionText =
+    status === 'past_due'
+      ? "Your last payment failed. Update your payment method to restore access."
+      : status === 'cancelled'
+        ? 'Your subscription has ended. Start a plan again to regain access — 14 days free, cancel anytime before day 14.'
+        : "14 days free, then billed per seat per month — cancel anytime before day 14 and you won't be charged."
+
   return (
     <div className="flex min-h-svh flex-col items-center justify-center px-4 py-8">
       <Card className="w-full max-w-2xl">
         <CardHeader>
           <CardTitle>{headingText}</CardTitle>
-          <CardDescription>
-            14 days free, then billed per seat per month — cancel anytime before day 14 and you
-            won&apos;t be charged.
-          </CardDescription>
+          <CardDescription>{descriptionText}</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
           {orgName && <p className="text-muted-foreground text-sm">{orgName}</p>}

@@ -12,10 +12,15 @@ export function SignOutButton() {
 
   async function onClick() {
     setPending(true)
-    const supabase = createClient()
-    await supabase.auth.signOut()
-    router.replace('/sign-in')
-    router.refresh()
+    try {
+      const supabase = createClient()
+      await supabase.auth.signOut()
+      router.replace('/sign-in')
+      router.refresh()
+    } catch {
+      // Never trap the user on the paywall screen — re-enable so they can retry.
+      setPending(false)
+    }
   }
 
   return (
