@@ -1,4 +1,5 @@
 import { redirect } from 'next/navigation'
+import type { SupabaseClient } from '@supabase/supabase-js'
 
 import {
   Card,
@@ -13,6 +14,7 @@ import { getOutlookCredentials } from '@/lib/db/outlook-credentials'
 import { env } from '@/lib/env'
 import { createClient } from '@/lib/supabase/server'
 import { createServiceClient } from '@/lib/supabase/service'
+import type { Database } from '@/types/database'
 
 import {
   ConnectOutlookCard,
@@ -59,9 +61,12 @@ async function readHnswState(): Promise<HnswStateRow[]> {
 }
 
 async function countEmbeddedRows(
+  // RLS-scoped server client — counts only THIS org's rows. Using the
+  // service-role client here would bypass RLS and leak a platform-wide
+  // count to every tenant (cross-tenant aggregate disclosure, RLS-01).
+  supabase: SupabaseClient<Database>,
   table: 'candidates' | 'jobs',
 ): Promise<number> {
-  const supabase = createServiceClient()
   const embeddingColumn =
     table === 'candidates' ? 'candidate_embedding' : 'job_embedding'
   const { count } = await supabase
@@ -84,8 +89,8 @@ export default async function IntegrationsPage() {
   const [hnswStates, candidatesEmbedded, jobsEmbedded, outlookResult] =
     await Promise.all([
       readHnswState(),
-      countEmbeddedRows('candidates'),
-      countEmbeddedRows('jobs'),
+      countEmbeddedRows(supabase, 'candidates'),
+      countEmbeddedRows(supabase, 'jobs'),
       getOutlookCredentials(supabase, user.id),
     ])
 

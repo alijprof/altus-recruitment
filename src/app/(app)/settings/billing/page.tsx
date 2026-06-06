@@ -271,8 +271,8 @@ export default async function BillingPage() {
           <CardTitle className="text-base font-semibold">About overages</CardTitle>
           <CardDescription>
             When a cap is reached, AI features degrade gracefully: match scoring falls back to
-            cached results, CV parsing queues for overnight processing. Overages are tracked and
-            reflected in future billing cycles. No features are hard-blocked.
+            cached results, CV parsing queues for overnight processing. Your plan&apos;s caps are a
+            soft limit — you&apos;re never charged for overages, and no features are hard-blocked.
           </CardDescription>
         </CardHeader>
       </Card>
