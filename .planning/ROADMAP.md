@@ -118,8 +118,8 @@ Plans:
 4. Recruiter can type "how many placements did we make last quarter by sector?" and receive a correct answer from a read-only SQL query validated against an allowlist — no hallucinated data
 5. Buyer-value dashboards show placements per recruiter per quarter, time-to-fill by sector, source ROI, pipeline value, and commission summary — ready for an acquirer's due-diligence view
 
-**Plans:** 7 plans in 4 waves
-- [ ] 04-01-PLAN.md — Wave 0 hardening: voice_notes + campaign tables + NL template RPCs + jobs.sector + cap buckets + bucket; push & regen types
+**Plans:** 1/7 plans executed
+- [x] 04-01-PLAN.md — Wave 0 hardening: voice_notes + campaign tables + NL template RPCs + jobs.sector + cap buckets + bucket; push & regen types
 - [ ] 04-02-PLAN.md — Voice notes (Slice 1): pipeline + capture (Inngest transcribe→Sonnet extract, MicRecorder, header CTA)
 - [ ] 04-03-PLAN.md — Voice notes (Slice 1): per-field approval review + apply/reject (VOICE-02 gate)
 - [ ] 04-04-PLAN.md — Email campaigns (Slice 2) backend: segment + personaliser + Inngest fan-out + approve gate
@@ -170,7 +170,7 @@ Plans:
 | 1. Internal ATS | 6/6 | Complete | 2026-05-18 |
 | 2. Search, Match & Intake | 5/5 | Complete | 2026-05-19 |
 | 3. LinkedIn, Spec Workflow & Shortlists | 7/7 | Complete   | 2026-05-20 |
-| 4. Voice, Marketing & Reporting | 0/0 | Not started | - |
+| 4. Voice, Marketing & Reporting | 1/7 | In Progress|  |
 | 5. SaaS Shell | 6/6 | Complete   | 2026-06-04 |
 
 ---
