@@ -182,6 +182,12 @@ export async function submitVoiceNoteAction(
     // Roll back the orphaned object so we don't pay for storage on an
     // un-trackable voice note.
     await supabase.storage.from('voice-note-audio').remove([storagePath])
+    // IN-05: mark the row failed (matching the uploadErr branch) so the
+    // review page doesn't show "Processing your voice note…" forever.
+    await supabase
+      .from('voice_notes')
+      .update({ status: 'failed', parse_error: 'Upload failed. Try again.' })
+      .eq('id', voiceNoteId)
     return { ok: false, error: 'Could not record audio path. Try again.' }
   }
 
