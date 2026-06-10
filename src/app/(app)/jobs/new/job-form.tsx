@@ -41,6 +41,7 @@ export function NewJobForm({ clients }: { clients: ClientOption[] }) {
       job_type: 'perm',
       hiring_context: 'new_role',
       location: '',
+      sector: '',
       salary_min: '',
       salary_max: '',
       description: '',
@@ -167,6 +168,29 @@ export function NewJobForm({ clients }: { clients: ClientOption[] }) {
               <FormControl>
                 <Input {...field} value={field.value ?? ''} placeholder="Edinburgh / Remote" />
               </FormControl>
+              <FormMessage />
+            </FormItem>
+          )}
+        />
+
+        <FormField
+          control={form.control}
+          name="sector"
+          render={({ field }) => (
+            <FormItem>
+              <FormLabel>Sector</FormLabel>
+              <FormControl>
+                <Input
+                  {...field}
+                  value={field.value ?? ''}
+                  autoComplete="off"
+                  placeholder="e.g. Renewable Energy, Software, Oil & Gas"
+                />
+              </FormControl>
+              {/* Powers time-to-fill-by-sector in the buyer-value report (REPORT-02) */}
+              <p className="text-muted-foreground text-xs">
+                Used to break down time-to-fill by sector in reporting.
+              </p>
               <FormMessage />
             </FormItem>
           )}

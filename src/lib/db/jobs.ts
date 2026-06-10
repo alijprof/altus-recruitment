@@ -223,6 +223,8 @@ export type CreateJobInput = {
   job_type: Enums<'job_type'>
   hiring_context: Enums<'hiring_context'>
   location?: string | null
+  // Plan 04-06 / Task 2 — REPORT-02: jobs.sector scalar (distinct from sector_tags text[]).
+  sector?: string | null
   salary_min?: number | null
   salary_max?: number | null
   description?: string | null
@@ -252,6 +254,8 @@ export async function createJob(
     job_type: input.job_type,
     hiring_context: input.hiring_context,
     location: input.location ?? null,
+    // Plan 04-06 / Task 2 — REPORT-02: persist sector scalar (NOT sector_tags).
+    sector: input.sector ?? null,
     salary_min: input.salary_min ?? null,
     salary_max: input.salary_max ?? null,
     description: input.description ?? null,
@@ -282,6 +286,8 @@ export type UpdateJobPatch = Partial<
     | 'hiring_context'
     | 'status'
     | 'location'
+    // Plan 04-06 / Task 2 — REPORT-02: sector scalar for time-to-fill-by-sector RPC.
+    | 'sector'
     | 'salary_min'
     | 'salary_max'
     | 'description'
