@@ -127,7 +127,14 @@ export const sendEmailCampaign = inngest.createFunction(
     let sentCount = 0
     let failedCount = 0
 
-    for (const recipient of campaignData.recipients) {
+    for (const [index, recipient] of campaignData.recipients.entries()) {
+      // WR-04: explicit inter-send throttle — Resend's limit is 2 req/s and
+      // the "natural gap" between steps is an implementation artifact, not a
+      // guarantee. 600ms keeps us safely under the limit deterministically.
+      if (index > 0) {
+        await step.sleep(`gap-${recipient.id}`, '600ms')
+      }
+
       // Each recipient has its own Inngest step for idempotency on retry.
       const result = await step.run(`send-to-${recipient.id}`, async () => {
         // Idempotency: skip if already sent (handles Inngest retry path, T-04-16).
@@ -231,6 +238,12 @@ export const sendEmailCampaign = inngest.createFunction(
           })
           return { skipped: false, status: 'sent' as const }
         } else {
+          // WR-04: a 429 is transient rate limiting, not a permanent
+          // failure. Throw so Inngest retries this step (the Idempotency-Key
+          // makes the retry safe) instead of burying the recipient as failed.
+          if (sendResult.reason === 'http_error' && sendResult.status === 429) {
+            throw new Error('resend-429')
+          }
           const errMsg =
             sendResult.reason === 'http_error'
               ? `http_error:${sendResult.status ?? 'unknown'} ${sendResult.message ?? ''}`
