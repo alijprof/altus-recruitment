@@ -222,12 +222,15 @@ export const sendEmailCampaign = inngest.createFunction(
         }
       })
 
-      if (!result.skipped) {
-        if (result.status === 'sent') sentCount++
-        else failedCount++
-      } else if (result.status === 'sent') {
-        // Idempotency skip — count as sent for accuracy.
+      // Tally on status alone — 'sent' counts whether fresh or an
+      // idempotency skip; everything else ('failed', 'failed_cap_exceeded')
+      // is a recipient who was never emailed and MUST surface in
+      // failed_count (WR-02: cap-exceeded recipients previously vanished
+      // from the totals, reporting a fully successful send).
+      if (result.status === 'sent') {
         sentCount++
+      } else {
+        failedCount++
       }
     }
 
