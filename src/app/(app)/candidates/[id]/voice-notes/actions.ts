@@ -285,6 +285,21 @@ export async function applyVoiceNoteAction(rawInput: unknown): Promise<ActionRes
     return { ok: false, error: 'Voice note not found.' }
   }
 
+  // Cross-resource binding (IDOR within an org): the voice note's own
+  // candidate is the only valid apply target. A client-supplied candidateId
+  // that differs is a tampering signal — reject without detail.
+  if (voiceNote.candidate_id !== candidateId) {
+    Sentry.captureException(new Error('applyVoiceNoteAction: voice note / candidate mismatch'), {
+      tags: {
+        phase: 'p4',
+        layer: 'action',
+        helper: 'applyVoiceNoteAction',
+        voice_note_id: voiceNoteId,
+      },
+    })
+    return { ok: false, error: 'Voice note not found.' }
+  }
+
   if (voiceNote.status !== 'ready_for_review') {
     return {
       ok: false,
@@ -310,7 +325,9 @@ export async function applyVoiceNoteAction(rawInput: unknown): Promise<ActionRes
 
   const result = await applyVoiceNoteFields(supabase, {
     voiceNoteId,
-    candidateId,
+    // Source of truth is the voice note's own candidate binding (asserted
+    // equal to the client-supplied candidateId above).
+    candidateId: voiceNote.candidate_id,
     organizationId,
     approvedFields,
     approveNote,
@@ -367,6 +384,20 @@ export async function rejectVoiceNoteAction(rawInput: unknown): Promise<ActionRe
       : { ok: false, error: 'Could not load voice note.' }
   }
   if (vnResult.data.organization_id !== organizationId) {
+    return { ok: false, error: 'Voice note not found.' }
+  }
+
+  // Cross-resource binding — same guard as apply: the note must belong to
+  // the candidate the client claims to be acting on.
+  if (vnResult.data.candidate_id !== candidateId) {
+    Sentry.captureException(new Error('rejectVoiceNoteAction: voice note / candidate mismatch'), {
+      tags: {
+        phase: 'p4',
+        layer: 'action',
+        helper: 'rejectVoiceNoteAction',
+        voice_note_id: voiceNoteId,
+      },
+    })
     return { ok: false, error: 'Voice note not found.' }
   }
 
