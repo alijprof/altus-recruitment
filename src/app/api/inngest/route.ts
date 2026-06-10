@@ -17,6 +17,7 @@ import { specAudioRetentionSweep } from '@/lib/inngest/functions/spec-audio-rete
 import { specDraftCleanupSweep } from '@/lib/inngest/functions/spec-draft-cleanup-sweep'
 import { syncOutlookHistory } from '@/lib/inngest/functions/sync-outlook-history'
 import { transcribeAndStructureSpec } from '@/lib/inngest/functions/transcribe-and-structure-spec'
+import { sendEmailCampaign } from '@/lib/inngest/functions/send-email-campaign'
 import { transcribeAndExtractVoiceNote } from '@/lib/inngest/functions/transcribe-and-extract-voice-note'
 import { voiceNoteAudioRetentionSweep } from '@/lib/inngest/functions/voice-note-audio-retention-sweep'
 
@@ -47,5 +48,7 @@ export const { GET, POST, PUT } = serve({
     // Phase 4 — voice notes (Plan 04-02).
     transcribeAndExtractVoiceNote,
     voiceNoteAudioRetentionSweep,
+    // Phase 4 — campaign send engine (Plan 04-04).
+    sendEmailCampaign,
   ],
 })
