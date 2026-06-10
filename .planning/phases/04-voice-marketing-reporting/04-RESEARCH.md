@@ -435,8 +435,9 @@ comment on function public.nl_placements_by_sector(date, date) is
 | Campaign email send | Manual fetch-loop | Inngest + existing `sendResendEmail` wrapper | Inngest handles retry, idempotency, and rate-limit throttling; Resend is already wired |
 | NL reporting safety | SQL allowlist + regex validation | security invoker parameterised RPCs | SQL allowlist with regex is impossible to get right; parameterised RPCs are injection-proof by construction |
 | AI usage tracking | Custom cost calculation | `runWithLogging` in `src/lib/ai/claude.ts` (already handles `record_ai_usage`) | Any direct Anthropic call that bypasses `runWithLogging` misses cap enforcement and ai_usage logging |
+| Voice note audio retention sweep | New bespoke cron | Mirror `spec-audio-retention-sweep.ts` (cron `TZ=Europe/London 0 3 * * *`, service client, NULL `audio_storage_path` for idempotency) | The Phase 3 spec-audio sweep is the canonical retention pattern; the voice-note sweep is a near-verbatim copy targeting the `voice_notes` table + `voice-note-audio` bucket |
 
-**Key insight:** This phase is almost entirely about composing existing infrastructure in new ways. The voice note pipeline is ~80% copy-paste from the spec-call pipeline with different DB tables and Sonnet prompts. The campaign send is a generalisation of `draft-outreach-email.ts`. Don't re-architect what already works.
+**Key insight:** This phase is almost entirely about composing existing infrastructure in new ways. The voice note pipeline is ~80% copy-paste from the spec-call pipeline with different DB tables and Sonnet prompts. The campaign send is a generalisation of `draft-outreach-email.ts`. The audio retention sweep is a near-verbatim copy of `spec-audio-retention-sweep.ts`. Don't re-architect what already works.
 
 ---
 
@@ -645,22 +646,25 @@ export async function nlQueryAction(question: string) {
 
 ---
 
-## Open Questions
+## Open Questions (RESOLVED)
 
 1. **Should Phase 4 add `jobs.sector` to unblock sector-split time-to-fill?**
    - What we know: `time_to_fill_by_sector` currently returns single `'Unspecified'` bucket. The ROADMAP success criterion says "time-to-fill by sector."
    - What's unclear: whether the anchor customer considers this a blocker for the due-diligence demo, or whether the current acknowledged limitation is acceptable.
    - Recommendation: Add `sector` column to `jobs` in the Wave 0 hardening migration. It's a small addition that satisfies the success criterion literally.
+   - **RESOLVED:** Yes — add the scalar `jobs.sector` column. Implemented in plan **04-01** Task 1 (migration `20260610000000_phase4_hardening.sql` runs `alter table public.jobs add column if not exists sector text` and supersedes `time_to_fill_by_sector` to group by `coalesce(j.sector, 'Unspecified')`). The job create/edit form surfaces the field in plan **04-06**. Closes the REPORT-02 sector gap.
 
 2. **How should `voice_note_transcribe` minutes interact with the `specMinutes` cap?**
    - What we know: `specMinutes` is the Phase 5 cap bucket for Whisper usage. Voice notes are also Whisper.
    - What's unclear: whether to reuse `specMinutes` bucket or create a separate `voiceMinutes` bucket with its own plan cap.
    - Recommendation: Reuse `specMinutes` — voice notes are "same meter, different use case." This is simpler and avoids proliferating plan caps. Document this in the `PURPOSE_CAP_BUCKETS` comment.
+   - **RESOLVED:** Reuse `specMinutes` — no new cap bucket. Implemented in plan **04-01** Task 2: `PURPOSE_CAP_BUCKETS` maps `voice_note_transcribe → 'specMinutes'` (sharing the meter with `spec_transcribe`), with an inline comment documenting the shared meter. The other three Phase 4 purposes (`voice_note_extract`, `campaign_intro_outro`, `nl_template_match`) map to `writingCalls`.
 
 3. **Should the campaign builder restrict to candidates with GDPR consent only, or also allow opted-in contacts (client contacts)?**
    - What we know: MARKET-01 says "segmented email campaigns by `market_status`" — implies candidates only.
    - What's unclear: whether the anchor customer also wants to email client contacts (B2B outreach).
    - Recommendation: Scope to candidates only for Phase 4 (matches MARKET-01). Client contact campaigns are a deferred feature.
+   - **RESOLVED:** Candidates only. Implemented in plan **04-04**: `getCampaignSegment` filters `candidates` by GDPR consent (`gdpr_consent_basis IS NOT NULL AND gdpr_consent_withdrawn_at IS NULL`) intersected with the chosen `market_status` set; there is no contacts path. Client-contact (B2B) campaigns remain a deferred feature out of scope for Phase 4.
 
 ---
 
@@ -719,6 +723,7 @@ export async function nlQueryAction(question: string) {
 ### Primary (HIGH confidence — verified in codebase)
 
 - `src/lib/inngest/functions/transcribe-and-structure-spec.ts` — canonical voice note pipeline template; all patterns derived from this file
+- `src/lib/inngest/functions/spec-audio-retention-sweep.ts` — canonical 30-day audio retention sweep; voice-note retention sweep mirrors this verbatim (D4-06)
 - `src/lib/ai/jd-extract.ts` — Sonnet tool-use extraction pattern for voice note extractor
 - `src/lib/ai/claude.ts` — `runWithLogging` wrapper; `CapExceededError` shape; `PURPOSE_CAP_BUCKETS` integration
 - `src/lib/ai/whisper.ts` — Whisper wrapper; `specMinutes` billing pattern

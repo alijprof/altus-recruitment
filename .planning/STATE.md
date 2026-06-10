@@ -3,11 +3,11 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: launch-readiness
-last_updated: "2026-06-04T21:33:41.741Z"
+last_updated: "2026-06-10T21:00:57.339Z"
 progress:
   total_phases: 5
   completed_phases: 3
-  total_plans: 24
+  total_plans: 31
   completed_plans: 19
   percent: 60
 ---
