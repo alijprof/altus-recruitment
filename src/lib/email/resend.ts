@@ -26,6 +26,14 @@ export type ResendSendInput = {
   html?: string
   text?: string
   from?: string
+  /**
+   * Resend Idempotency-Key header. Pass a stable per-logical-send key
+   * (e.g. `${campaignId}:${recipientId}`) so a retried request after a
+   * crash cannot double-send the same email.
+   */
+  idempotencyKey?: string
+  /** Extra SMTP headers (e.g. List-Unsubscribe) forwarded to Resend. */
+  headers?: Record<string, string>
 }
 
 export type ResendSendResult =
@@ -49,6 +57,9 @@ export async function sendResendEmail(input: ResendSendInput): Promise<ResendSen
       headers: {
         Authorization: `Bearer ${apiKey}`,
         'Content-Type': 'application/json',
+        ...(input.idempotencyKey !== undefined
+          ? { 'Idempotency-Key': input.idempotencyKey }
+          : {}),
       },
       body: JSON.stringify({
         from,
@@ -56,6 +67,7 @@ export async function sendResendEmail(input: ResendSendInput): Promise<ResendSen
         subject: input.subject,
         ...(input.html !== undefined ? { html: input.html } : {}),
         ...(input.text !== undefined ? { text: input.text } : {}),
+        ...(input.headers !== undefined ? { headers: input.headers } : {}),
       }),
     })
   } catch (err) {

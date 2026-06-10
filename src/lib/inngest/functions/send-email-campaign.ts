@@ -137,6 +137,23 @@ export const sendEmailCampaign = inngest.createFunction(
 
         const supabase = createServiceClient()
 
+        // WR-03: the snapshot above comes from the memoized load-campaign
+        // step and can be stale on retry. Re-read the recipient's CURRENT
+        // status so a retry after the DB update (but before the step output
+        // was recorded) cannot double-send.
+        const { data: freshRecipient, error: freshErr } = await supabase
+          .from('email_campaign_recipients')
+          .select('status')
+          .eq('id', recipient.id)
+          .eq('organization_id', organization_id)
+          .maybeSingle()
+        if (freshErr) {
+          throw new Error(`fresh-recipient-read: ${freshErr.message}`)
+        }
+        if (freshRecipient?.status === 'sent') {
+          return { skipped: true, status: 'sent' as const }
+        }
+
         // Fetch the full candidate row to assert tenant boundary before Sonnet
         // (HARD RULE 4 — T-04-13 cross-tenant candidate data in personalisation).
         const { data: candidate, error: candidateErr } = await supabase
@@ -198,10 +215,13 @@ export const sendEmailCampaign = inngest.createFunction(
         })
 
         // Send via Resend — sendResendEmail never throws.
+        // Idempotency-Key (WR-03): closes the pre-DB-update double-send
+        // window — Resend dedupes a retried request for the same key.
         const sendResult = await sendResendEmail({
           to: recipient.email,
           subject: campaignData.subject_template,
           html,
+          idempotencyKey: `${campaign_id}:${recipient.id}`,
         })
 
         // Always update the recipient row regardless of send outcome.
