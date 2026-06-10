@@ -123,12 +123,18 @@ function escapeHtml(str: string): string {
 }
 
 export type AssembleCampaignHtmlInput = {
+  /** Recipient's first name — rendered as the greeting line (WR-09) */
+  recipientFirstName: string
   /** Sonnet-written 2-3 sentence intro personalised to the recipient */
   intro: string
   /** Recruiter-authored body template — NOT modified by AI */
   bodyTemplate: string
   /** Sonnet-written 2-3 sentence outro personalised to the recipient */
   outro: string
+  /** Recruiter name for the sign-off block (WR-09) */
+  senderName: string
+  /** Organisation name rendered under the sender's name (may be empty) */
+  organizationName: string
   /** Candidate-specific unsubscribe URL (UK PECR mandatory) */
   unsubscribeUrl: string
 }
@@ -141,8 +147,21 @@ export type AssembleCampaignHtmlInput = {
  * The unsubscribe link is mandatory for PECR compliance.
  */
 export function assembleCampaignHtml(input: AssembleCampaignHtmlInput): string {
-  const { intro, bodyTemplate, outro, unsubscribeUrl } = input
+  const {
+    recipientFirstName,
+    intro,
+    bodyTemplate,
+    outro,
+    senderName,
+    organizationName,
+    unsubscribeUrl,
+  } = input
 
+  // WR-09: the Sonnet prompts explicitly promise "the template handles"
+  // the greeting and sign-off — so the template MUST render them.
+  const safeFirstName = escapeHtml(recipientFirstName)
+  const safeSender = escapeHtml(senderName)
+  const orgLine = organizationName ? `<br>${escapeHtml(organizationName)}` : ''
   const safeIntro = escapeHtml(intro)
   const safeOutro = escapeHtml(outro)
   // bodyTemplate is written by the recruiter (trusted) — escape it the same
@@ -154,9 +173,11 @@ export function assembleCampaignHtml(input: AssembleCampaignHtmlInput): string {
 <html lang="en">
 <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
 <body style="font-family:sans-serif;max-width:600px;margin:0 auto;padding:24px;color:#1a1a1a">
+  <p style="margin:0 0 16px">Hi ${safeFirstName},</p>
   <p style="margin:0 0 16px">${safeIntro}</p>
   <p style="margin:0 0 16px;white-space:pre-wrap">${safeBody}</p>
-  <p style="margin:0 0 32px">${safeOutro}</p>
+  <p style="margin:0 0 16px">${safeOutro}</p>
+  <p style="margin:0 0 32px">Best regards,<br>${safeSender}${orgLine}</p>
   <hr style="border:none;border-top:1px solid #e5e7eb;margin:24px 0">
   <p style="font-size:12px;color:#6b7280;margin:0">
     You are receiving this email because you are registered in our candidate database.

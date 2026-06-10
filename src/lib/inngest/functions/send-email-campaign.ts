@@ -122,7 +122,29 @@ export const sendEmailCampaign = inngest.createFunction(
         .eq('organization_id', organization_id)
     })
 
-    // Steps 3..N — sequential per-recipient send loop.
+    // Step 3 — load sender identity for the greeting/sign-off block (WR-09).
+    // Best-effort: fall back to the org name (or a generic team sign-off) if
+    // the user row is missing a display name.
+    const sender = await step.run('load-sender-identity', async () => {
+      const supabase = createServiceClient()
+      const { data: senderUser } = await supabase
+        .from('users')
+        .select('full_name')
+        .eq('id', user_id)
+        .eq('organization_id', organization_id)
+        .maybeSingle()
+      const { data: org } = await supabase
+        .from('organizations')
+        .select('name')
+        .eq('id', organization_id)
+        .maybeSingle()
+      return {
+        senderName: senderUser?.full_name ?? org?.name ?? 'The team',
+        organizationName: org?.name ?? '',
+      }
+    })
+
+    // Steps 4..N — sequential per-recipient send loop.
     // NOT Promise.all — Resend rate limit is 2 req/s (Research §Pattern 3).
     let sentCount = 0
     let failedCount = 0
@@ -211,24 +233,35 @@ export const sendEmailCampaign = inngest.createFunction(
         }
 
         // Assemble HTML (body_template is NOT passed through the model — D4-07).
-        // Unsubscribe URL is a placeholder — the 04-05 builder UI will wire the
-        // real per-candidate URL. For now use a mailto fallback.
+        // PRE-LAUNCH BLOCKER (WR-09): the unsubscribe URL is still a mailto
+        // placeholder — NOT one-click, and nothing processes those mailbox
+        // arrivals into consent withdrawal. Before any real customer campaign:
+        // real per-candidate token URL + suppression write + one-click
+        // List-Unsubscribe-Post header (Gmail/Yahoo bulk-sender requirement).
         const unsubscribeUrl = `mailto:unsubscribe@altusmove.com?subject=Unsubscribe&body=${encodeURIComponent(recipient.email)}`
+        const firstName =
+          candidate.full_name.trim().split(/\s+/)[0] ?? candidate.full_name
         const html = assembleCampaignHtml({
+          recipientFirstName: firstName,
           intro: introParagraph,
           bodyTemplate: campaignData.body_template,
           outro: outroParagraph,
+          senderName: sender.senderName,
+          organizationName: sender.organizationName,
           unsubscribeUrl,
         })
 
         // Send via Resend — sendResendEmail never throws.
         // Idempotency-Key (WR-03): closes the pre-DB-update double-send
         // window — Resend dedupes a retried request for the same key.
+        // List-Unsubscribe (WR-09): mailto variant until the real one-click
+        // URL ships (see pre-launch blocker above).
         const sendResult = await sendResendEmail({
           to: recipient.email,
           subject: campaignData.subject_template,
           html,
           idempotencyKey: `${campaign_id}:${recipient.id}`,
+          headers: { 'List-Unsubscribe': `<${unsubscribeUrl}>` },
         })
 
         // Always update the recipient row regardless of send outcome.
