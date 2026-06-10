@@ -1,9 +1,11 @@
 'use server'
 
+import { revalidatePath } from 'next/cache'
 import * as Sentry from '@sentry/nextjs'
 import { z } from 'zod'
 
 import { getProfile } from '@/lib/db/profiles'
+import { applyVoiceNoteFields, getVoiceNote } from '@/lib/db/voice-notes'
 import { inngest } from '@/lib/inngest/client'
 import { createClient } from '@/lib/supabase/server'
 
@@ -197,4 +199,198 @@ export async function submitVoiceNoteAction(
   }
 
   return { ok: true, voiceNoteId }
+}
+
+// ---------------------------------------------------------------------------
+// applyVoiceNoteAction — Plan 04-03 Task 1.
+//
+// Applies the recruiter-approved subset of proposed field changes to the
+// candidate row. Security architecture (T-04-18, T-04-19, T-04-20):
+//
+//   T-04-18: approvedFields items are validated against a Zod enum of EXACTLY
+//            the 4 D4-05 allowlist scalars. Off-list items REJECT the whole
+//            request (not silently dropped — Research §Pitfall 3).
+//   T-04-19: org assertion — voice_notes row's organization_id MUST match the
+//            caller's org before any write.
+//   T-04-20: notes is append-only — applyVoiceNoteFields reads-then-
+//            concatenates; it never replaces.
+// ---------------------------------------------------------------------------
+
+// D4-05 scalar allowlist as a Zod enum — this is the server-side gate.
+// Client checkbox state is UNTRUSTED; we validate every item here regardless
+// of what the form sent.
+const ALLOWED_FIELD_SCHEMA = z.enum([
+  'current_role_title',
+  'current_company',
+  'market_status',
+  'seniority_level',
+])
+
+const applyVoiceNoteSchema = z.object({
+  voiceNoteId: z.string().uuid('Invalid voice note id.'),
+  candidateId: z.string().uuid('Invalid candidate id.'),
+  // Each item MUST be in the D4-05 allowlist — off-list → reject the request.
+  approvedFields: z.array(ALLOWED_FIELD_SCHEMA),
+  approveNote: z.boolean(),
+  approveActivity: z.boolean(),
+})
+
+export type ApplyVoiceNoteInput = z.infer<typeof applyVoiceNoteSchema>
+export type ActionResult = { ok: true } | { ok: false; error: string }
+
+export async function applyVoiceNoteAction(rawInput: unknown): Promise<ActionResult> {
+  const parsed = applyVoiceNoteSchema.safeParse(rawInput)
+  if (!parsed.success) {
+    const first = parsed.error.issues[0]?.message ?? 'Invalid request.'
+    return { ok: false, error: first }
+  }
+  const { voiceNoteId, candidateId, approvedFields, approveNote, approveActivity } = parsed.data
+
+  // Require at least some approval intent — disallow a no-op apply call.
+  if (approvedFields.length === 0 && !approveNote && !approveActivity) {
+    return { ok: false, error: 'Select at least one change to apply.' }
+  }
+
+  const supabase = await createClient()
+  const {
+    data: { user },
+  } = await supabase.auth.getUser()
+  if (!user) return { ok: false, error: 'Not signed in.' }
+
+  const profileResult = await getProfile(supabase, user.id)
+  if (!profileResult.ok) return { ok: false, error: 'Profile not found.' }
+  const organizationId = profileResult.data.organization_id
+
+  // Load the voice_notes row and assert org ownership + status guard.
+  // T-04-19: cross-tenant prevention — the voice note MUST belong to the
+  // caller's org before we write anything to the candidate.
+  const vnResult = await getVoiceNote(supabase, voiceNoteId)
+  if (!vnResult.ok) {
+    return vnResult.code === 'not_found'
+      ? { ok: false, error: 'Voice note not found.' }
+      : { ok: false, error: 'Could not load voice note.' }
+  }
+  const voiceNote = vnResult.data
+
+  if (voiceNote.organization_id !== organizationId) {
+    // Log attempt as a potential tampering signal — do not expose details.
+    Sentry.captureException(new Error('applyVoiceNoteAction: cross-tenant org assertion failed'), {
+      tags: {
+        phase: 'p4',
+        layer: 'action',
+        helper: 'applyVoiceNoteAction',
+        voice_note_id: voiceNoteId,
+      },
+    })
+    return { ok: false, error: 'Voice note not found.' }
+  }
+
+  if (voiceNote.status !== 'ready_for_review') {
+    return {
+      ok: false,
+      error: 'This voice note is not ready for review. Please refresh and try again.',
+    }
+  }
+
+  // Parse structured_data into the proposal shape. The Inngest pipeline
+  // writes a conformant VoiceNoteProposal here — treat the Json field as
+  // unknown and validate the shape we need.
+  const proposalRaw = voiceNote.structured_data
+  if (!proposalRaw || typeof proposalRaw !== 'object') {
+    return { ok: false, error: 'Voice note proposal is missing. Cannot apply changes.' }
+  }
+  // reason: structured_data is Json (recursive union); we validated presence
+  // and object type above. The Inngest pipeline writes a known-shape object.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const proposal = proposalRaw as any
+
+  if (!Array.isArray(proposal.proposed_field_changes)) {
+    return { ok: false, error: 'Voice note proposal is malformed. Cannot apply changes.' }
+  }
+
+  const result = await applyVoiceNoteFields(supabase, {
+    voiceNoteId,
+    candidateId,
+    organizationId,
+    approvedFields,
+    approveNote,
+    approveActivity,
+    actorUserId: user.id,
+    proposal,
+  })
+
+  if (!result.ok) {
+    return { ok: false, error: 'Could not apply changes. Please try again.' }
+  }
+
+  revalidatePath(`/candidates/${candidateId}`)
+  return { ok: true }
+}
+
+// ---------------------------------------------------------------------------
+// rejectVoiceNoteAction — Plan 04-03 Task 1.
+//
+// Discards the proposal but preserves the transcript and audio_storage_path.
+// The voice note record is retained for audit purposes (status = 'rejected').
+// ---------------------------------------------------------------------------
+
+const rejectVoiceNoteSchema = z.object({
+  voiceNoteId: z.string().uuid('Invalid voice note id.'),
+  candidateId: z.string().uuid('Invalid candidate id.'),
+})
+
+export type RejectVoiceNoteInput = z.infer<typeof rejectVoiceNoteSchema>
+
+export async function rejectVoiceNoteAction(rawInput: unknown): Promise<ActionResult> {
+  const parsed = rejectVoiceNoteSchema.safeParse(rawInput)
+  if (!parsed.success) {
+    const first = parsed.error.issues[0]?.message ?? 'Invalid request.'
+    return { ok: false, error: first }
+  }
+  const { voiceNoteId, candidateId } = parsed.data
+
+  const supabase = await createClient()
+  const {
+    data: { user },
+  } = await supabase.auth.getUser()
+  if (!user) return { ok: false, error: 'Not signed in.' }
+
+  const profileResult = await getProfile(supabase, user.id)
+  if (!profileResult.ok) return { ok: false, error: 'Profile not found.' }
+  const organizationId = profileResult.data.organization_id
+
+  // Org assertion — same as apply.
+  const vnResult = await getVoiceNote(supabase, voiceNoteId)
+  if (!vnResult.ok) {
+    return vnResult.code === 'not_found'
+      ? { ok: false, error: 'Voice note not found.' }
+      : { ok: false, error: 'Could not load voice note.' }
+  }
+  if (vnResult.data.organization_id !== organizationId) {
+    return { ok: false, error: 'Voice note not found.' }
+  }
+
+  // Update status to 'rejected'. transcript + audio_storage_path are
+  // intentionally NOT touched — the recruiter may still want to reference
+  // the transcript manually even after rejection.
+  const { error: updateErr } = await supabase
+    .from('voice_notes')
+    .update({ status: 'rejected' })
+    .eq('id', voiceNoteId)
+    .eq('organization_id', organizationId)
+
+  if (updateErr) {
+    Sentry.captureException(updateErr, {
+      tags: {
+        phase: 'p4',
+        layer: 'action',
+        helper: 'rejectVoiceNoteAction',
+        voice_note_id: voiceNoteId,
+      },
+    })
+    return { ok: false, error: 'Could not reject voice note. Please try again.' }
+  }
+
+  revalidatePath(`/candidates/${candidateId}`)
+  return { ok: true }
 }
