@@ -83,6 +83,18 @@ export type ExtractVoiceNoteResult = {
   costPence: number
 }
 
+// IN-07: the API does not strictly enforce the tool-schema enum, so the
+// allowlist must also be applied when normalising the model output. One
+// hallucinated off-list field would otherwise land in structured_data,
+// get auto-checked by the review form, and block the entire apply at the
+// server's Zod enum gate.
+const ALLOWED_FIELDS = new Set<string>([
+  'current_role_title',
+  'current_company',
+  'market_status',
+  'seniority_level',
+])
+
 /**
  * Extract structured CRM updates from a Whisper transcript using Sonnet 4.6.
  *
@@ -131,12 +143,15 @@ export async function extractVoiceNoteUpdates(args: {
 
   // Normalise — current_value is not known at extraction time (the review UI
   // in 04-03 will populate it from the candidate row). Set null as placeholder.
+  // Off-allowlist or malformed field changes are FILTERED here (IN-07).
   const proposal: VoiceNoteProposal = {
-    proposed_field_changes: (raw.proposed_field_changes ?? []).map((c) => ({
-      field: c.field,
-      current_value: null,
-      proposed_value: c.proposed_value,
-    })),
+    proposed_field_changes: (raw.proposed_field_changes ?? [])
+      .filter((c) => ALLOWED_FIELDS.has(c.field) && typeof c.proposed_value === 'string')
+      .map((c) => ({
+        field: c.field,
+        current_value: null,
+        proposed_value: c.proposed_value,
+      })),
     note_append: raw.note_append ?? null,
     activity_kind: raw.activity_kind ?? 'note',
     activity_body: raw.activity_body ?? '',
