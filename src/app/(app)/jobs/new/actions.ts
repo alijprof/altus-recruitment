@@ -42,6 +42,8 @@ export async function createJobStandaloneAction(
     job_type: parsed.data.job_type,
     hiring_context: parsed.data.hiring_context,
     location: parsed.data.location?.trim() ? parsed.data.location : null,
+    // Plan 04-06 / Task 2 — REPORT-02: thread sector through to jobs.sector (scalar).
+    sector: parsed.data.sector?.trim() ? parsed.data.sector : null,
     salary_min: coerceSalary(parsed.data.salary_min),
     salary_max: coerceSalary(parsed.data.salary_max),
     description: parsed.data.description?.trim() ? parsed.data.description : null,

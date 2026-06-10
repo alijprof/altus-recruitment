@@ -46,6 +46,7 @@ const SECONDARY_NAV = [
   { href: '/clients', label: 'Clients' },
   { href: '/floats', label: 'Floats' },
   { href: '/spec', label: 'Spec calls' },
+  { href: '/campaigns', label: 'Campaigns' },
   { href: '/reports', label: 'Reports' },
   { href: '/settings', label: 'Settings' },
   { href: '/help', label: 'Help' },

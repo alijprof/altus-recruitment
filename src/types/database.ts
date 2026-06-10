@@ -728,6 +728,142 @@ export type Database = {
           },
         ]
       }
+      email_campaign_recipients: {
+        Row: {
+          campaign_id: string
+          candidate_id: string
+          created_at: string
+          email: string
+          error_message: string | null
+          id: string
+          organization_id: string
+          personalised_intro: string | null
+          personalised_outro: string | null
+          resend_email_id: string | null
+          sent_at: string | null
+          status: string
+        }
+        Insert: {
+          campaign_id: string
+          candidate_id: string
+          created_at?: string
+          email: string
+          error_message?: string | null
+          id?: string
+          organization_id: string
+          personalised_intro?: string | null
+          personalised_outro?: string | null
+          resend_email_id?: string | null
+          sent_at?: string | null
+          status?: string
+        }
+        Update: {
+          campaign_id?: string
+          candidate_id?: string
+          created_at?: string
+          email?: string
+          error_message?: string | null
+          id?: string
+          organization_id?: string
+          personalised_intro?: string | null
+          personalised_outro?: string | null
+          resend_email_id?: string | null
+          sent_at?: string | null
+          status?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "email_campaign_recipients_campaign_id_fkey"
+            columns: ["campaign_id"]
+            isOneToOne: false
+            referencedRelation: "email_campaigns"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "email_campaign_recipients_candidate_id_fkey"
+            columns: ["candidate_id"]
+            isOneToOne: false
+            referencedRelation: "candidates"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "email_campaign_recipients_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      email_campaigns: {
+        Row: {
+          approved_at: string | null
+          body_template: string
+          created_at: string
+          created_by: string
+          failed_count: number
+          id: string
+          name: string
+          organization_id: string
+          recipient_count: number | null
+          segment_market_statuses: string[]
+          sent_at: string | null
+          sent_count: number
+          status: string
+          subject_template: string
+          updated_at: string
+        }
+        Insert: {
+          approved_at?: string | null
+          body_template: string
+          created_at?: string
+          created_by: string
+          failed_count?: number
+          id?: string
+          name: string
+          organization_id: string
+          recipient_count?: number | null
+          segment_market_statuses: string[]
+          sent_at?: string | null
+          sent_count?: number
+          status?: string
+          subject_template: string
+          updated_at?: string
+        }
+        Update: {
+          approved_at?: string | null
+          body_template?: string
+          created_at?: string
+          created_by?: string
+          failed_count?: number
+          id?: string
+          name?: string
+          organization_id?: string
+          recipient_count?: number | null
+          segment_market_statuses?: string[]
+          sent_at?: string | null
+          sent_count?: number
+          status?: string
+          subject_template?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "email_campaigns_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "email_campaigns_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       feedback: {
         Row: {
           body: string
@@ -882,6 +1018,7 @@ export type Database = {
           owner_user_id: string | null
           salary_max: number | null
           salary_min: number | null
+          sector: string | null
           status: Database["public"]["Enums"]["job_status"]
           title: string
           updated_at: string
@@ -906,6 +1043,7 @@ export type Database = {
           owner_user_id?: string | null
           salary_max?: number | null
           salary_min?: number | null
+          sector?: string | null
           status?: Database["public"]["Enums"]["job_status"]
           title: string
           updated_at?: string
@@ -930,6 +1068,7 @@ export type Database = {
           owner_user_id?: string | null
           salary_max?: number | null
           salary_min?: number | null
+          sector?: string | null
           status?: Database["public"]["Enums"]["job_status"]
           title?: string
           updated_at?: string
@@ -1395,6 +1534,82 @@ export type Database = {
           },
         ]
       }
+      voice_notes: {
+        Row: {
+          applied_at: string | null
+          audio_duration_seconds: number | null
+          audio_mime_type: string | null
+          audio_storage_path: string | null
+          candidate_id: string
+          created_at: string
+          created_by: string
+          deleted_at: string | null
+          id: string
+          organization_id: string
+          parse_error: string | null
+          status: string
+          structured_data: Json | null
+          transcript: string | null
+          updated_at: string
+        }
+        Insert: {
+          applied_at?: string | null
+          audio_duration_seconds?: number | null
+          audio_mime_type?: string | null
+          audio_storage_path?: string | null
+          candidate_id: string
+          created_at?: string
+          created_by: string
+          deleted_at?: string | null
+          id?: string
+          organization_id: string
+          parse_error?: string | null
+          status?: string
+          structured_data?: Json | null
+          transcript?: string | null
+          updated_at?: string
+        }
+        Update: {
+          applied_at?: string | null
+          audio_duration_seconds?: number | null
+          audio_mime_type?: string | null
+          audio_storage_path?: string | null
+          candidate_id?: string
+          created_at?: string
+          created_by?: string
+          deleted_at?: string | null
+          id?: string
+          organization_id?: string
+          parse_error?: string | null
+          status?: string
+          structured_data?: Json | null
+          transcript?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "voice_notes_candidate_id_fkey"
+            columns: ["candidate_id"]
+            isOneToOne: false
+            referencedRelation: "candidates"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "voice_notes_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "voice_notes_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
     }
     Views: {
       client_activity_timeline: {
@@ -1545,6 +1760,163 @@ export type Database = {
           p_to_stage: Database["public"]["Enums"]["application_stage"]
         }
         Returns: undefined
+      }
+      nl_activity_volume_by_recruiter: {
+        Args: { p_from?: string; p_to?: string }
+        Returns: {
+          activity_count: number
+          recruiter_name: string
+        }[]
+      }
+      nl_applications_per_job: {
+        Args: { p_from?: string; p_to?: string }
+        Returns: {
+          applications_count: number
+          company_name: string
+          job_title: string
+        }[]
+      }
+      nl_average_fee_by_sector: {
+        Args: { p_from?: string; p_to?: string }
+        Returns: {
+          avg_fee_pence: number
+          placements_count: number
+          sector: string
+        }[]
+      }
+      nl_biggest_fees: {
+        Args: { p_from?: string; p_limit?: number; p_to?: string }
+        Returns: {
+          candidate_name: string
+          company_name: string
+          fee_pence: number
+          job_title: string
+          placed_date: string
+        }[]
+      }
+      nl_candidates_added_per_month: {
+        Args: { p_months?: number }
+        Returns: {
+          candidates_added: number
+          month: string
+        }[]
+      }
+      nl_candidates_by_market_status: {
+        Args: never
+        Returns: {
+          candidate_count: number
+          market_status: string
+        }[]
+      }
+      nl_conversion_rate: {
+        Args: { p_from?: string; p_to?: string }
+        Returns: {
+          conversion_pct: number
+          cv_submissions: number
+          placements: number
+        }[]
+      }
+      nl_dormant_clients_count: {
+        Args: { p_dormant_days?: number }
+        Returns: {
+          dormant_count: number
+          threshold_days: number
+        }[]
+      }
+      nl_fastest_fills: {
+        Args: { p_from?: string; p_limit?: number; p_to?: string }
+        Returns: {
+          company_name: string
+          days_to_fill: number
+          job_title: string
+          placed_date: string
+        }[]
+      }
+      nl_fees_by_month: {
+        Args: { p_months?: number }
+        Returns: {
+          month: string
+          placements_count: number
+          total_fee_pence: number
+        }[]
+      }
+      nl_fees_by_recruiter: {
+        Args: { p_from?: string; p_to?: string }
+        Returns: {
+          placements_count: number
+          recruiter_name: string
+          total_fee_pence: number
+        }[]
+      }
+      nl_jobs_filled_vs_open: {
+        Args: never
+        Returns: {
+          job_count: number
+          status: string
+        }[]
+      }
+      nl_jobs_opened_per_month: {
+        Args: { p_months?: number }
+        Returns: {
+          jobs_opened: number
+          month: string
+        }[]
+      }
+      nl_pipeline_value_by_stage: {
+        Args: never
+        Returns: {
+          candidate_count: number
+          estimated_fee_pence: number
+          stage: string
+        }[]
+      }
+      nl_placements_by_recruiter: {
+        Args: { p_from?: string; p_to?: string }
+        Returns: {
+          placements_count: number
+          recruiter_name: string
+          total_fee_pence: number
+        }[]
+      }
+      nl_placements_by_sector: {
+        Args: { p_from?: string; p_to?: string }
+        Returns: {
+          placements_count: number
+          sector: string
+          total_fee_pence: number
+        }[]
+      }
+      nl_placements_this_quarter: {
+        Args: never
+        Returns: {
+          placements_count: number
+          quarter: string
+          total_fee_pence: number
+        }[]
+      }
+      nl_source_roi: {
+        Args: { p_from?: string; p_to?: string }
+        Returns: {
+          placements_count: number
+          source: string
+          total_fee_pence: number
+        }[]
+      }
+      nl_time_to_fill_by_recruiter: {
+        Args: { p_from?: string; p_to?: string }
+        Returns: {
+          median_days: number
+          placements_count: number
+          recruiter_name: string
+        }[]
+      }
+      nl_top_sources_by_placements: {
+        Args: { p_from?: string; p_limit?: number; p_to?: string }
+        Returns: {
+          pct_of_total: number
+          placements_count: number
+          source: string
+        }[]
       }
       pipeline_value_sparkline: {
         Args: { p_from?: string; p_to?: string }

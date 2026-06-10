@@ -12,7 +12,7 @@
 - [x] **Phase 1: Internal ATS** - Anchor customer can manage candidates, CVs, clients, jobs, and pipeline internally
 - [x] **Phase 2: Search, Match & Intake** - Differentiating AI capability live: semantic search, match scoring, public apply form, Outlook integration (completed 2026-05-19)
 - [x] **Phase 3: LinkedIn, Spec Workflow & Shortlists** - Competitive with Firefish core for perm recruitment; ahead on AI-assisted job creation (completed 2026-05-20)
-- [ ] **Phase 4: Voice, Marketing & Reporting** - Complete recruiter workflow with buyer-value dashboards; ready for anchor customer demo to acquirer
+- [x] **Phase 4: Voice, Marketing & Reporting** - Complete recruiter workflow with buyer-value dashboards; ready for anchor customer demo to acquirer (completed 2026-06-10)
 - [x] **Phase 5: SaaS Shell** - Self-service signup, Stripe billing, per-org branding; ready for paying customer #2 (completed 2026-06-04)
 
 ---
@@ -118,7 +118,14 @@ Plans:
 4. Recruiter can type "how many placements did we make last quarter by sector?" and receive a correct answer from a read-only SQL query validated against an allowlist — no hallucinated data
 5. Buyer-value dashboards show placements per recruiter per quarter, time-to-fill by sector, source ROI, pipeline value, and commission summary — ready for an acquirer's due-diligence view
 
-**Plans:** TBD
+**Plans:** 7/7 plans complete
+- [x] 04-01-PLAN.md — Wave 0 hardening: voice_notes + campaign tables + NL template RPCs + jobs.sector + cap buckets + bucket; push & regen types
+- [x] 04-02-PLAN.md — Voice notes (Slice 1): pipeline + capture (Inngest transcribe→Sonnet extract, MicRecorder, header CTA)
+- [x] 04-03-PLAN.md — Voice notes (Slice 1): per-field approval review + apply/reject (VOICE-02 gate)
+- [x] 04-04-PLAN.md — Email campaigns (Slice 2) backend: segment + personaliser + Inngest fan-out + approve gate
+- [x] 04-05-PLAN.md — Email campaigns (Slice 2) UI: 3-step builder wizard + list + nav + recipient table
+- [x] 04-06-PLAN.md — Reminders (Slice 3) + REPORT-02 sector: follow-up Log-call CTA + jobs.sector input
+- [x] 04-07-PLAN.md — NL reporting (Slice 4): Sonnet template picker + allowlist query action + /reports/nl UI
 **UI hint:** yes
 
 ---
@@ -163,7 +170,7 @@ Plans:
 | 1. Internal ATS | 6/6 | Complete | 2026-05-18 |
 | 2. Search, Match & Intake | 5/5 | Complete | 2026-05-19 |
 | 3. LinkedIn, Spec Workflow & Shortlists | 7/7 | Complete   | 2026-05-20 |
-| 4. Voice, Marketing & Reporting | 0/0 | Not started | - |
+| 4. Voice, Marketing & Reporting | 7/7 | Complete   | 2026-06-10 |
 | 5. SaaS Shell | 6/6 | Complete   | 2026-06-04 |
 
 ---

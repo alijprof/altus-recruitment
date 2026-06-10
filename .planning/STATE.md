@@ -3,11 +3,11 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: launch-readiness
-last_updated: "2026-06-04T21:33:41.741Z"
+last_updated: "2026-06-10T21:44:08.196Z"
 progress:
   total_phases: 5
   completed_phases: 3
-  total_plans: 24
+  total_plans: 31
   completed_plans: 19
   percent: 60
 ---
@@ -23,7 +23,7 @@ progress:
 
 **Core value:** A recruiter can find the right candidate for a job in seconds using natural language — backed by AI parsing of every CV, semantic search across the database, and Sonnet-generated match explanations.
 
-**Current focus:** v1.0 launch — **all 3 launch blockers (B1 custom SMTP, B2 Vercel env, B3 auth templates) cleared & verified LIVE on 2026-06-02**, plus all M-tier hardening (M-3/4/5/6/8) shipped and verified (HTTP probes + live DB SQL + user click-through). Magic-link sign-in delivers branded from `noreply@altusmove.com`, `/jobs/new` creates jobs, and the buyer-value/audit migrations are live. The anchor agency can now onboard. Remaining = the **final UAT click-through** (03-UAT Tests 2 & 12 + the ~22 residual items from the 2026-05-24 run) — NOT new Phase 4 feature work. See [LAUNCH-READINESS.md](LAUNCH-READINESS.md).
+**Current focus:** Phase 04 — voice-marketing-reporting
 
 **Milestone:** Get anchor customer using the app internally, then demo Phase 2 AI capabilities.
 
@@ -31,6 +31,8 @@ progress:
 
 ## Current Position
 
+Phase: 04 (voice-marketing-reporting) — EXECUTING
+Plan: 1 of 7
 **Phases 1–3: COMPLETE.** All 15 success criteria verified end-to-end in code by the 2026-05-30 launch-readiness audit (multi-agent). Only LinkedIn one-click DOM capture is flagged fragile (documented PDF-pivot fallback).
 **Phase 4 (Voice, Marketing & Reporting): NOT STARTED** — but REPORT-02 (buyer-value dashboards) already shipped via quick task 260524-cwd, and REMIND-01 (stale-candidate / dormant-client reminders) is partially shipped via dashboard widgets. REPORT-01 (NL→SQL), VOICE-01/02, MARKET-01/02/03 are genuinely unbuilt.
 **Phase 5 (SaaS Shell): BUILT + REVIEWED — AWAITING UAT** on branch `feat/phase-5-saas-shell` (28 commits ahead of main; NOT merged — kept on branch for review per founder). All 6 plans built (05-00 hardening, 05-01 billing, 05-02 branding, 05-03 onboarding, 05-04 marketing, 05-05 admin). All 4 Phase-5 migrations LIVE on the linked DB (subscriptions, stripe_webhook_events, ai_cap_notifications, plan_overrides, organizations brand/stripe cols, super_admin flag, stripe_customer_id guard trigger); migration history clean, no drift. **Pre-UAT pipeline DONE 2026-06-04:** multi-agent `/gsd-code-review` (37 confirmed findings — 5 HIGH billing/auth, 7 MED, ~19 LOW — ALL fixed; see 05-REVIEW.md) + a build-only `/stripe/return` useSearchParams-Suspense bug caught by the Vercel build and fixed. **Vercel preview build READY** (commit aaf52ae); public surfaces smoked live via `web_fetch_vercel_url` (/welcome + /pricing render, prices £59/£89/£129 from PLANS, Pro highlighted). typecheck + lint green. **Remaining = founder UAT of the AUTHENTICATED flows (billing checkout, /admin console, CSV import, onboarding) + wiring Stripe TEST keys (pk_test/sk_test) + 3 Products/Prices (Starter £59/Pro £89/Scale £129 per seat) into Vercel env for live test-mode billing.** Migration pushes are now agent-autonomous (permission rule in gitignored .claude/settings.local.json — revoke before go-live). See [[supabase-push-agent-blocked]].
