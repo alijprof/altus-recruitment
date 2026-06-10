@@ -5,7 +5,11 @@ import * as Sentry from '@sentry/nextjs'
 import { z } from 'zod'
 
 import { getProfile } from '@/lib/db/profiles'
-import { applyVoiceNoteFields, getVoiceNote } from '@/lib/db/voice-notes'
+import {
+  applyVoiceNoteFields,
+  getVoiceNote,
+  type VoiceNoteProposal,
+} from '@/lib/db/voice-notes'
 import { inngest } from '@/lib/inngest/client'
 import { createClient } from '@/lib/supabase/server'
 
@@ -240,6 +244,25 @@ const ALLOWED_FIELD_SCHEMA = z.enum([
   'seniority_level',
 ])
 
+// WR-08: the Anthropic API does not strictly enforce tool input_schema, so
+// the persisted proposal must be VALIDATED at the apply boundary, not cast.
+// Tolerant on optional fields (bad values fall back to safe defaults);
+// strict on the field-change structure (a malformed array rejects the apply
+// as a handled error instead of throwing a TypeError mid-write).
+const voiceNoteProposalSchema = z.object({
+  proposed_field_changes: z.array(
+    z.object({
+      field: z.string(),
+      current_value: z.string().nullable().catch(null),
+      proposed_value: z.string(),
+    }),
+  ),
+  note_append: z.string().nullable().catch(null),
+  activity_kind: z.enum(['note', 'call', 'meeting']).catch('note'),
+  activity_body: z.string().catch(''),
+  action_items: z.array(z.string()).catch([]),
+})
+
 const applyVoiceNoteSchema = z.object({
   voiceNoteId: z.string().uuid('Invalid voice note id.'),
   candidateId: z.string().uuid('Invalid candidate id.'),
@@ -322,19 +345,26 @@ export async function applyVoiceNoteAction(rawInput: unknown): Promise<ActionRes
   }
 
   // Parse structured_data into the proposal shape. The Inngest pipeline
-  // writes a conformant VoiceNoteProposal here — treat the Json field as
-  // unknown and validate the shape we need.
+  // writes a conformant VoiceNoteProposal here, but the model can deviate —
+  // treat the Json field as unknown and Zod-validate the full shape (WR-08).
   const proposalRaw = voiceNote.structured_data
   if (!proposalRaw || typeof proposalRaw !== 'object') {
     return { ok: false, error: 'Voice note proposal is missing. Cannot apply changes.' }
   }
-  // reason: structured_data is Json (recursive union); we validated presence
-  // and object type above. The Inngest pipeline writes a known-shape object.
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const proposal = proposalRaw as any
-
-  if (!Array.isArray(proposal.proposed_field_changes)) {
+  const proposalParsed = voiceNoteProposalSchema.safeParse(proposalRaw)
+  if (!proposalParsed.success) {
     return { ok: false, error: 'Voice note proposal is malformed. Cannot apply changes.' }
+  }
+
+  // Narrow proposed field changes to the D4-05 allowlist. Off-list fields
+  // are dropped (approvedFields is already enum-gated above, so they can
+  // never be applied — this keeps the proposal type-sound for the DB layer).
+  const proposal: VoiceNoteProposal = {
+    ...proposalParsed.data,
+    proposed_field_changes: proposalParsed.data.proposed_field_changes.filter(
+      (c): c is VoiceNoteProposal['proposed_field_changes'][number] =>
+        ALLOWED_FIELD_SCHEMA.safeParse(c.field).success,
+    ),
   }
 
   const result = await applyVoiceNoteFields(supabase, {
