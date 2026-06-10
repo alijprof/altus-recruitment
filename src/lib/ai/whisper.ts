@@ -158,9 +158,12 @@ export async function transcribe(args: TranscribeArgs): Promise<TranscribeResult
 
   // Fire-and-forget cost log. Never let a logging failure break the
   // transcribe write — the caller still gets the transcript back.
+  // NOTE: supabase.rpc() does NOT throw on RPC failure — it returns
+  // { error }. Check it explicitly or cost-log gaps are invisible
+  // (per-tenant cost logging is non-negotiable, CLAUDE.md).
   try {
     const supabase = createServiceClient()
-    await supabase.rpc('record_ai_usage', {
+    const { error: rpcErr } = await supabase.rpc('record_ai_usage', {
       p_organization_id: args.organizationId,
       p_model: 'whisper-1',
       p_purpose: args.purpose,
@@ -172,6 +175,12 @@ export async function transcribe(args: TranscribeArgs): Promise<TranscribeResult
       p_latency_ms: Date.now() - started,
       ...(args.userId ? { p_user_id: args.userId } : {}),
     })
+    if (rpcErr) {
+      // Wrap to code only — never pass the raw error (may echo payload).
+      Sentry.captureException(new Error(`record_ai_usage:${rpcErr.code ?? 'rpc_error'}`), {
+        tags: { layer: 'ai', helper: 'record_ai_usage', model: 'whisper-1' },
+      })
+    }
   } catch (logErr) {
     // VERIFICATION R4 (Phase 1): never pass the raw error. Anthropic/Voyage
     // SDK errors can echo prompt fragments in error.message; the same
