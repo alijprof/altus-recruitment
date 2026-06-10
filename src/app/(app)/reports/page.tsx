@@ -37,6 +37,12 @@ const REPORTS: ReportCard[] = [
     description:
       'Acquirer due-diligence metrics — placements per recruiter, time-to-fill, source ROI, pipeline value, and commission.',
   },
+  {
+    href: '/reports/nl',
+    title: 'Natural language',
+    description:
+      'Ask about your desk in plain English — answered from a curated library of validated report templates.',
+  },
 ]
 
 export default async function ReportsPage() {
