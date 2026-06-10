@@ -17,6 +17,8 @@ import { specAudioRetentionSweep } from '@/lib/inngest/functions/spec-audio-rete
 import { specDraftCleanupSweep } from '@/lib/inngest/functions/spec-draft-cleanup-sweep'
 import { syncOutlookHistory } from '@/lib/inngest/functions/sync-outlook-history'
 import { transcribeAndStructureSpec } from '@/lib/inngest/functions/transcribe-and-structure-spec'
+import { transcribeAndExtractVoiceNote } from '@/lib/inngest/functions/transcribe-and-extract-voice-note'
+import { voiceNoteAudioRetentionSweep } from '@/lib/inngest/functions/voice-note-audio-retention-sweep'
 
 // Inngest's `serve` adapter exposes GET (for function discovery), POST (for
 // invocation), and PUT. Whitelisted in middleware PUBLIC_PATHS — Inngest
@@ -42,5 +44,8 @@ export const { GET, POST, PUT } = serve({
     specDraftCleanupSweep,
     // Phase 3 — dormant outreach (Plan 03-05).
     draftOutreachEmailFn,
+    // Phase 4 — voice notes (Plan 04-02).
+    transcribeAndExtractVoiceNote,
+    voiceNoteAudioRetentionSweep,
   ],
 })

@@ -17,6 +17,7 @@ import { CandidateDetailHeader } from './candidate-detail-header'
 import { CvReviewPanel } from './cv-review-panel'
 import { CvUpload } from './cv-upload'
 import { LogActivityForm } from './log-activity-form'
+import { VoiceNoteButton } from './voice-notes/voice-note-button'
 
 // Lookup tables for read-only display — labels match the create form schema
 // (kept in sync with `src/app/(app)/candidates/new/schema.ts` enum labels).
@@ -169,6 +170,15 @@ export default async function CandidateDetailPage({
         }))
       : []
 
+  // Check for any voice note in ready_for_review status — drives the amber
+  // badge dot on the VoiceNoteButton. Best-effort; badge is hidden on error.
+  const { count: pendingVoiceNotes } = await supabase
+    .from('voice_notes')
+    .select('id', { count: 'exact', head: true })
+    .eq('candidate_id', id)
+    .eq('status', 'ready_for_review')
+  const hasPendingReview = (pendingVoiceNotes ?? 0) > 0
+
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -179,6 +189,7 @@ export default async function CandidateDetailPage({
           <Button variant="outline" size="sm" asChild>
             <Link href={`/candidates/${id}/floats`}>Floats</Link>
           </Button>
+          <VoiceNoteButton candidateId={id} hasPendingReview={hasPendingReview} />
           <Button variant="outline" size="sm" asChild>
             <Link href={`/candidates/${id}/edit`}>Edit</Link>
           </Button>
