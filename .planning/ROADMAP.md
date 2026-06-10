@@ -118,7 +118,14 @@ Plans:
 4. Recruiter can type "how many placements did we make last quarter by sector?" and receive a correct answer from a read-only SQL query validated against an allowlist — no hallucinated data
 5. Buyer-value dashboards show placements per recruiter per quarter, time-to-fill by sector, source ROI, pipeline value, and commission summary — ready for an acquirer's due-diligence view
 
-**Plans:** TBD
+**Plans:** 7 plans in 4 waves
+- [ ] 04-01-PLAN.md — Wave 0 hardening: voice_notes + campaign tables + NL template RPCs + jobs.sector + cap buckets + bucket; push & regen types
+- [ ] 04-02-PLAN.md — Voice notes (Slice 1): pipeline + capture (Inngest transcribe→Sonnet extract, MicRecorder, header CTA)
+- [ ] 04-03-PLAN.md — Voice notes (Slice 1): per-field approval review + apply/reject (VOICE-02 gate)
+- [ ] 04-04-PLAN.md — Email campaigns (Slice 2) backend: segment + personaliser + Inngest fan-out + approve gate
+- [ ] 04-05-PLAN.md — Email campaigns (Slice 2) UI: 3-step builder wizard + list + nav + recipient table
+- [ ] 04-06-PLAN.md — Reminders (Slice 3) + REPORT-02 sector: follow-up Log-call CTA + jobs.sector input
+- [ ] 04-07-PLAN.md — NL reporting (Slice 4): Sonnet template picker + allowlist query action + /reports/nl UI
 **UI hint:** yes
 
 ---
