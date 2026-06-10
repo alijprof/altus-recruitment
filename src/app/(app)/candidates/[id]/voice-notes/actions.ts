@@ -111,6 +111,20 @@ export async function submitVoiceNoteAction(
   if (!profileResult.ok) return { ok: false, error: 'Profile not found.' }
   const organizationId = profileResult.data.organization_id
 
+  // WR-06: verify the candidate belongs to the caller's org BEFORE the
+  // insert. The candidates(id) FK is checked as table owner (RI bypasses
+  // RLS), so without this an org-A user could create a voice note
+  // referencing org B's candidate UUID and burn Whisper/Sonnet spend on a
+  // candidate the org can never act on. The RLS-scoped select fails closed.
+  const candidateCheck = await supabase
+    .from('candidates')
+    .select('id')
+    .eq('id', candidateId)
+    .maybeSingle()
+  if (candidateCheck.error || !candidateCheck.data) {
+    return { ok: false, error: 'Candidate not found.' }
+  }
+
   // Insert the voice_notes row first to obtain a deterministic id for the
   // storage path. RLS scopes the insert to the current tenant.
   const { data: insertData, error: insertErr } = await supabase
