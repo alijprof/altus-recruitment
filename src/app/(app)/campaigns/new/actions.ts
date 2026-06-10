@@ -80,7 +80,11 @@ export async function previewCampaignAction(input: {
   const profileResult = await getProfile(supabase, user.id)
   if (!profileResult.ok) return { ok: false, error: 'Profile not found.' }
 
-  const segmentResult = await getCampaignSegment(supabase, marketStatuses)
+  const segmentResult = await getCampaignSegment(
+    supabase,
+    profileResult.data.organization_id,
+    marketStatuses,
+  )
   if (!segmentResult.ok) {
     return { ok: false, error: 'Could not load segment. Please try again.' }
   }
@@ -149,7 +153,7 @@ export async function approveCampaignAction(input: {
 
   // Re-query the segment server-side — do NOT trust any client-supplied list.
   // This ensures the final recipients are always the current consented set (MARKET-03).
-  const segmentResult = await getCampaignSegment(supabase, marketStatuses)
+  const segmentResult = await getCampaignSegment(supabase, organizationId, marketStatuses)
   if (!segmentResult.ok) {
     return { ok: false, error: 'Could not load segment. Please try again.' }
   }

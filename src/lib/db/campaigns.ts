@@ -40,6 +40,7 @@ export type CampaignSegmentCandidate = {
 
 export async function getCampaignSegment(
   supabase: SupabaseClient<Database>,
+  organizationId: string,
   marketStatuses: Database['public']['Enums']['market_status'][],
 ): Promise<DbResult<CampaignSegmentCandidate[]>> {
   if (marketStatuses.length === 0) {
@@ -49,6 +50,10 @@ export async function getCampaignSegment(
   const { data, error } = await supabase
     .from('candidates')
     .select('id, organization_id, full_name, email, market_status, current_role_title, current_company')
+    // Tenant scoping (WR-05): defence-in-depth index hint under RLS for
+    // session callers, HARD requirement under service-role callers where
+    // current_organization_id() is NULL and RLS does not apply.
+    .eq('organization_id', organizationId)
     // PECR / UK GDPR gate — MUST NOT be removed (Research Pitfall 6).
     // consent_basis IS NOT NULL means the candidate gave consent or legitimate_interest basis.
     .not('consent_basis', 'is', null)
