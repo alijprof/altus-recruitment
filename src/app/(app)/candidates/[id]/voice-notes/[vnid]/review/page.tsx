@@ -23,6 +23,12 @@ export default async function VoiceNoteReviewPage({
   }
   const voiceNote = result.data
 
+  // WR-07: cross-resource binding — the voice note must belong to the
+  // candidate in the URL. Mirrors the assertion in applyVoiceNoteAction /
+  // rejectVoiceNoteAction so a mismatched URL never renders another
+  // candidate's proposal in this candidate's context.
+  if (voiceNote.candidate_id !== candidateId) notFound()
+
   return (
     <div className="mx-auto max-w-2xl space-y-6">
       <div className="flex items-center gap-4">
