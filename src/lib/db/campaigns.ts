@@ -224,6 +224,31 @@ export async function getCampaignWithRecipients(
 }
 
 // ---------------------------------------------------------------------------
+// listCampaigns — all campaigns for the current org, newest first (04-05)
+// ---------------------------------------------------------------------------
+
+export type CampaignListRow = Pick<
+  CampaignRow,
+  'id' | 'name' | 'status' | 'recipient_count' | 'sent_count' | 'created_at'
+>
+
+export async function listCampaigns(
+  supabase: SupabaseClient<Database>,
+): Promise<DbResult<CampaignListRow[]>> {
+  const { data, error } = await supabase
+    .from('email_campaigns')
+    .select('id, name, status, recipient_count, sent_count, created_at')
+    .order('created_at', { ascending: false })
+    .limit(100)
+
+  if (error) {
+    Sentry.captureException(error, { tags: { layer: 'db', helper: 'listCampaigns' } })
+    return { ok: false, code: 'internal' }
+  }
+  return { ok: true, data: data ?? [] }
+}
+
+// ---------------------------------------------------------------------------
 // getCampaignProgress — sent/failed/total counts for the UI poller (04-05)
 // ---------------------------------------------------------------------------
 
