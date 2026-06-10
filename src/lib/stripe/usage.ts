@@ -26,6 +26,14 @@ export const PURPOSE_CAP_BUCKETS: Record<string, keyof AiUsageAggregate> = {
   outreach_draft: 'writingCalls',
   dormant_outreach_draft: 'writingCalls',
   jd_extract: 'writingCalls',
+  // Phase 4 additions (D4-09 / 04-01-PLAN.md):
+  // voice_note_transcribe shares the specMinutes meter with spec_transcribe —
+  // both are Whisper audio minutes billed per minute. Resolved in 04-RESEARCH.md Q2.
+  voice_note_transcribe: 'specMinutes',
+  voice_note_extract: 'writingCalls',
+  // campaign_intro_outro: Sonnet call per recipient — can be large for big campaigns
+  campaign_intro_outro: 'writingCalls',
+  nl_template_match: 'writingCalls',
 }
 
 // ---------------------------------------------------------------------------

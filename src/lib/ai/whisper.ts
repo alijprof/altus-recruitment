@@ -62,7 +62,9 @@ export const openaiClient = new OpenAI({
   maxRetries: 3,
 })
 
-export type TranscribePurpose = 'spec_transcribe'
+// Phase 4 (04-01-PLAN.md): voice_note_transcribe added — shares the specMinutes
+// cap bucket with spec_transcribe (same Whisper meter, different use case).
+export type TranscribePurpose = 'spec_transcribe' | 'voice_note_transcribe'
 
 export type TranscribeArgs = {
   organizationId: string
