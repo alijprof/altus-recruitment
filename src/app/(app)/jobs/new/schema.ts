@@ -28,6 +28,10 @@ export const newJobFormSchema = z
     job_type: z.enum(['perm', 'contract', 'temp']),
     hiring_context: z.enum(['new_role', 'backfill']),
     location: optionalString,
+    // Plan 04-06 / Task 2 — REPORT-02 sector gap. Free-text sector label
+    // (e.g. "Renewable Energy", "Software", "Oil & Gas"). Empty string → null
+    // so the jobs.sector scalar column is left unset rather than written as ''.
+    sector: z.string().trim().max(200, 'Too long').optional(),
     salary_min: numericString,
     salary_max: numericString,
     description: z.string().trim().max(10_000, 'Too long').optional(),
