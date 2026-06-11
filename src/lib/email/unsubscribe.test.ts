@@ -1,14 +1,22 @@
-// Unit tests for src/lib/email/unsubscribe.ts
-// Quick task 260612-0f4 — PECR one-click unsubscribe helpers.
-//
-// suppressByToken is integration-shaped (real DB). We test its pure branches
-// by injecting fake Supabase stubs: token lookup, idempotency, error path.
+/**
+ * @vitest-environment node
+ *
+ * Unit tests for src/lib/email/unsubscribe.ts
+ * Quick task 260612-0f4 — PECR one-click unsubscribe helpers.
+ *
+ * suppressByToken is integration-shaped (real DB). We test its pure branches
+ * by injecting fake Supabase stubs: token lookup, idempotency, error path.
+ */
 
 import { describe, expect, it, vi } from 'vitest'
 
-// We must mock 'server-only' so the module can be imported in the Vitest
-// environment (which is not a real Next.js server context).
+// vi.mock is hoisted by Vitest above the import statements — 'server-only' is
+// resolved at transform time and must be mocked before the module is loaded.
 vi.mock('server-only', () => ({}))
+vi.mock('@sentry/nextjs', () => ({
+  captureException: vi.fn(),
+  addBreadcrumb: vi.fn(),
+}))
 
 import {
   buildUnsubscribeUrl,
@@ -96,8 +104,9 @@ describe('buildUnsubscribeUrl', () => {
 // ---------------------------------------------------------------------------
 describe('maskEmail', () => {
   it('masks normal address: first + last local char + domain', () => {
+    // 'alasdairj8' = 10 chars: first 'a', last '8', 8 middle chars = 8 stars
     const masked = maskEmail('alasdairj8@gmail.com')
-    expect(masked).toBe('a*********8@gmail.com')
+    expect(masked).toBe('a********8@gmail.com')
   })
 
   it('works for 2-char local part', () => {
@@ -252,28 +261,22 @@ describe('suppressByToken', () => {
       recipientError: { message: 'connection timeout' },
     })
 
-    let result: Awaited<ReturnType<typeof suppressByToken>> | undefined
-    await expect(async () => {
-      result = await suppressByToken(
-        fake as unknown as Parameters<typeof suppressByToken>[0],
-        'bad-token',
-      )
-    }).not.toThrow()
+    const result = await suppressByToken(
+      fake as unknown as Parameters<typeof suppressByToken>[0],
+      'bad-token',
+    )
 
-    expect(result?.ok).toBe(false)
+    expect(result.ok).toBe(false)
   })
 
   it('returns ok:false when token not found (recipient row is null) without throwing', async () => {
     const fake = buildFakeClient({ recipientRow: null })
 
-    let result: Awaited<ReturnType<typeof suppressByToken>> | undefined
-    await expect(async () => {
-      result = await suppressByToken(
-        fake as unknown as Parameters<typeof suppressByToken>[0],
-        'unknown-token',
-      )
-    }).not.toThrow()
+    const result = await suppressByToken(
+      fake as unknown as Parameters<typeof suppressByToken>[0],
+      'unknown-token',
+    )
 
-    expect(result?.ok).toBe(false)
+    expect(result.ok).toBe(false)
   })
 })
