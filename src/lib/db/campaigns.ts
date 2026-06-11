@@ -252,9 +252,15 @@ export async function getCampaignWithRecipients(
   }
   if (!campaign) return { ok: false, code: 'not_found' }
 
+  // Explicit column list — unsubscribe_token is deliberately NEVER selected
+  // here (WR-02): this helper feeds session-client RSC pages, and per-recipient
+  // unsubscribe tokens must only transit the service-role send loop. The column
+  // is nullable, so rows without the key remain assignable to the row type.
   const { data: recipients, error: recipientsErr } = await supabase
     .from('email_campaign_recipients')
-    .select('*')
+    .select(
+      'id, organization_id, campaign_id, candidate_id, email, personalised_intro, personalised_outro, resend_email_id, status, error_message, sent_at, created_at',
+    )
     .eq('campaign_id', campaignId)
     .order('created_at', { ascending: true })
 
@@ -265,7 +271,12 @@ export async function getCampaignWithRecipients(
     return { ok: false, code: 'internal' }
   }
 
-  return { ok: true, data: { ...campaign, recipients: recipients ?? [] } }
+  // reason: rows deliberately omit unsubscribe_token (never selected for
+  // session-client callers — WR-02); the column is nullable so consumers
+  // reading it get undefined, which no UI consumer does.
+  const safeRecipients = (recipients ?? []) as unknown as CampaignRecipientRow[]
+
+  return { ok: true, data: { ...campaign, recipients: safeRecipients } }
 }
 
 // ---------------------------------------------------------------------------

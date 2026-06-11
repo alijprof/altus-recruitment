@@ -186,9 +186,9 @@ export async function POST(
   const { token } = await params
 
   if (!token) {
-    // No body parsing required — POST body is irrelevant per the spec (the token
-    // is in the URL, matching the List-Unsubscribe header URL byte-for-byte).
-    return confirmedPage()
+    // Missing token must NOT claim success — same constant invalid copy as GET
+    // (CR-01: a tokenless POST previously rendered the "unsubscribed" page).
+    return invalidTokenPage()
   }
 
   const supabase = createServiceClient()

@@ -167,7 +167,9 @@ export function assembleCampaignHtml(input: AssembleCampaignHtmlInput): string {
   // bodyTemplate is written by the recruiter (trusted) — escape it the same
   // way for defence in depth, but wrap in its own paragraph to preserve whitespace.
   const safeBody = escapeHtml(bodyTemplate)
-  const safeUnsubUrl = encodeURI(unsubscribeUrl)
+  // escapeHtml after encodeURI: encodeURI leaves '&' untouched, which would
+  // break the href attribute if a query string ever appears in the URL (WR-03).
+  const safeUnsubUrl = escapeHtml(encodeURI(unsubscribeUrl))
 
   return `<!DOCTYPE html>
 <html lang="en">

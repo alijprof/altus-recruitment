@@ -273,18 +273,13 @@ export const sendEmailCampaign = inngest.createFunction(
           // If the persist fails we MUST NOT send (would ship a broken URL).
           const generatedToken = generateUnsubscribeToken()
 
-          // reason: unsubscribe_token not yet in generated Database type.
-          const sbTokenPersist = supabase as unknown as {
-            from: (t: 'email_campaign_recipients') => {
-              update: (p: Record<string, unknown>) => {
-                eq: (c: string, v: string) => Promise<{ error: { message: string } | null }>
-              }
-            }
-          }
-          const { error: persistErr } = await sbTokenPersist
+          // Types now include unsubscribe_token (regenerated post-push), so the
+          // escape hatch is gone and the standard two-eq tenant guard applies.
+          const { error: persistErr } = await supabase
             .from('email_campaign_recipients')
             .update({ unsubscribe_token: generatedToken })
             .eq('id', recipient.id)
+            .eq('organization_id', organization_id)
 
           if (persistErr) {
             // Persist failed — do NOT send; mark and continue (T-0f4-TOKENGAP).
