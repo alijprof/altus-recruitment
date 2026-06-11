@@ -108,6 +108,23 @@ const MARKET_STATUS_VALUES = new Set([
   'cold',
 ])
 
+// Sonnet proposes human-shaped labels ("Actively Looking") despite prompt
+// guidance; the DB enum wants snake_case. Normalise before validating so a
+// label-shaped proposal applies instead of erroring (UAT 2026-06-11 failure).
+const MARKET_STATUS_SYNONYMS: Record<string, string> = {
+  active: 'actively_looking',
+  actively: 'actively_looking',
+  passive: 'passively_looking',
+  passively: 'passively_looking',
+}
+
+export function normalizeMarketStatus(raw: string): string | null {
+  const snake = raw.trim().toLowerCase().replace(/[\s-]+/g, '_')
+  if (MARKET_STATUS_VALUES.has(snake)) return snake
+  const mapped = MARKET_STATUS_SYNONYMS[snake]
+  return mapped ?? null
+}
+
 /**
  * Apply approved voice note field changes to a candidate.
  *
@@ -154,18 +171,23 @@ export async function applyVoiceNoteFields(
   for (const field of approvedFields) {
     const change = proposal.proposed_field_changes.find((c) => c.field === field)
     if (!change) continue
-    const val = change.proposed_value?.trim()
+    let val = change.proposed_value?.trim()
     if (!val) continue
 
-    // Extra enum validation for market_status — guard against a Sonnet
-    // hallucination landing a non-DB value in the enum column (DB would
-    // reject it, but we want an explicit server-side error, not a DB error).
-    if (field === 'market_status' && !MARKET_STATUS_VALUES.has(val)) {
-      Sentry.captureException(
-        new Error(`applyVoiceNoteFields: invalid market_status value '${val}'`),
-        { tags: { layer: 'db', helper: 'applyVoiceNoteFields', voice_note_id: voiceNoteId } },
-      )
-      return { ok: false, code: 'internal' }
+    // Extra enum validation for market_status — normalise label-shaped
+    // proposals ("Actively Looking" → actively_looking), then guard against
+    // a Sonnet hallucination landing a non-DB value in the enum column (DB
+    // would reject it, but we want an explicit server-side error).
+    if (field === 'market_status') {
+      const normalized = normalizeMarketStatus(val)
+      if (!normalized) {
+        Sentry.captureException(
+          new Error(`applyVoiceNoteFields: invalid market_status value '${val}'`),
+          { tags: { layer: 'db', helper: 'applyVoiceNoteFields', voice_note_id: voiceNoteId } },
+        )
+        return { ok: false, code: 'internal' }
+      }
+      val = normalized
     }
 
     scalarUpdate[field] = val

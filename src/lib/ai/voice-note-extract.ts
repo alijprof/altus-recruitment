@@ -3,7 +3,7 @@ import 'server-only'
 import type Anthropic from '@anthropic-ai/sdk'
 
 import { runWithLogging } from '@/lib/ai/claude'
-import type { VoiceNoteProposal } from '@/lib/db/voice-notes'
+import { normalizeMarketStatus, type VoiceNoteProposal } from '@/lib/db/voice-notes'
 
 // ---------------------------------------------------------------------------
 // Sonnet wrapper for voice-note extraction. Plan 04-02 Task 1.
@@ -41,7 +41,12 @@ const voiceNoteExtractTool: Anthropic.Tool = {
               type: 'string',
               enum: ['current_role_title', 'current_company', 'market_status', 'seniority_level'],
             },
-            proposed_value: { type: 'string' },
+            proposed_value: {
+              type: 'string',
+              description:
+                'The new value. For market_status this MUST be exactly one of: ' +
+                'actively_looking, passively_looking, hot, placed, cold.',
+            },
           },
           required: ['field', 'proposed_value'],
         },
@@ -150,8 +155,16 @@ export async function extractVoiceNoteUpdates(args: {
       .map((c) => ({
         field: c.field,
         current_value: null,
-        proposed_value: c.proposed_value,
-      })),
+        // market_status must land as a DB enum value; Sonnet sometimes emits
+        // display labels ("Actively Looking") despite the schema description.
+        proposed_value:
+          c.field === 'market_status'
+            ? (normalizeMarketStatus(c.proposed_value) ?? c.proposed_value)
+            : c.proposed_value,
+      }))
+      // A market_status proposal that still isn't a valid enum value after
+      // normalisation would only error at apply time — drop it here instead.
+      .filter((c) => c.field !== 'market_status' || normalizeMarketStatus(c.proposed_value) !== null),
     note_append: raw.note_append ?? null,
     activity_kind: raw.activity_kind ?? 'note',
     activity_body: raw.activity_body ?? '',
