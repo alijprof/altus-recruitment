@@ -61,6 +61,15 @@ const PUBLIC_PATHS = [
   '/features',
   '/docs',
   '/status',
+  // PECR one-click unsubscribe (Quick 260612-0f4).
+  // Recipients who click the unsubscribe link in a campaign email carry NO
+  // Supabase session cookie — they are fully unauthenticated by design.
+  // The route is protected by a per-recipient unguessable token (randomBytes
+  // >=32, base64url, ~256 bits entropy) so there is no meaningful auth gap.
+  // GET returns a confirm page (safe idempotent read); POST performs the
+  // durable suppression write. Same rationale as /apply and /accept-invite.
+  // The startsWith branch in `isPublic` below matches `/unsubscribe/{token}`.
+  '/unsubscribe',
   // IMPORTANT: `/admin` is NOT here. The admin area is authenticated +
   // role-gated in the layout (05-05 Task 5.1). Adding it to PUBLIC_PATHS
   // would create a cross-tenant read gate (Pitfall 8 from 05-RESEARCH).

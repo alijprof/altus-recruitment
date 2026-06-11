@@ -3,6 +3,7 @@ import 'server-only'
 import * as Sentry from '@sentry/nextjs'
 import type { SupabaseClient } from '@supabase/supabase-js'
 
+import { generateUnsubscribeToken } from '@/lib/email/unsubscribe'
 import type { Database, Tables, TablesInsert, TablesUpdate } from '@/types/database'
 
 import type { DbResult } from './types'
@@ -12,8 +13,9 @@ import type { DbResult } from './types'
 //
 // segment query MUST filter consent_basis IS NOT NULL (PECR / UK GDPR) — only
 // candidates who actively gave consent (or legitimate_interest basis) are
-// eligible for marketing campaigns. There is no withdrawal tracking column in
-// the current schema, so IS NOT NULL is the authoritative gate.
+// eligible for marketing campaigns.
+// Quick task 260612-0f4: also filters email_marketing_unsubscribed_at IS NULL
+// (belt) — the send loop re-checks per recipient at send time (braces).
 //
 // Service-role callers (Inngest) MUST pass organizationId explicitly because
 // current_organization_id() returns NULL under service-role.
@@ -59,6 +61,13 @@ export async function getCampaignSegment(
     .not('consent_basis', 'is', null)
     // Only candidates with a valid email can receive campaign emails
     .not('email', 'is', null)
+    // PECR withdrawal gate (260612-0f4 belt): exclude candidates who have
+    // unsubscribed from marketing emails. The send loop re-checks per-recipient
+    // at send time (braces) for long campaigns.
+    // reason: email_marketing_unsubscribed_at not yet in generated Database type
+    // (added by migration 20260612000000, regenerated in Task 4). The column
+    // exists in the DB — PostgREST accepts it; the cast makes TS happy pre-regen.
+    .is('email_marketing_unsubscribed_at' as unknown as keyof Database['public']['Tables']['candidates']['Row'], null)
     .in('market_status', marketStatuses)
     .order('full_name', { ascending: true })
 
@@ -138,13 +147,21 @@ export async function insertCampaignRecipients(
     return { ok: true, data: { count: 0 } }
   }
 
-  const rows: TablesInsert<'email_campaign_recipients'>[] = recipients.map((r) => ({
+  // reason: unsubscribe_token is added by migration 20260612000000 but not yet
+  // in the generated Database type (regenerated in Task 4). Use the
+  // `as unknown as` escape hatch (mirrors apply-form-rate-limit.ts pattern)
+  // so typecheck passes before the regen while the column is present in the DB.
+  const rows = recipients.map((r) => ({
     campaign_id: r.campaignId,
     organization_id: r.organizationId,
     candidate_id: r.candidateId,
     email: r.email,
     status: 'pending',
-  }))
+    // Per-recipient unguessable token for the PECR one-click unsubscribe URL.
+    // Generated here at insert time so every recipient has a token before the
+    // send loop runs (T-0f4-TOKENGAP: belt; send loop handles legacy rows as braces).
+    unsubscribe_token: generateUnsubscribeToken(),
+  })) as unknown as TablesInsert<'email_campaign_recipients'>[]
 
   const { error } = await supabase.from('email_campaign_recipients').insert(rows)
 
@@ -163,14 +180,37 @@ export async function updateRecipientStatus(
   supabase: SupabaseClient<Database>,
   recipientId: string,
   status: 'sent' | 'failed' | 'failed_cap_exceeded',
-  options?: { resendEmailId?: string; errorMessage?: string },
+  options?: {
+    resendEmailId?: string
+    errorMessage?: string
+    // Quick task 260612-0f4 (IN-02): persist the Sonnet-generated per-recipient
+    // personalisation. These columns exist in the DB (phase4_hardening migration)
+    // but have never been written — closing the IN-02 gap.
+    personalisedIntro?: string
+    personalisedOutro?: string
+  },
 ): Promise<void> {
-  const patch: TablesUpdate<'email_campaign_recipients'> = {
+  // reason: personalised_intro and personalised_outro exist in the DB
+  // (20260610000000_phase4_hardening.sql) but are not yet in the generated
+  // Database type (TablesUpdate<'email_campaign_recipients'> lags the regen —
+  // Task 4 blocking checkpoint regenerates types). Use the `as unknown as`
+  // escape hatch so typecheck passes before the regen while the columns exist.
+  const basePatch: TablesUpdate<'email_campaign_recipients'> = {
     status,
     ...(status === 'sent' ? { sent_at: new Date().toISOString() } : {}),
     ...(options?.resendEmailId !== undefined ? { resend_email_id: options.resendEmailId } : {}),
     ...(options?.errorMessage !== undefined ? { error_message: options.errorMessage } : {}),
   }
+
+  const patch = {
+    ...basePatch,
+    ...(options?.personalisedIntro !== undefined
+      ? { personalised_intro: options.personalisedIntro }
+      : {}),
+    ...(options?.personalisedOutro !== undefined
+      ? { personalised_outro: options.personalisedOutro }
+      : {}),
+  } as unknown as TablesUpdate<'email_campaign_recipients'>
 
   const { error } = await supabase
     .from('email_campaign_recipients')
