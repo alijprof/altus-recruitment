@@ -1,3 +1,4 @@
+// @ts-nocheck
 export type Json =
   | string
   | number
@@ -11,6 +12,31 @@ export type Database = {
   // instead of createClient<Database, { PostgrestVersion: 'XX' }>(URL, KEY)
   __InternalSupabase: {
     PostgrestVersion: "14.5"
+  }
+  graphql_public: {
+    Tables: {
+      [_ in never]: never
+    }
+    Views: {
+      [_ in never]: never
+    }
+    Functions: {
+      graphql: {
+        Args: {
+          extensions?: Json
+          operationName?: string
+          query?: string
+          variables?: Json
+        }
+        Returns: Json
+      }
+    }
+    Enums: {
+      [_ in never]: never
+    }
+    CompositeTypes: {
+      [_ in never]: never
+    }
   }
   public: {
     Tables: {
@@ -481,6 +507,7 @@ export type Database = {
           current_role_title: string | null
           education: Json
           email: string | null
+          email_marketing_unsubscribed_at: string | null
           embedded_at: string | null
           embedding_version: number | null
           full_name: string
@@ -517,6 +544,7 @@ export type Database = {
           current_role_title?: string | null
           education?: Json
           email?: string | null
+          email_marketing_unsubscribed_at?: string | null
           embedded_at?: string | null
           embedding_version?: number | null
           full_name: string
@@ -553,6 +581,7 @@ export type Database = {
           current_role_title?: string | null
           education?: Json
           email?: string | null
+          email_marketing_unsubscribed_at?: string | null
           embedded_at?: string | null
           embedding_version?: number | null
           full_name?: string
@@ -742,6 +771,7 @@ export type Database = {
           resend_email_id: string | null
           sent_at: string | null
           status: string
+          unsubscribe_token: string | null
         }
         Insert: {
           campaign_id: string
@@ -756,6 +786,7 @@ export type Database = {
           resend_email_id?: string | null
           sent_at?: string | null
           status?: string
+          unsubscribe_token?: string | null
         }
         Update: {
           campaign_id?: string
@@ -770,6 +801,7 @@ export type Database = {
           resend_email_id?: string | null
           sent_at?: string | null
           status?: string
+          unsubscribe_token?: string | null
         }
         Relationships: [
           {
@@ -2225,6 +2257,9 @@ export type CompositeTypes<
     : never
 
 export const Constants = {
+  graphql_public: {
+    Enums: {},
+  },
   public: {
     Enums: {
       activity_kind: [
