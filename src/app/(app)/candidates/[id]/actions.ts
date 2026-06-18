@@ -472,9 +472,31 @@ export async function deleteCandidateAction(rawInput: unknown): Promise<DeleteCa
   } = await supabase.auth.getUser()
   if (!user) return { ok: false, error: 'Not signed in.' }
 
-  // Resolve org up-front for the post-delete Storage cleanup.
-  const profileResult = await getProfile(supabase, user.id)
-  const organizationId = profileResult.ok ? profileResult.data.organization_id : null
+  // Capture the EXACT Storage object paths BEFORE the cascade deletes the rows.
+  // delete_candidate cascades candidate_cvs + voice_notes, so their stored paths
+  // must be read first or they're lost. Reading the actual stored path (not a
+  // guessed prefix) covers BOTH the recruiter CV layout (<org>/<candidate>/...)
+  // AND the apply-form layout (<org>/applicants/<candidate>-<uuid>.<ext>) — the
+  // old prefix-list cleanup matched only the former, permanently orphaning
+  // apply-form CV PDFs and ALL voice-note audio (a GDPR right-to-erasure gap;
+  // pre-launch audit blocker 4). These selects run under the caller's
+  // RLS-scoped client, so only this org's rows are ever visible.
+  const cvPathRows = await supabase
+    .from('candidate_cvs')
+    .select('storage_path')
+    .eq('candidate_id', candidateId)
+  const voiceAudioRows = await supabase
+    .from('voice_notes')
+    .select('audio_storage_path')
+    .eq('candidate_id', candidateId)
+    .not('audio_storage_path', 'is', null)
+
+  const cvPaths = (cvPathRows.data ?? [])
+    .map((r) => r.storage_path)
+    .filter((p): p is string => typeof p === 'string' && p.length > 0)
+  const voiceAudioPaths = (voiceAudioRows.data ?? [])
+    .map((r) => r.audio_storage_path)
+    .filter((p): p is string => typeof p === 'string' && p.length > 0)
 
   // reason: delete_candidate isn't in the generated Database types until
   // `pnpm db:types` re-runs after the migration push — use the untyped-client
@@ -511,26 +533,31 @@ export async function deleteCandidateAction(rawInput: unknown): Promise<DeleteCa
   }
 
   // Best-effort Storage cleanup — the DB rows are already gone, so a failure
-  // here only orphans bytes (a cost, not a correctness issue). Never throw.
-  if (organizationId) {
+  // here only orphans bytes (a cost + GDPR-erasure gap, not a correctness issue
+  // for the delete itself). Each bucket is cleaned independently so one failing
+  // doesn't skip the other. Never throw.
+  async function removeFromBucket(bucket: 'cvs' | 'voice-note-audio', paths: string[]) {
+    if (paths.length === 0) return
     try {
-      const prefix = `${organizationId}/${candidateId}`
-      const { data: files } = await supabase.storage.from('cvs').list(prefix)
-      if (files && files.length > 0) {
-        await supabase.storage.from('cvs').remove(files.map((f) => `${prefix}/${f.name}`))
-      }
+      await supabase.storage.from(bucket).remove(paths)
     } catch (err) {
       const name = err instanceof Error ? err.name : 'UnknownError'
-      Sentry.captureException(new Error(`${name}: cvs cleanup failed after candidate delete`), {
-        tags: {
-          layer: 'server-action',
-          action: 'deleteCandidateAction',
-          subop: 'storage-cleanup',
-          candidate_id: candidateId,
+      Sentry.captureException(
+        new Error(`${name}: ${bucket} cleanup failed after candidate delete`),
+        {
+          tags: {
+            layer: 'server-action',
+            action: 'deleteCandidateAction',
+            subop: `storage-cleanup-${bucket}`,
+            candidate_id: candidateId,
+          },
         },
-      })
+      )
     }
   }
+
+  await removeFromBucket('cvs', cvPaths)
+  await removeFromBucket('voice-note-audio', voiceAudioPaths)
 
   revalidatePath('/candidates')
   redirect('/candidates')
