@@ -3,7 +3,12 @@
 import * as Sentry from '@sentry/nextjs'
 import { z } from 'zod'
 
-import { getCampaignSegment, createCampaign, insertCampaignRecipients } from '@/lib/db/campaigns'
+import {
+  getCampaignSegment,
+  createCampaign,
+  insertCampaignRecipients,
+  findRecentDuplicateCampaign,
+} from '@/lib/db/campaigns'
 import { getProfile } from '@/lib/db/profiles'
 import { inngest } from '@/lib/inngest/client'
 import { ENTITLEMENT_BLOCKED_MESSAGE, requireEntitledOrg } from '@/lib/stripe/require-entitlement'
@@ -157,6 +162,26 @@ export async function approveCampaignAction(input: {
   const profileResult = await getProfile(supabase, user.id)
   if (!profileResult.ok) return { ok: false, error: 'Profile not found.' }
   const organizationId = profileResult.data.organization_id
+
+  // Idempotency guard (audit rank 7) — if an identical campaign (same name +
+  // segment) was approved in the last few minutes, return it instead of
+  // creating + sending a SECOND copy. Without this, a double-submit / retry /
+  // second tab emails the whole consented UK segment twice — a PECR breach plus
+  // doubled Resend + Sonnet spend that cannot be un-sent. Short-circuits BEFORE
+  // the segment re-query, create, and send.
+  const duplicateResult = await findRecentDuplicateCampaign(
+    supabase,
+    organizationId,
+    name,
+    marketStatuses,
+  )
+  if (duplicateResult.ok && duplicateResult.data) {
+    return {
+      ok: true,
+      campaignId: duplicateResult.data.id,
+      recipientCount: duplicateResult.data.recipientCount ?? 0,
+    }
+  }
 
   // Re-query the segment server-side — do NOT trust any client-supplied list.
   // This ensures the final recipients are always the current consented set (MARKET-03).

@@ -129,6 +129,59 @@ export async function createCampaign(
 }
 
 // ---------------------------------------------------------------------------
+// findRecentDuplicateCampaign — idempotency guard for approveCampaignAction.
+//
+// A double-submit / Server-Action retry / second tab can call approve twice,
+// each creating a fresh campaign row with fresh recipient UUIDs — so the same
+// consented contact receives the email TWICE (a PECR problem + doubled Resend
+// and Sonnet spend that cannot be un-sent). The client isSending gate only
+// blocks a same-tab double-click, not a retry/second tab. This server-side
+// guard finds an existing just-created campaign with the same (org, name,
+// segment) so the caller can short-circuit instead of sending again. The
+// window is deliberately short so a deliberate re-send of a same-named
+// campaign later is still allowed (audit rank 7).
+// ---------------------------------------------------------------------------
+const DUPLICATE_WINDOW_MS = 5 * 60 * 1000 // 5 minutes
+
+export async function findRecentDuplicateCampaign(
+  supabase: SupabaseClient<Database>,
+  orgId: string,
+  name: string,
+  marketStatuses: string[],
+): Promise<DbResult<{ id: string; recipientCount: number | null } | null>> {
+  const cutoff = new Date(Date.now() - DUPLICATE_WINDOW_MS).toISOString()
+  const { data, error } = await supabase
+    .from('email_campaigns')
+    .select('id, segment_market_statuses, recipient_count')
+    .eq('organization_id', orgId)
+    .eq('name', name)
+    .in('status', ['approved', 'sending', 'sent'])
+    .gte('created_at', cutoff)
+    .order('created_at', { ascending: false })
+    .limit(5)
+
+  if (error) {
+    Sentry.captureException(error, {
+      tags: { layer: 'db', helper: 'findRecentDuplicateCampaign' },
+    })
+    // Fail toward sending: a transient dedupe-read error must not block a
+    // legitimate first send. Worst case reverts to today's behaviour; the
+    // guard still catches the overwhelming majority of double-submits.
+    return { ok: true, data: null }
+  }
+
+  // Compare segments as sets (order-insensitive). Postgres array equality in the
+  // query is awkward; matching in JS over the small recent-window set is simpler.
+  const target = new Set(marketStatuses)
+  const match = (data ?? []).find((row) => {
+    const seg = (row.segment_market_statuses ?? []) as string[]
+    return seg.length === target.size && seg.every((s) => target.has(s))
+  })
+  if (!match) return { ok: true, data: null }
+  return { ok: true, data: { id: match.id, recipientCount: match.recipient_count } }
+}
+
+// ---------------------------------------------------------------------------
 // insertCampaignRecipients — bulk-insert recipient rows for a campaign
 // ---------------------------------------------------------------------------
 
