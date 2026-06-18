@@ -6,6 +6,7 @@ import { z } from 'zod'
 import { getCampaignSegment, createCampaign, insertCampaignRecipients } from '@/lib/db/campaigns'
 import { getProfile } from '@/lib/db/profiles'
 import { inngest } from '@/lib/inngest/client'
+import { ENTITLEMENT_BLOCKED_MESSAGE, requireEntitledOrg } from '@/lib/stripe/require-entitlement'
 import { createClient } from '@/lib/supabase/server'
 
 // ---------------------------------------------------------------------------
@@ -140,6 +141,12 @@ export async function approveCampaignAction(input: {
     return { ok: false, error: firstError?.message ?? 'Invalid input' }
   }
   const { name, subject, bodyTemplate, marketStatuses } = parsed.data
+
+  // Entitlement gate — campaign send drives email + AI spend; block non-entitled orgs.
+  const gate = await requireEntitledOrg()
+  if (!gate.ok) {
+    return { ok: false, error: ENTITLEMENT_BLOCKED_MESSAGE }
+  }
 
   const supabase = await createClient()
   const {

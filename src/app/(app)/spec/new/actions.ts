@@ -10,6 +10,7 @@ import {
   updateSpecDraftAudioPath,
 } from '@/lib/db/spec-drafts'
 import { inngest } from '@/lib/inngest/client'
+import { ENTITLEMENT_BLOCKED_MESSAGE, requireEntitledOrg } from '@/lib/stripe/require-entitlement'
 import { createClient } from '@/lib/supabase/server'
 
 export type SubmitSpecCallResult =
@@ -106,6 +107,12 @@ export async function submitSpecCallAction(
     return { ok: false, error: 'Invalid client id.' }
   }
   const companyId = companyParsed.data
+
+  // Entitlement gate — spec calls drive Whisper + Sonnet spend; block non-entitled orgs.
+  const gate = await requireEntitledOrg()
+  if (!gate.ok) {
+    return { ok: false, error: ENTITLEMENT_BLOCKED_MESSAGE }
+  }
 
   const supabase = await createClient()
   const {

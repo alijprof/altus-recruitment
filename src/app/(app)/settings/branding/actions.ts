@@ -3,6 +3,7 @@
 import { revalidatePath } from 'next/cache'
 
 import { updateOrganization } from '@/lib/db/organizations'
+import { ENTITLEMENT_BLOCKED_MESSAGE, requireEntitledOrg } from '@/lib/stripe/require-entitlement'
 import { createClient } from '@/lib/supabase/server'
 
 import { updateBrandingSchema } from './schema'
@@ -36,6 +37,12 @@ export async function updateBrandingAction(rawInput: unknown): Promise<ActionRes
       ok: false,
       fieldErrors: parsed.error.flatten().fieldErrors as Record<string, string[] | undefined>,
     }
+  }
+
+  // Entitlement gate — block org mutations for non-entitled orgs (audit blocker 1).
+  const gate = await requireEntitledOrg()
+  if (!gate.ok) {
+    return { ok: false, formError: ENTITLEMENT_BLOCKED_MESSAGE }
   }
 
   // Step 2: Authenticate.

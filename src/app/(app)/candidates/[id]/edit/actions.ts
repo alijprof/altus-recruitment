@@ -5,6 +5,7 @@ import { redirect } from 'next/navigation'
 import { z } from 'zod'
 
 import { updateCandidate } from '@/lib/db/candidates'
+import { ENTITLEMENT_BLOCKED_MESSAGE, requireEntitledOrg } from '@/lib/stripe/require-entitlement'
 import { createClient } from '@/lib/supabase/server'
 
 import { editCandidateSchema } from './schema'
@@ -31,6 +32,12 @@ export async function updateCandidateAction(
       ok: false,
       fieldErrors: parsed.error.flatten().fieldErrors as Record<string, string[] | undefined>,
     }
+  }
+
+  // Entitlement gate — block CRM mutations for non-entitled orgs (audit blocker 1).
+  const gate = await requireEntitledOrg()
+  if (!gate.ok) {
+    return { ok: false, formError: ENTITLEMENT_BLOCKED_MESSAGE }
   }
 
   const supabase = await createClient()

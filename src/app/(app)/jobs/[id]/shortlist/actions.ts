@@ -4,6 +4,7 @@ import * as Sentry from '@sentry/nextjs'
 import { revalidatePath } from 'next/cache'
 import { z } from 'zod'
 
+import { ENTITLEMENT_BLOCKED_MESSAGE, requireEntitledOrg } from '@/lib/stripe/require-entitlement'
 import { createClient as createSupabaseClient } from '@/lib/supabase/server'
 import type { Enums, TablesInsert } from '@/types/database'
 
@@ -41,6 +42,12 @@ export async function addToShortlistAction(
   const parsed = addToShortlistSchema.safeParse(rawInput)
   if (!parsed.success) {
     return { ok: false, formError: 'Invalid candidate or job id.' }
+  }
+
+  // Entitlement gate — block CRM mutations for non-entitled orgs (audit blocker 1).
+  const gate = await requireEntitledOrg()
+  if (!gate.ok) {
+    return { ok: false, formError: ENTITLEMENT_BLOCKED_MESSAGE }
   }
 
   const supabase = await createSupabaseClient()
@@ -117,6 +124,12 @@ export async function removeFromShortlistAction(
   const parsed = removeFromShortlistSchema.safeParse(rawInput)
   if (!parsed.success) {
     return { ok: false, error: 'Invalid request.' }
+  }
+
+  // Entitlement gate — block CRM mutations for non-entitled orgs (audit blocker 1).
+  const gate = await requireEntitledOrg()
+  if (!gate.ok) {
+    return { ok: false, error: ENTITLEMENT_BLOCKED_MESSAGE }
   }
 
   const supabase = await createSupabaseClient()

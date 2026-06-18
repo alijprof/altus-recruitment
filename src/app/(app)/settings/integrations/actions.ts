@@ -4,6 +4,7 @@ import * as Sentry from '@sentry/nextjs'
 import { z } from 'zod'
 
 import { inngest } from '@/lib/inngest/client'
+import { ENTITLEMENT_BLOCKED_MESSAGE, requireEntitledOrg } from '@/lib/stripe/require-entitlement'
 import { createClient as createSupabaseClient } from '@/lib/supabase/server'
 
 // Plan 1 Task 1.3 — Settings → Integrations server actions.
@@ -23,6 +24,12 @@ export async function triggerCandidateBackfillAction(): Promise<SettingsActionRe
     data: { user },
   } = await supabase.auth.getUser()
   if (!user) return { ok: false, error: 'Not signed in.' }
+
+  // Entitlement gate — backfill enqueues Voyage embeds (AI spend); block non-entitled orgs.
+  const gate = await requireEntitledOrg()
+  if (!gate.ok) {
+    return { ok: false, error: ENTITLEMENT_BLOCKED_MESSAGE }
+  }
 
   // Use current_organization_id() to derive the org from the session
   // context — never trust a client-supplied org id here. RPC is
@@ -69,6 +76,12 @@ export async function triggerHnswBuildAction(
   const parsed = buildIndexSchema.safeParse(rawInput)
   if (!parsed.success) {
     return { ok: false, error: 'Invalid table name.' }
+  }
+
+  // Entitlement gate — block ops mutations for non-entitled orgs (audit blocker 1).
+  const gate = await requireEntitledOrg()
+  if (!gate.ok) {
+    return { ok: false, error: ENTITLEMENT_BLOCKED_MESSAGE }
   }
 
   const supabase = await createSupabaseClient()

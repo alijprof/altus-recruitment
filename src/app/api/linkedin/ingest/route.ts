@@ -5,6 +5,7 @@ import { upsertCandidateFromLinkedIn } from '@/lib/db/candidates-linkedin'
 import { getProfile } from '@/lib/db/profiles'
 import { env } from '@/lib/env'
 import { inngest } from '@/lib/inngest/client'
+import { isOrgEntitled } from '@/lib/stripe/require-entitlement'
 import { createBearerClient, createClient } from '@/lib/supabase/server'
 import { LinkedInIngestSchema } from '@/lib/validation/linkedin-ingest-schema'
 
@@ -154,6 +155,14 @@ export async function POST(req: Request): Promise<Response> {
     return jsonResponse({ ok: false, error: 'profile_not_found' }, { status: 500, cors })
   }
   const organizationId = profileResult.data.organization_id
+
+  // 5. Entitlement gate (audit blocker 1/2). The capture pipeline writes a
+  // candidate row AND enqueues a Voyage embed (AI spend) — block non-entitled
+  // orgs here, AFTER bearer auth + org resolution, BEFORE any write/enqueue.
+  // isOrgEntitled fails CLOSED on a getEntitlement error (safe: no write).
+  if (!(await isOrgEntitled(organizationId))) {
+    return jsonResponse({ ok: false, error: 'subscription_inactive' }, { status: 402, cors })
+  }
 
   // CR-01: the advisory-lock RPC was non-functional in production
   // (`pg_try_advisory_xact_lock` is a pg_catalog builtin not exposed via

@@ -18,6 +18,7 @@ import { revalidatePath } from 'next/cache'
 import { headers } from 'next/headers'
 
 import { getEntitlement } from '@/lib/stripe/entitlement'
+import { ENTITLEMENT_BLOCKED_MESSAGE, requireEntitledOrg } from '@/lib/stripe/require-entitlement'
 import { sendResendEmail } from '@/lib/email/resend'
 import {
   renderTransactionalEmail,
@@ -89,6 +90,12 @@ export async function inviteMemberAction(rawInput: unknown): Promise<ActionResul
       ok: false,
       fieldErrors: parsed.error.flatten().fieldErrors as Record<string, string[] | undefined>,
     }
+  }
+
+  // Entitlement gate — invites consume seats + send email; block non-entitled orgs.
+  const gate = await requireEntitledOrg()
+  if (!gate.ok) {
+    return { ok: false, formError: ENTITLEMENT_BLOCKED_MESSAGE }
   }
 
   // VERIFICATION R8 — step 2: user-scoped client.
@@ -319,6 +326,12 @@ export async function resendInviteAction(rawInput: unknown): Promise<ActionResul
       ok: false,
       fieldErrors: parsed.error.flatten().fieldErrors as Record<string, string[] | undefined>,
     }
+  }
+
+  // Entitlement gate — resend re-sends an invite email (spend); block non-entitled orgs.
+  const gate = await requireEntitledOrg()
+  if (!gate.ok) {
+    return { ok: false, formError: ENTITLEMENT_BLOCKED_MESSAGE }
   }
 
   const supabase = await createClient()

@@ -20,6 +20,7 @@ import { createClient as createClientRecord } from '@/lib/db/clients'
 import { createJob } from '@/lib/db/jobs'
 import { CURRENT_CONSENT_VERSION } from '@/lib/legal/consent'
 import { SAMPLE_CANDIDATES, SAMPLE_CLIENTS, SAMPLE_JOBS } from '@/lib/onboarding/sample-data'
+import { ENTITLEMENT_BLOCKED_MESSAGE, requireEntitledOrg } from '@/lib/stripe/require-entitlement'
 import { createClient } from '@/lib/supabase/server'
 
 export type SeedSummary = {
@@ -44,6 +45,14 @@ export async function seedSampleDataAction(): Promise<SeedSampleDataResult> {
 
   if (userError || !user) {
     return { ok: false, error: 'You must be signed in to seed sample data.' }
+  }
+
+  // Entitlement gate — block bulk CRM writes for non-entitled orgs (audit blocker 1).
+  // Onboarding orgs are 'trialing' (entitled) by the time the dashboard loads, so
+  // this does not block the seed-on-first-login flow.
+  const gate = await requireEntitledOrg()
+  if (!gate.ok) {
+    return { ok: false, error: ENTITLEMENT_BLOCKED_MESSAGE }
   }
 
   // Idempotency guard: check if the org already has candidates.

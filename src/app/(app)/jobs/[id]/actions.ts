@@ -10,6 +10,7 @@ import {
   deleteApplication,
   moveApplication,
 } from '@/lib/db/applications'
+import { ENTITLEMENT_BLOCKED_MESSAGE, requireEntitledOrg } from '@/lib/stripe/require-entitlement'
 import { createClient as createSupabaseClient } from '@/lib/supabase/server'
 import type { Enums } from '@/types/database'
 
@@ -34,6 +35,12 @@ export async function addCandidateToJobAction(
   const parsed = addCandidateSchema.safeParse(rawInput)
   if (!parsed.success) {
     return { ok: false, formError: 'Invalid candidate or job id.' }
+  }
+
+  // Entitlement gate — block CRM mutations for non-entitled orgs (audit blocker 1).
+  const gate = await requireEntitledOrg()
+  if (!gate.ok) {
+    return { ok: false, formError: ENTITLEMENT_BLOCKED_MESSAGE }
   }
 
   const supabase = await createSupabaseClient()
@@ -224,6 +231,12 @@ export async function moveApplicationAction(
     return { ok: false, error: 'Capture fee, date, and type before placing.' }
   }
 
+  // Entitlement gate — block CRM mutations for non-entitled orgs (audit blocker 1).
+  const gate = await requireEntitledOrg()
+  if (!gate.ok) {
+    return { ok: false, error: ENTITLEMENT_BLOCKED_MESSAGE }
+  }
+
   const supabase = await createSupabaseClient()
   const { data: userData } = await supabase.auth.getUser()
   const userId = userData.user?.id ?? null
@@ -285,6 +298,12 @@ export async function removeApplicationAction(
   const parsed = removeSchema.safeParse(rawInput)
   if (!parsed.success) {
     return { ok: false, error: 'Invalid remove payload.' }
+  }
+
+  // Entitlement gate — block CRM mutations for non-entitled orgs (audit blocker 1).
+  const gate = await requireEntitledOrg()
+  if (!gate.ok) {
+    return { ok: false, error: ENTITLEMENT_BLOCKED_MESSAGE }
   }
 
   const supabase = await createSupabaseClient()
@@ -356,6 +375,12 @@ export async function deleteJobAction(rawInput: unknown): Promise<DeleteJobResul
   const parsed = deleteJobSchema.safeParse(rawInput)
   if (!parsed.success) return { ok: false, error: 'Invalid job id.' }
   const { jobId } = parsed.data
+
+  // Entitlement gate — block CRM mutations for non-entitled orgs (audit blocker 1).
+  const gate = await requireEntitledOrg()
+  if (!gate.ok) {
+    return { ok: false, error: ENTITLEMENT_BLOCKED_MESSAGE }
+  }
 
   const supabase = await createSupabaseClient()
   const {

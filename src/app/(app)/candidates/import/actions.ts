@@ -17,6 +17,7 @@ import Papa from 'papaparse'
 
 import { findCandidateByEmail, createCandidate } from '@/lib/db/candidates'
 import { CURRENT_CONSENT_VERSION } from '@/lib/legal/consent'
+import { ENTITLEMENT_BLOCKED_MESSAGE, requireEntitledOrg } from '@/lib/stripe/require-entitlement'
 import { createClient } from '@/lib/supabase/server'
 
 import { mapRow, type MappedCandidate } from './column-map'
@@ -73,6 +74,12 @@ export async function importCandidatesAction(
 
   if (userError || !user) {
     return { ok: false, error: 'You must be signed in to import candidates.' }
+  }
+
+  // Entitlement gate — block bulk CRM writes for non-entitled orgs (audit blocker 1).
+  const gate = await requireEntitledOrg()
+  if (!gate.ok) {
+    return { ok: false, error: ENTITLEMENT_BLOCKED_MESSAGE }
   }
 
   // Resolve org for the dedupe lookup (findCandidateByEmail requires explicit

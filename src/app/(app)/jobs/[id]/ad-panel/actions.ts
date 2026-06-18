@@ -14,6 +14,7 @@ import {
 } from '@/lib/ai/ad-generate'
 import { createJobAd, deleteJobAd } from '@/lib/db/job-ads'
 import { getJob } from '@/lib/db/jobs'
+import { ENTITLEMENT_BLOCKED_MESSAGE, requireEntitledOrg } from '@/lib/stripe/require-entitlement'
 import { createClient as createSupabaseClient } from '@/lib/supabase/server'
 
 // ---------------------------------------------------------------------------
@@ -55,6 +56,12 @@ export async function generateAdAction(
   const parsed = generateSchema.safeParse(rawInput)
   if (!parsed.success) {
     return { ok: false, error: 'Invalid job id.' }
+  }
+
+  // Entitlement gate — ad generation drives Sonnet spend; block non-entitled orgs.
+  const gate = await requireEntitledOrg()
+  if (!gate.ok) {
+    return { ok: false, error: ENTITLEMENT_BLOCKED_MESSAGE }
   }
 
   const supabase = await createSupabaseClient()
@@ -126,6 +133,12 @@ export async function scoreInclusivityAction(
   if (!parsed.success) {
     const firstIssue = parsed.error.issues[0]
     return { ok: false, error: firstIssue?.message ?? 'Invalid input.' }
+  }
+
+  // Entitlement gate — inclusivity scoring drives Sonnet spend; block non-entitled orgs.
+  const gate = await requireEntitledOrg()
+  if (!gate.ok) {
+    return { ok: false, error: ENTITLEMENT_BLOCKED_MESSAGE }
   }
 
   const supabase = await createSupabaseClient()
@@ -213,6 +226,12 @@ export async function saveJobAdAction(
     return { ok: false, error: 'Invalid save payload.' }
   }
 
+  // Entitlement gate — block CRM mutations for non-entitled orgs (audit blocker 1).
+  const gate = await requireEntitledOrg()
+  if (!gate.ok) {
+    return { ok: false, error: ENTITLEMENT_BLOCKED_MESSAGE }
+  }
+
   const supabase = await createSupabaseClient()
   const {
     data: { user },
@@ -270,6 +289,12 @@ export async function deleteJobAdAction(
   const parsed = deleteAdSchema.safeParse(rawInput)
   if (!parsed.success) {
     return { ok: false, error: 'Invalid ad or job id.' }
+  }
+
+  // Entitlement gate — block CRM mutations for non-entitled orgs (audit blocker 1).
+  const gate = await requireEntitledOrg()
+  if (!gate.ok) {
+    return { ok: false, error: ENTITLEMENT_BLOCKED_MESSAGE }
   }
 
   const supabase = await createSupabaseClient()

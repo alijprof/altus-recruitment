@@ -13,6 +13,7 @@ import {
   updateContact,
   type UpdateContactPatch,
 } from '@/lib/db/contacts'
+import { ENTITLEMENT_BLOCKED_MESSAGE, requireEntitledOrg } from '@/lib/stripe/require-entitlement'
 import { createClient as createSupabaseClient } from '@/lib/supabase/server'
 
 import { contactFormSchema } from './contacts/new/schema'
@@ -45,6 +46,12 @@ export async function createContactAction(
   const parsed = contactFormSchema.safeParse(rawInput)
   if (!parsed.success) {
     return { ok: false, fieldErrors: parsed.error.flatten().fieldErrors }
+  }
+
+  // Entitlement gate — block CRM mutations for non-entitled orgs (audit blocker 1).
+  const gate = await requireEntitledOrg()
+  if (!gate.ok) {
+    return { ok: false, formError: ENTITLEMENT_BLOCKED_MESSAGE }
   }
 
   const supabase = await createSupabaseClient()
@@ -81,6 +88,12 @@ export async function updateContactAction(
     return { ok: false, fieldErrors: parsed.error.flatten().fieldErrors }
   }
 
+  // Entitlement gate — block CRM mutations for non-entitled orgs (audit blocker 1).
+  const gate = await requireEntitledOrg()
+  if (!gate.ok) {
+    return { ok: false, formError: ENTITLEMENT_BLOCKED_MESSAGE }
+  }
+
   const supabase = await createSupabaseClient()
   const patch: UpdateContactPatch = {
     full_name: parsed.data.full_name,
@@ -108,6 +121,12 @@ export async function deleteContactAction(
   const contactIdResult = idSchema.safeParse(contactId)
   if (!companyIdResult.success || !contactIdResult.success) {
     return { ok: false, formError: 'Invalid id.' }
+  }
+
+  // Entitlement gate — block CRM mutations for non-entitled orgs (audit blocker 1).
+  const gate = await requireEntitledOrg()
+  if (!gate.ok) {
+    return { ok: false, formError: ENTITLEMENT_BLOCKED_MESSAGE }
   }
 
   const supabase = await createSupabaseClient()
@@ -148,6 +167,12 @@ export async function logNoteAction(
   const parsed = logNoteSchema.safeParse(rawInput)
   if (!parsed.success) {
     return { ok: false, fieldErrors: parsed.error.flatten().fieldErrors }
+  }
+
+  // Entitlement gate — block CRM mutations for non-entitled orgs (audit blocker 1).
+  const gate = await requireEntitledOrg()
+  if (!gate.ok) {
+    return { ok: false, formError: ENTITLEMENT_BLOCKED_MESSAGE }
   }
 
   const supabase = await createSupabaseClient()
@@ -198,6 +223,12 @@ export async function updateClientAction(
     return { ok: false, fieldErrors: parsed.error.flatten().fieldErrors }
   }
 
+  // Entitlement gate — block CRM mutations for non-entitled orgs (audit blocker 1).
+  const gate = await requireEntitledOrg()
+  if (!gate.ok) {
+    return { ok: false, formError: ENTITLEMENT_BLOCKED_MESSAGE }
+  }
+
   const supabase = await createSupabaseClient()
   const result = await updateClient(supabase, idResult.data, {
     name: parsed.data.name,
@@ -232,6 +263,12 @@ export async function deleteCompanyAction(rawInput: unknown): Promise<DeleteComp
   const parsed = deleteCompanySchema.safeParse(rawInput)
   if (!parsed.success) return { ok: false, error: 'Invalid client id.' }
   const { companyId } = parsed.data
+
+  // Entitlement gate — block CRM mutations for non-entitled orgs (audit blocker 1).
+  const gate = await requireEntitledOrg()
+  if (!gate.ok) {
+    return { ok: false, error: ENTITLEMENT_BLOCKED_MESSAGE }
+  }
 
   const supabase = await createSupabaseClient()
   const {

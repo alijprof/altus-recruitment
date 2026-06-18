@@ -4,6 +4,7 @@ import { revalidatePath } from 'next/cache'
 
 import { updateOrganization } from '@/lib/db/organizations'
 import { updateProfile } from '@/lib/db/profiles'
+import { ENTITLEMENT_BLOCKED_MESSAGE, requireEntitledOrg } from '@/lib/stripe/require-entitlement'
 import { createClient } from '@/lib/supabase/server'
 
 import { updateOrganizationSchema, updateProfileSchema } from './schema'
@@ -28,6 +29,12 @@ export async function updateProfileAction(rawInput: unknown): Promise<ActionResu
       ok: false,
       fieldErrors: parsed.error.flatten().fieldErrors as Record<string, string[] | undefined>,
     }
+  }
+
+  // Entitlement gate — block non-billing settings mutations for non-entitled orgs.
+  const gate = await requireEntitledOrg()
+  if (!gate.ok) {
+    return { ok: false, formError: ENTITLEMENT_BLOCKED_MESSAGE }
   }
 
   const supabase = await createClient()
@@ -57,6 +64,12 @@ export async function updateOrganizationAction(rawInput: unknown): Promise<Actio
       ok: false,
       fieldErrors: parsed.error.flatten().fieldErrors as Record<string, string[] | undefined>,
     }
+  }
+
+  // Entitlement gate — block non-billing org mutations for non-entitled orgs.
+  const gate = await requireEntitledOrg()
+  if (!gate.ok) {
+    return { ok: false, formError: ENTITLEMENT_BLOCKED_MESSAGE }
   }
 
   const supabase = await createClient()

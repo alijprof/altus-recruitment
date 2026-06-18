@@ -3,6 +3,7 @@
 import { matchNlTemplate } from '@/lib/ai/nl-template-match'
 import { getProfile } from '@/lib/db/profiles'
 import { NL_TEMPLATES } from '@/lib/reports/nl-templates'
+import { ENTITLEMENT_BLOCKED_MESSAGE, requireEntitledOrg } from '@/lib/stripe/require-entitlement'
 import { createClient } from '@/lib/supabase/server'
 
 // ---------------------------------------------------------------------------
@@ -42,6 +43,12 @@ export async function nlQueryAction(question: string): Promise<NlQueryResult> {
   const profileResult = await getProfile(supabase, user.id)
   if (!profileResult.ok) return { ok: false, error: 'profile-not-found' }
   const { organization_id: organizationId } = profileResult.data
+
+  // Entitlement gate — NL query drives Sonnet spend; block non-entitled orgs.
+  const gate = await requireEntitledOrg()
+  if (!gate.ok) {
+    return { ok: false, error: ENTITLEMENT_BLOCKED_MESSAGE }
+  }
 
   // 2. Sonnet template pick
   let pick: { functionName: string; params: Record<string, unknown> }

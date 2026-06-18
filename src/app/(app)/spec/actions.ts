@@ -4,6 +4,7 @@ import { revalidatePath } from 'next/cache'
 import { z } from 'zod'
 
 import { markSpecDraftRejected } from '@/lib/db/spec-drafts'
+import { ENTITLEMENT_BLOCKED_MESSAGE, requireEntitledOrg } from '@/lib/stripe/require-entitlement'
 import { createClient } from '@/lib/supabase/server'
 
 // Soft-delete a spec draft from the list view. Reuses the reject path
@@ -21,6 +22,12 @@ export async function deleteSpecDraftAction(rawInput: unknown): Promise<ActionRe
   const parsed = schema.safeParse(rawInput)
   if (!parsed.success) {
     return { ok: false, error: 'Invalid input.' }
+  }
+
+  // Entitlement gate — block CRM mutations for non-entitled orgs (audit blocker 1).
+  const gate = await requireEntitledOrg()
+  if (!gate.ok) {
+    return { ok: false, error: ENTITLEMENT_BLOCKED_MESSAGE }
   }
 
   const supabase = await createClient()

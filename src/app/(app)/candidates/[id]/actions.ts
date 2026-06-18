@@ -15,6 +15,7 @@ import {
 } from '@/lib/db/candidate-cvs'
 import { getProfile } from '@/lib/db/profiles'
 import { inngest } from '@/lib/inngest/client'
+import { ENTITLEMENT_BLOCKED_MESSAGE, requireEntitledOrg } from '@/lib/stripe/require-entitlement'
 import { createClient } from '@/lib/supabase/server'
 
 export type ActionResult = { ok: true } | { ok: false; error: string }
@@ -44,6 +45,12 @@ export async function logActivityAction(rawInput: unknown): Promise<ActionResult
   if (!parsed.success) {
     const first = parsed.error.issues[0]?.message ?? 'Invalid activity.'
     return { ok: false, error: first }
+  }
+
+  // Entitlement gate — block CRM mutations for non-entitled orgs (audit blocker 1).
+  const gate = await requireEntitledOrg()
+  if (!gate.ok) {
+    return { ok: false, error: ENTITLEMENT_BLOCKED_MESSAGE }
   }
 
   const supabase = await createClient()
@@ -133,6 +140,12 @@ export async function uploadCVAction(formData: FormData): Promise<UploadCVResult
       ok: false,
       error: 'That file is over 10 MiB. Please upload a smaller CV.',
     }
+  }
+
+  // Entitlement gate — block CV upload (drives AI parse) for non-entitled orgs.
+  const gate = await requireEntitledOrg()
+  if (!gate.ok) {
+    return { ok: false, error: ENTITLEMENT_BLOCKED_MESSAGE }
   }
 
   const supabase = await createClient()
@@ -258,6 +271,12 @@ export async function retryParseAction(rawInput: unknown): Promise<ActionResult>
     return { ok: false, error: first }
   }
 
+  // Entitlement gate — re-parse drives AI spend; block for non-entitled orgs.
+  const gate = await requireEntitledOrg()
+  if (!gate.ok) {
+    return { ok: false, error: ENTITLEMENT_BLOCKED_MESSAGE }
+  }
+
   const supabase = await createClient()
   const {
     data: { user },
@@ -342,6 +361,12 @@ export async function acceptCVFieldsAction(rawInput: unknown): Promise<AcceptCVF
   if (!parsed.success) {
     const first = parsed.error.issues[0]?.message ?? 'Invalid request.'
     return { ok: false, error: first }
+  }
+
+  // Entitlement gate — block CRM mutations for non-entitled orgs (audit blocker 1).
+  const gate = await requireEntitledOrg()
+  if (!gate.ok) {
+    return { ok: false, error: ENTITLEMENT_BLOCKED_MESSAGE }
   }
 
   const supabase = await createClient()
@@ -434,6 +459,12 @@ export async function deleteCandidateAction(rawInput: unknown): Promise<DeleteCa
     return { ok: false, error: first }
   }
   const { candidateId } = parsed.data
+
+  // Entitlement gate — block CRM mutations for non-entitled orgs (audit blocker 1).
+  const gate = await requireEntitledOrg()
+  if (!gate.ok) {
+    return { ok: false, error: ENTITLEMENT_BLOCKED_MESSAGE }
+  }
 
   const supabase = await createClient()
   const {

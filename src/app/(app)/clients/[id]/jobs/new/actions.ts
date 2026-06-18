@@ -7,6 +7,7 @@ import { z } from 'zod'
 
 import { createJob } from '@/lib/db/jobs'
 import { inngest } from '@/lib/inngest/client'
+import { ENTITLEMENT_BLOCKED_MESSAGE, requireEntitledOrg } from '@/lib/stripe/require-entitlement'
 import { createClient as createSupabaseClient } from '@/lib/supabase/server'
 
 import { coerceSalary, jobFormSchema } from './schema'
@@ -29,6 +30,12 @@ export async function createJobAction(
   const parsed = jobFormSchema.safeParse(rawInput)
   if (!parsed.success) {
     return { ok: false, fieldErrors: parsed.error.flatten().fieldErrors }
+  }
+
+  // Entitlement gate — job create drives embed + scoring AI; block non-entitled orgs.
+  const gate = await requireEntitledOrg()
+  if (!gate.ok) {
+    return { ok: false, formError: ENTITLEMENT_BLOCKED_MESSAGE }
   }
 
   const supabase = await createSupabaseClient()

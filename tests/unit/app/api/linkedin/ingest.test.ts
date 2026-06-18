@@ -68,6 +68,14 @@ vi.mock('@/lib/inngest/client', () => ({
   inngest: { send: inngestSendMock },
 }))
 
+// Entitlement gate (quick task 260618-sjo). The route calls isOrgEntitled after
+// resolving the org; default to entitled so the existing happy paths pass, and
+// flip it to false in the dedicated 402 test below.
+const isOrgEntitledMock = vi.fn(async () => true)
+vi.mock('@/lib/stripe/require-entitlement', () => ({
+  isOrgEntitled: isOrgEntitledMock,
+}))
+
 async function importRoute() {
   return await import('@/app/api/linkedin/ingest/route')
 }
@@ -121,6 +129,8 @@ beforeEach(() => {
   getProfileMock.mockReset()
   upsertCandidateFromLinkedInMock.mockReset()
   inngestSendMock.mockClear()
+  isOrgEntitledMock.mockReset()
+  isOrgEntitledMock.mockResolvedValue(true)
   envState.LINKEDIN_EXTENSION_ID = 'abcdefghijklmnopabcdefghijklmnop'
   envState.LINKEDIN_EXTENSION_MIN_VERSION = '0.1.0'
 })
@@ -285,5 +295,33 @@ describe('POST /api/linkedin/ingest — happy path', () => {
     const body = await res.json()
     expect(body.updated).toBe(true)
     expect(body.candidate_id).toBe('cand-existing-1')
+  })
+
+  it('returns 402 and writes nothing when the org is not entitled', async () => {
+    getUserMock.mockResolvedValue({ data: { user: { id: 'u1' } }, error: null })
+    getProfileMock.mockResolvedValue({
+      ok: true,
+      data: {
+        full_name: 'Recruiter',
+        email: 'r@example.com',
+        organization_id: 'org-1',
+        role: 'recruiter',
+      },
+    })
+    isOrgEntitledMock.mockResolvedValue(false)
+    const route = await importRoute()
+    const res = await route.POST(
+      makeRequest({
+        method: 'POST',
+        body: VALID_BODY,
+        headers: { authorization: 'Bearer good' },
+      }) as never,
+    )
+    expect(res.status).toBe(402)
+    const body = await res.json()
+    expect(body).toMatchObject({ ok: false, error: 'subscription_inactive' })
+    // Gate fires BEFORE any write/enqueue.
+    expect(upsertCandidateFromLinkedInMock).not.toHaveBeenCalled()
+    expect(inngestSendMock).not.toHaveBeenCalled()
   })
 })

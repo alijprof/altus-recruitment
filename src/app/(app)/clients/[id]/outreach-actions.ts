@@ -6,6 +6,7 @@ import { z } from 'zod'
 
 import { sendMail } from '@/lib/integrations/outlook'
 import { inngest } from '@/lib/inngest/client'
+import { ENTITLEMENT_BLOCKED_MESSAGE, requireEntitledOrg } from '@/lib/stripe/require-entitlement'
 import { createClient as createSupabaseClient } from '@/lib/supabase/server'
 import { createServiceClient } from '@/lib/supabase/service'
 
@@ -51,6 +52,12 @@ export async function requestOutreachDraftAction(
   const parsed = requestDraftSchema.safeParse(rawInput)
   if (!parsed.success) {
     return { ok: false, error: 'Invalid client id.' }
+  }
+
+  // Entitlement gate — outreach draft drives Sonnet spend; block non-entitled orgs.
+  const gate = await requireEntitledOrg()
+  if (!gate.ok) {
+    return { ok: false, error: ENTITLEMENT_BLOCKED_MESSAGE }
   }
 
   const supabase = await createSupabaseClient()
@@ -205,6 +212,12 @@ export async function sendOutreachAction(rawInput: unknown): Promise<SendOutreac
     return { ok: false, error: 'Invalid email content.' }
   }
   const { clientId, subject, body_html } = parsed.data
+
+  // Entitlement gate — sending outreach is a paid action; block non-entitled orgs.
+  const gate = await requireEntitledOrg()
+  if (!gate.ok) {
+    return { ok: false, error: ENTITLEMENT_BLOCKED_MESSAGE }
+  }
 
   const supabase = await createSupabaseClient()
   const {

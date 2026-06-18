@@ -4,6 +4,7 @@ import * as Sentry from '@sentry/nextjs'
 import { revalidatePath } from 'next/cache'
 
 import { updateOrganization } from '@/lib/db/organizations'
+import { ENTITLEMENT_BLOCKED_MESSAGE, requireEntitledOrg } from '@/lib/stripe/require-entitlement'
 import { createClient } from '@/lib/supabase/server'
 
 // Plan 3 Task 3.3 — owner-only toggle for the public apply form.
@@ -24,6 +25,12 @@ export async function toggleApplyFormEnabledAction(
     data: { user },
   } = await supabase.auth.getUser()
   if (!user) return { ok: false, formError: 'Not signed in.' }
+
+  // Entitlement gate — block CRM/org mutations for non-entitled orgs (audit blocker 1).
+  const gate = await requireEntitledOrg()
+  if (!gate.ok) {
+    return { ok: false, formError: ENTITLEMENT_BLOCKED_MESSAGE }
+  }
 
   // R8: role-scoped read of public.users. RLS returns only the caller's
   // own row; non-owners are rejected before any write.

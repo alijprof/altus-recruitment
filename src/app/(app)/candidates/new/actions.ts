@@ -5,6 +5,7 @@ import { redirect } from 'next/navigation'
 
 import { createCandidate } from '@/lib/db/candidates'
 import { CURRENT_CONSENT_VERSION } from '@/lib/legal/consent'
+import { ENTITLEMENT_BLOCKED_MESSAGE, requireEntitledOrg } from '@/lib/stripe/require-entitlement'
 import { createClient } from '@/lib/supabase/server'
 
 import { createCandidateSchema } from './schema'
@@ -23,6 +24,12 @@ export async function createCandidateAction(rawInput: unknown): Promise<CreateCa
       ok: false,
       fieldErrors: parsed.error.flatten().fieldErrors as Record<string, string[] | undefined>,
     }
+  }
+
+  // Entitlement gate — block CRM mutations for non-entitled orgs (audit blocker 1).
+  const gate = await requireEntitledOrg()
+  if (!gate.ok) {
+    return { ok: false, formError: ENTITLEMENT_BLOCKED_MESSAGE }
   }
 
   const supabase = await createClient()

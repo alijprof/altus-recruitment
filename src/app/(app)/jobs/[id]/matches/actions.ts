@@ -15,6 +15,7 @@ import {
   getJobEmbeddingVersion,
 } from '@/lib/db/embeddings'
 import { env } from '@/lib/env'
+import { ENTITLEMENT_BLOCKED_MESSAGE, requireEntitledOrg } from '@/lib/stripe/require-entitlement'
 import { createClient as createSupabaseClient } from '@/lib/supabase/server'
 
 // ---------------------------------------------------------------------------
@@ -68,6 +69,14 @@ export async function explainCandidateMatchAction(
   const parsed = inputSchema.safeParse({ jobId, candidateId })
   if (!parsed.success) {
     return { ok: false, error: 'Invalid request.' }
+  }
+
+  // Entitlement gate — on-demand match scoring drives Sonnet spend; block
+  // non-entitled orgs (audit blocker 1/2). checkCap is a backstop, but gating
+  // here avoids the work and matches the action layer's error shape.
+  const gate = await requireEntitledOrg()
+  if (!gate.ok) {
+    return { ok: false, error: ENTITLEMENT_BLOCKED_MESSAGE }
   }
 
   try {

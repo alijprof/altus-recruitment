@@ -15,6 +15,7 @@ import {
   getOutlookCredentials,
   revokeOutlookCredentials,
 } from '@/lib/db/outlook-credentials'
+import { ENTITLEMENT_BLOCKED_MESSAGE, requireEntitledOrg } from '@/lib/stripe/require-entitlement'
 import { createClient as createSupabaseClient } from '@/lib/supabase/server'
 import { createServiceClient } from '@/lib/supabase/service'
 
@@ -42,6 +43,12 @@ export async function startOutlookOAuthAction(): Promise<OutlookActionResult> {
       data: { user },
     } = await supabase.auth.getUser()
     if (!user) return { ok: false, error: 'Not signed in.' }
+
+    // Entitlement gate — Outlook connect enables paid outreach; block non-entitled orgs.
+    const gate = await requireEntitledOrg()
+    if (!gate.ok) {
+      return { ok: false, error: ENTITLEMENT_BLOCKED_MESSAGE }
+    }
 
     const state = randomBytes(32).toString('hex')
     const url = getAuthorizationUrl(state)

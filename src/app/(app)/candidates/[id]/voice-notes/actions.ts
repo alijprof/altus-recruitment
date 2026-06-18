@@ -11,6 +11,7 @@ import {
   type VoiceNoteProposal,
 } from '@/lib/db/voice-notes'
 import { inngest } from '@/lib/inngest/client'
+import { ENTITLEMENT_BLOCKED_MESSAGE, requireEntitledOrg } from '@/lib/stripe/require-entitlement'
 import { createClient } from '@/lib/supabase/server'
 
 // ---------------------------------------------------------------------------
@@ -104,6 +105,12 @@ export async function submitVoiceNoteAction(
     return { ok: false, error: 'Invalid candidate id.' }
   }
   const candidateId = candidateParsed.data
+
+  // Entitlement gate — voice notes drive Whisper/Sonnet spend; block non-entitled orgs.
+  const gate = await requireEntitledOrg()
+  if (!gate.ok) {
+    return { ok: false, error: ENTITLEMENT_BLOCKED_MESSAGE }
+  }
 
   const supabase = await createClient()
   const {
@@ -294,6 +301,12 @@ export async function applyVoiceNoteAction(rawInput: unknown): Promise<ActionRes
     return { ok: false, error: 'Select at least one change to apply.' }
   }
 
+  // Entitlement gate — block CRM mutations for non-entitled orgs (audit blocker 1).
+  const gate = await requireEntitledOrg()
+  if (!gate.ok) {
+    return { ok: false, error: ENTITLEMENT_BLOCKED_MESSAGE }
+  }
+
   const supabase = await createClient()
   const {
     data: { user },
@@ -415,6 +428,12 @@ export async function rejectVoiceNoteAction(rawInput: unknown): Promise<ActionRe
     return { ok: false, error: first }
   }
   const { voiceNoteId, candidateId } = parsed.data
+
+  // Entitlement gate — block CRM mutations for non-entitled orgs (audit blocker 1).
+  const gate = await requireEntitledOrg()
+  if (!gate.ok) {
+    return { ok: false, error: ENTITLEMENT_BLOCKED_MESSAGE }
+  }
 
   const supabase = await createClient()
   const {
