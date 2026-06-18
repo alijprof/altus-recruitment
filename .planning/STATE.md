@@ -42,7 +42,7 @@ Phase directories remain in `.planning/phases/` as raw execution history — run
 
 ## Pre-Launch Audit Remediation (2026-06-18)
 
-All 6 go-live blockers from `.planning/audits/PRE-LAUNCH-AUDIT-2026-06-18.md` fixed in code on `main` (local; not yet pushed). Every fix passed typecheck + lint + 286 unit tests. Two Opus code reviews run (fix #1 standalone; fixes #2–6 consolidated) — both clean (0 critical/high), 3 review warnings remediated in 0700a4a. **Remaining mandatory gate: ONE browser pre-smoke against a deployed preview** (needs a push/deploy — awaiting founder go-ahead).
+All 6 go-live blockers from `.planning/audits/PRE-LAUNCH-AUDIT-2026-06-18.md` fixed, reviewed, smoked, and **MERGED + DEPLOYED TO PRODUCTION 2026-06-18** (main 6cd138f; prod deploy `dpl_Fkq878eFDn8Qt…` READY on altusrecruit.com). Every fix passed typecheck + lint + 286 unit tests. Two Opus code reviews (fix #1 standalone; fixes #2–6 consolidated) — both clean (0 critical/high), 3 warnings remediated in 0700a4a. Preview + production smoke PASSED: build READY; altusrecruit.com/privacy = 200 unauthenticated with full GDPR notice + draft banner; /welcome = new "Start free trial" copy, 0 old "free/no card" claims. Authed flows (entitlement/erasure/campaign) covered by tests + reviews (preview 401-walled; entitlement inert for current grandfathered/trialing orgs).
 
 ### Quick Tasks Completed
 
@@ -56,9 +56,8 @@ All 6 go-live blockers from `.planning/audits/PRE-LAUNCH-AUDIT-2026-06-18.md` fi
 | 260618-priv | 3 | Privacy-policy scaffold + /terms + PUBLIC_PATHS + apply/footer links | b0cd85a | ✅ clean |
 | 260618-rev | — | Consolidated review remediation (WR-01/02/03) | 0700a4a | — |
 
-### Still required before real paying customers (NOT code)
-- **Browser pre-smoke** of the deployed preview (entitled-org happy path not locked out; marketing copy; /privacy + /terms reachable; apply form).
-- **Blocker 3 residual:** /privacy is a TEMPLATE — needs a UK DP solicitor review + [placeholders] filled; DPA + ROPA are separate org deliverables.
+### Still required before real paying customers (NOT code) — FOUNDER OWNS
+- **Blocker 3 residual:** /privacy is a TEMPLATE (live + reachable) — needs a UK DP solicitor review + [placeholders] filled; DPA + ROPA are separate org deliverables.
 - **Founder runbook:** Stripe TEST→LIVE keys + live webhook; rotate Stripe + Supabase keys (confirm-before-revoke); Resend custom SMTP for auth emails.
 - **Optional fast-follow:** atomic campaign idempotency_key + partial unique index (the current guard covers sequential resubmits, not simultaneous).
 
