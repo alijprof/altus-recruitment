@@ -42,13 +42,25 @@ Phase directories remain in `.planning/phases/` as raw execution history — run
 
 ## Pre-Launch Audit Remediation (2026-06-18)
 
-Working through the 6 go-live blockers from `.planning/audits/PRE-LAUNCH-AUDIT-2026-06-18.md`. Code-review gate run per task; ONE consolidated browser pre-smoke + push planned after all code fixes land.
+All 6 go-live blockers from `.planning/audits/PRE-LAUNCH-AUDIT-2026-06-18.md` fixed in code on `main` (local; not yet pushed). Every fix passed typecheck + lint + 286 unit tests. Two Opus code reviews run (fix #1 standalone; fixes #2–6 consolidated) — both clean (0 critical/high), 3 review warnings remediated in 0700a4a. **Remaining mandatory gate: ONE browser pre-smoke against a deployed preview** (needs a push/deploy — awaiting founder go-ahead).
 
 ### Quick Tasks Completed
 
-| # | Description | Date | Commits | Code Review | Browser Smoke |
-|---|-------------|------|---------|-------------|---------------|
-| 260618-sjo | Blockers 1+2: enforce entitlement at data/action layer (gate ~29 actions + LinkedIn route + checkCap status-deny + public-apply AI skip) | 2026-06-18 | 58f07b5, b178f2a, 0a4e62e | ✅ clean (0 crit/high/med, 3 info) | ⏳ batch |
+| # | Blocker | Description | Commits | Code Review |
+|---|---------|-------------|---------|-------------|
+| 260618-sjo | 1+2 | Enforce entitlement at data/action layer (gate ~29 actions + LinkedIn route + checkCap status-deny + public-apply AI skip) | 58f07b5, b178f2a, 0a4e62e | ✅ clean (0 c/h/m, 3 info) |
+| 260618-t9u | 4 | GDPR erasure: delete apply-form CVs + voice-note audio on candidate deletion | 068d481 | ✅ (WR-02 fixed) |
+| 260618-mkt | 5 | Honest "14-day free trial" copy on marketing pages (drop "free / no card") | 527dc35 | ✅ clean |
+| 260618-dpc | 6 | Per-tenant consent contact email (org owner, never careers@altus.co.uk) | a4a53eb | ✅ (WR-03 fixed) |
+| 260618-cmp | rank 7 | Campaign double-send idempotency guard (sequential-resubmit dedupe) | b1119db | ✅ (WR-01 comment scoped honestly) |
+| 260618-priv | 3 | Privacy-policy scaffold + /terms + PUBLIC_PATHS + apply/footer links | b0cd85a | ✅ clean |
+| 260618-rev | — | Consolidated review remediation (WR-01/02/03) | 0700a4a | — |
+
+### Still required before real paying customers (NOT code)
+- **Browser pre-smoke** of the deployed preview (entitled-org happy path not locked out; marketing copy; /privacy + /terms reachable; apply form).
+- **Blocker 3 residual:** /privacy is a TEMPLATE — needs a UK DP solicitor review + [placeholders] filled; DPA + ROPA are separate org deliverables.
+- **Founder runbook:** Stripe TEST→LIVE keys + live webhook; rotate Stripe + Supabase keys (confirm-before-revoke); Resend custom SMTP for auth emails.
+- **Optional fast-follow:** atomic campaign idempotency_key + partial unique index (the current guard covers sequential resubmits, not simultaneous).
 
 ## Open Items (carried into next milestone)
 
