@@ -40,6 +40,16 @@ Overall:  [====================] 5 of 5 phases complete (100%)
 
 Phase directories remain in `.planning/phases/` as raw execution history — run `/gsd-cleanup` to archive them retroactively.
 
+## Pre-Launch Audit Remediation (2026-06-18)
+
+Working through the 6 go-live blockers from `.planning/audits/PRE-LAUNCH-AUDIT-2026-06-18.md`. Code-review gate run per task; ONE consolidated browser pre-smoke + push planned after all code fixes land.
+
+### Quick Tasks Completed
+
+| # | Description | Date | Commits | Code Review | Browser Smoke |
+|---|-------------|------|---------|-------------|---------------|
+| 260618-sjo | Blockers 1+2: enforce entitlement at data/action layer (gate ~29 actions + LinkedIn route + checkCap status-deny + public-apply AI skip) | 2026-06-18 | 58f07b5, b178f2a, 0a4e62e | ✅ clean (0 crit/high/med, 3 info) | ⏳ batch |
+
 ## Open Items (carried into next milestone)
 
 - Rotate Stripe & Supabase secret keys (revoke old keys only after replacements confirmed working).
