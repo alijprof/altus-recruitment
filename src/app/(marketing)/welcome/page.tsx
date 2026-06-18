@@ -85,7 +85,7 @@ export default function WelcomePage() {
                 style={{ backgroundColor: '#fff', color: '#0A3D5C' }}
               >
                 <Link href="/sign-up">
-                  Get started free
+                  Start free trial
                   <ArrowRight className="ml-2 size-4" aria-hidden="true" />
                 </Link>
               </Button>
@@ -100,7 +100,7 @@ export default function WelcomePage() {
               </Button>
             </div>
             <p className="mt-4 text-xs text-white/70">
-              No credit card required to start. Cancel anytime.
+              14 days free — cancel before day 14 and you will not be charged.
             </p>
           </div>
         </div>
@@ -195,7 +195,7 @@ export default function WelcomePage() {
               style={{ backgroundColor: '#fff', color: '#0A3D5C' }}
             >
               <Link href="/sign-up">
-                Get started free
+                Start free trial
                 <ArrowRight className="ml-2 size-4" aria-hidden="true" />
               </Link>
             </Button>

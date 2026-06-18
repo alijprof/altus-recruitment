@@ -158,7 +158,7 @@ export default function FeaturesPage() {
             <div className="mt-8 flex justify-center gap-4">
               <Button asChild size="lg" style={{ backgroundColor: '#0A3D5C' }}>
                 <Link href="/sign-up">
-                  Get started free
+                  Start free trial
                   <ArrowRight className="ml-2 size-4" aria-hidden="true" />
                 </Link>
               </Button>
@@ -230,7 +230,7 @@ export default function FeaturesPage() {
               style={{ backgroundColor: '#fff', color: '#0A3D5C' }}
             >
               <Link href="/sign-up">
-                Get started free
+                Start free trial
                 <ArrowRight className="ml-2 size-4" aria-hidden="true" />
               </Link>
             </Button>

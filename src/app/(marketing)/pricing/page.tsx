@@ -45,7 +45,7 @@ const FAQ_ITEMS = [
   },
   {
     q: 'Is there a free trial?',
-    a: 'You can start your workspace without a payment method and explore the app. Full AI features require an active plan. Contact us if you need a longer evaluation period.',
+    a: 'Yes — every new workspace starts with a 14-day free trial. Starting it takes a card, but you are not charged if you cancel before day 14, and you get full access (including AI) throughout. Contact us if you need a longer evaluation period.',
   },
   {
     q: 'Are prices ex-VAT?',
@@ -158,7 +158,7 @@ export default function PricingPage() {
             Ready to get started?
           </h2>
           <p className="text-muted-foreground mt-2">
-            No credit card required. Cancel anytime.
+            14-day free trial — cancel before day 14 and you will not be charged.
           </p>
           <div className="mt-6 flex justify-center gap-4">
             <Link
