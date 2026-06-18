@@ -30,6 +30,7 @@ import 'server-only'
 import * as Sentry from '@sentry/nextjs'
 
 import { getEntitlement } from '@/lib/stripe/entitlement'
+import { isEntitledStatus } from '@/lib/stripe/require-entitlement'
 import { PURPOSE_CAP_BUCKETS } from '@/lib/stripe/usage'
 import { createServiceClient } from '@/lib/supabase/service'
 import { sendCapWarningEmail } from '@/lib/email/billing-emails'
@@ -96,6 +97,16 @@ export async function checkCap(orgId: string, purpose: string): Promise<CapCheck
     })
     // Fail open — a billing error should not block AI features.
     return { allow: true, mode: 'normal', bucket }
+  }
+
+  // Entitlement gate (audit blocker 2). Fail-open-on-error (above) vs
+  // fail-closed-on-definitive-status (here): a transient DB error must not
+  // block a paying customer's AI, but a DEFINITIVE non-entitled status
+  // (lapsed/cancelled/past_due/none) must deny — those orgs otherwise burn
+  // paid AI keys to the monthly cap. Status entitled ⟺ {trialing, active}
+  // (matches the layout + requireEntitledOrg exactly).
+  if (!isEntitledStatus(entitlement.status)) {
+    return { allow: false, mode: 'hard', bucket }
   }
 
   const cap = entitlement.aiCaps[bucket as keyof AiUsageAggregate]

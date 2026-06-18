@@ -1,3 +1,4 @@
+import * as Sentry from '@sentry/nextjs'
 import { redirect } from 'next/navigation'
 
 import { CapWarningBanner } from '@/components/app/cap-warning-banner'
@@ -45,8 +46,13 @@ export default async function AppLayout({ children }: { children: React.ReactNod
     hardCapBreached = entitlement.hardCapBreached
     entitlementStatus = entitlement.status
     entitled = entitlement.status === 'trialing' || entitlement.status === 'active'
-  } catch {
-    // Ignore — billing unavailable should not block the whole app.
+  } catch (err) {
+    // Fail open — billing unavailable must not lock paying customers out of
+    // the whole app — but capture the error so a silent billing outage is
+    // observable (audit rank 22). The entitled=true defaults above are kept.
+    Sentry.captureException(err, {
+      tags: { layer: 'billing', helper: 'AppLayout', step: 'getEntitlement' },
+    })
   }
 
   // Return the paywall instead of the CRM for gated orgs.

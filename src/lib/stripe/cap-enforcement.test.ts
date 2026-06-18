@@ -43,6 +43,18 @@ vi.mock('@/lib/supabase/service', () => ({
   createServiceClient: vi.fn(),
 }))
 
+// require-entitlement pulls in createClient/getProfile at module load (via its
+// requireEntitledOrg export). cap-enforcement only consumes its PURE
+// isEntitledStatus helper — stub the I/O deps so the real predicate runs while
+// the module imports cleanly under Vitest.
+vi.mock('@/lib/db/profiles', () => ({
+  getProfile: vi.fn(),
+}))
+
+vi.mock('@/lib/supabase/server', () => ({
+  createClient: vi.fn(),
+}))
+
 import type { Mock } from 'vitest'
 import { getEntitlement } from '@/lib/stripe/entitlement'
 import { createServiceClient } from '@/lib/supabase/service'
@@ -174,6 +186,59 @@ describe('checkCap', () => {
     expect(result.mode).toBe('hard')
     expect(result.bucket).toBe('cvParses')
   })
+
+  // Entitlement-status deny matrix (audit blocker 2, quick task 260618-sjo).
+  // A capped purpose UNDER cap must still be DENIED when the org is not
+  // entitled (status ∉ {trialing, active}).
+  it.each(['none', 'past_due', 'cancelled'] as const)(
+    'non-entitled status %s → hard deny even under cap',
+    async (status) => {
+      mockGetEntitlement.mockResolvedValue({
+        ...BASE_ENTITLEMENT,
+        status,
+        aiUsageThisMonth: {
+          matchScores: 0,
+          cvParses: 0,
+          searches: 0,
+          specMinutes: 0,
+          writingCalls: 0,
+        },
+        softCapBreached: false,
+        hardCapBreached: false,
+      })
+
+      const result = await checkCap('org-1', 'match_score')
+
+      expect(result.allow).toBe(false)
+      expect(result.mode).toBe('hard')
+      expect(result.bucket).toBe('matchScores')
+    },
+  )
+
+  it.each(['trialing', 'active'] as const)(
+    'entitled status %s under cap → allow',
+    async (status) => {
+      mockGetEntitlement.mockResolvedValue({
+        ...BASE_ENTITLEMENT,
+        status,
+        aiUsageThisMonth: {
+          matchScores: Math.floor(BASE_ENTITLEMENT.aiCaps.matchScores * 0.1),
+          cvParses: 0,
+          searches: 0,
+          specMinutes: 0,
+          writingCalls: 0,
+        },
+        softCapBreached: false,
+        hardCapBreached: false,
+      })
+
+      const result = await checkCap('org-1', 'match_score')
+
+      expect(result.allow).toBe(true)
+      expect(result.mode).toBe('normal')
+      expect(result.bucket).toBe('matchScores')
+    },
+  )
 
   it('unknown purpose → normal mode, allow true (unknown purposes are not capped)', async () => {
     mockGetEntitlement.mockResolvedValue({
