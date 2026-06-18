@@ -1,6 +1,8 @@
 import Image from 'next/image'
 import { notFound } from 'next/navigation'
 
+import * as Sentry from '@sentry/nextjs'
+
 import { getOrganizationBySlug } from '@/lib/db/organizations'
 import { BRAND_DEFAULTS, safeHex } from '@/lib/branding/colours'
 import { renderConsentTextV2 } from '@/lib/legal/consent'
@@ -82,7 +84,17 @@ export default async function ApplyPage({ params }: Props) {
       .maybeSingle()
     return anyUser.data?.email ?? null
   }
-  const contactEmail = (await resolveOrgContactEmail(org.id)) ?? org.name
+  const resolvedContact = await resolveOrgContactEmail(org.id)
+  if (!resolvedContact) {
+    // Impossible for a live org (every org gets an owner via handle_new_user) —
+    // log it rather than silently render a non-email contact string.
+    Sentry.captureMessage('apply: org has no resolvable contact email', {
+      level: 'warning',
+      tags: { layer: 'page', route: 'apply', organization_id: org.id },
+    })
+  }
+  // Neutral, grammatical fallback — NEVER a vendor address, never a fake email.
+  const contactEmail = resolvedContact ?? 'the agency directly'
   const consentText = renderConsentTextV2({ orgName: org.name, contactEmail })
 
   return (

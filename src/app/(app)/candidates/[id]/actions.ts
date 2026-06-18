@@ -491,6 +491,23 @@ export async function deleteCandidateAction(rawInput: unknown): Promise<DeleteCa
     .eq('candidate_id', candidateId)
     .not('audio_storage_path', 'is', null)
 
+  // If the path-capture query itself errored, the cascade below will still
+  // delete the rows — leaving the files orphaned with no pointer. Surface that
+  // (code-only, no PII) so a systematic failure is visible, not silent.
+  if (cvPathRows.error || voiceAudioRows.error) {
+    Sentry.captureException(
+      new Error('candidate erasure: storage-path capture failed — files may be orphaned'),
+      {
+        tags: {
+          layer: 'server-action',
+          action: 'deleteCandidateAction',
+          subop: 'path-capture',
+          candidate_id: candidateId,
+        },
+      },
+    )
+  }
+
   const cvPaths = (cvPathRows.data ?? [])
     .map((r) => r.storage_path)
     .filter((p): p is string => typeof p === 'string' && p.length > 0)

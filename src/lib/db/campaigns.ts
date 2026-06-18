@@ -134,12 +134,19 @@ export async function createCampaign(
 // A double-submit / Server-Action retry / second tab can call approve twice,
 // each creating a fresh campaign row with fresh recipient UUIDs — so the same
 // consented contact receives the email TWICE (a PECR problem + doubled Resend
-// and Sonnet spend that cannot be un-sent). The client isSending gate only
-// blocks a same-tab double-click, not a retry/second tab. This server-side
-// guard finds an existing just-created campaign with the same (org, name,
-// segment) so the caller can short-circuit instead of sending again. The
-// window is deliberately short so a deliberate re-send of a same-named
-// campaign later is still allowed (audit rank 7).
+// and Sonnet spend that cannot be un-sent). This server-side guard finds an
+// existing just-created campaign with the same (org, name, segment) so the
+// caller can short-circuit instead of sending again. The window is deliberately
+// short so a deliberate re-send of a same-named campaign later is still allowed
+// (audit rank 7).
+//
+// SCOPE / LIMIT: this is a check-then-act read with no backing DB unique
+// constraint, so it reliably catches SEQUENTIAL resubmits (the realistic case:
+// retry after an apparent hang, a re-click seconds later, a second tab) but is
+// NOT atomic against two genuinely simultaneous approvals racing the SELECT
+// before either INSERTs. The client isSending gate covers same-tab simultaneity.
+// The fully-atomic fix (recommended fast-follow) is an idempotency_key column +
+// partial unique index, treating 23505 as "duplicate exists".
 // ---------------------------------------------------------------------------
 const DUPLICATE_WINDOW_MS = 5 * 60 * 1000 // 5 minutes
 
