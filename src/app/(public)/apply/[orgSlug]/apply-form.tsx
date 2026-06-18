@@ -385,6 +385,18 @@ export function ApplyForm({ orgSlug, orgName, consentText, contactEmail }: Apply
           <div className="text-muted-foreground rounded-md border p-3 text-xs whitespace-pre-line">
             {consentText}
           </div>
+          <p className="text-muted-foreground text-xs">
+            Read our{' '}
+            <a
+              href="/privacy"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="underline"
+            >
+              privacy policy
+            </a>{' '}
+            for full details on how your data is handled.
+          </p>
 
           <FormField
             control={form.control}

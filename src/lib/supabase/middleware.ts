@@ -61,6 +61,11 @@ const PUBLIC_PATHS = [
   '/features',
   '/docs',
   '/status',
+  // Public legal pages (audit blocker 3). Unauthenticated job applicants on the
+  // /apply/<slug> form link to /privacy from the consent block, so it MUST be
+  // reachable without a session. /terms is public for the same footer-link reason.
+  '/privacy',
+  '/terms',
   // PECR one-click unsubscribe (Quick 260612-0f4).
   // Recipients who click the unsubscribe link in a campaign email carry NO
   // Supabase session cookie — they are fully unauthenticated by design.
