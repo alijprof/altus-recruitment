@@ -48,6 +48,7 @@ import { checkApplyFormRateLimit } from '@/lib/integrations/apply-form-rate-limi
 import { verifyTurnstileToken } from '@/lib/integrations/turnstile'
 import { isBlockedEmailDomain } from '@/lib/legal/apply-form-blocklist'
 import { CURRENT_CONSENT_VERSION } from '@/lib/legal/consent'
+import { isOrgEntitled } from '@/lib/stripe/require-entitlement'
 import { createServiceClient } from '@/lib/supabase/service'
 
 import { applyFormSchema, type ApplyFormInput } from './schema'
@@ -522,6 +523,26 @@ export async function confirmApplyAction(args: {
         ok: false,
         formError: 'CV upload did not complete. Please try again.',
       }
+    }
+
+    // 2b. Entitlement gate on AI spend ONLY (quick task 260618-sjo / audit
+    //     blocker 2). The application itself is NOT a paid feature for the
+    //     applicant — the candidate + CV + consent rows are already written
+    //     above and we KEEP them. But a non-entitled org must not drive the
+    //     Haiku parse + Voyage embed pipeline (the embed path bypasses
+    //     checkCap entirely, so this is the only place it can be stopped).
+    //     isOrgEntitled fails CLOSED on a getEntitlement error → no AI spend,
+    //     which is the safe outcome (the recruiter can re-trigger parsing
+    //     from the candidate detail page once billing is active).
+    if (!(await isOrgEntitled(args.organizationId))) {
+      Sentry.addBreadcrumb({
+        category: 'apply-form',
+        message: 'confirm: org not entitled — candidate kept, AI parse/embed skipped',
+        level: 'info',
+      })
+      // Skip the cv/uploaded enqueue. The candidate + CV are stored; only the
+      // AI parse/embed is withheld until the org is entitled again.
+      return { ok: true, redirectTo: `/apply/${args.orgSlug}/success` }
     }
 
     // 3. Fire cv/uploaded. Reuses the Phase 1 parse pipeline → Plan 1

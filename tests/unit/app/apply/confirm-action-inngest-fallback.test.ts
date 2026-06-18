@@ -39,6 +39,13 @@ vi.mock('@/lib/inngest/client', () => ({
   },
 }))
 
+// Entitlement gate (quick task 260618-sjo): the org is entitled, so the
+// cv/uploaded enqueue path runs and we can exercise the inngest-failure
+// fallback (M-8). The not-entitled skip path is covered in its own test.
+vi.mock('@/lib/stripe/require-entitlement', () => ({
+  isOrgEntitled: vi.fn(async () => true),
+}))
+
 // Stub the service client to return:
 //   * candidate_cvs row by id → matching row
 //   * storage.list → exact-name match
