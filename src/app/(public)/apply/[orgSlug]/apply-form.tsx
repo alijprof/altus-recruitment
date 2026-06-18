@@ -65,9 +65,13 @@ export type ApplyFormProps = {
   orgSlug: string
   orgName: string
   consentText: string
+  // The agency's own (controller) contact email, resolved server-side from the
+  // org owner. Shown in upload-error copy so applicants reach the agency — never
+  // a vendor address (audit blocker 6).
+  contactEmail: string
 }
 
-export function ApplyForm({ orgSlug, orgName, consentText }: ApplyFormProps) {
+export function ApplyForm({ orgSlug, orgName, consentText, contactEmail }: ApplyFormProps) {
   const [isPending, startTransition] = useTransition()
   const [file, setFile] = useState<File | null>(null)
   const [fileError, setFileError] = useState<string | null>(null)
@@ -172,9 +176,7 @@ export function ApplyForm({ orgSlug, orgName, consentText }: ApplyFormProps) {
         uploadOk = false
       }
       if (!uploadOk) {
-        toast.error(
-          'CV upload failed. Please try again, or email careers@altus.co.uk.',
-        )
+        toast.error(`CV upload failed. Please try again, or email ${contactEmail}.`)
         resetTurnstile()
         return
       }
@@ -189,7 +191,7 @@ export function ApplyForm({ orgSlug, orgName, consentText }: ApplyFormProps) {
       })
       if (!confirmResult.ok) {
         toast.error(
-          'Your CV uploaded but we couldn’t confirm it. Email careers@altus.co.uk and we’ll sort it.',
+          `Your CV uploaded but we couldn’t confirm it. Email ${contactEmail} and we’ll sort it.`,
         )
         resetTurnstile()
         return

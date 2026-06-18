@@ -56,13 +56,34 @@ export default async function ApplyPage({ params }: Props) {
   const brandPrimary = safeHex(org.brand_primary, BRAND_DEFAULTS.primary)
   const brandSecondary = safeHex(org.brand_secondary, BRAND_DEFAULTS.secondary)
 
-  // Contact email is a generic mailbox; per-org branding (incl. contact
-  // address) lands in Phase 5 SaaS shell. Until then, every consent block
-  // points at the same Altus mailbox.
-  const consentText = renderConsentTextV2({
-    orgName: org.name,
-    contactEmail: 'careers@altus.co.uk',
-  })
+  // GDPR consent + apply-form error copy must point applicants at the data
+  // CONTROLLER (the agency itself), never a vendor mailbox. Resolve the org
+  // owner's real, monitored email; fall back to any org user. The org name is
+  // used only in the impossible no-users case — NEVER an Altus address.
+  // (Pre-launch audit blocker 6: the old hardcoded careers@altus.co.uk is a
+  // dead, unowned third-party domain that was shown to every tenant's
+  // applicants — misrouting their GDPR data-subject requests.)
+  async function resolveOrgContactEmail(orgId: string): Promise<string | null> {
+    const owner = await supabase
+      .from('users')
+      .select('email')
+      .eq('organization_id', orgId)
+      .eq('role', 'owner')
+      .order('created_at', { ascending: true })
+      .limit(1)
+      .maybeSingle()
+    if (owner.data?.email) return owner.data.email
+    const anyUser = await supabase
+      .from('users')
+      .select('email')
+      .eq('organization_id', orgId)
+      .order('created_at', { ascending: true })
+      .limit(1)
+      .maybeSingle()
+    return anyUser.data?.email ?? null
+  }
+  const contactEmail = (await resolveOrgContactEmail(org.id)) ?? org.name
+  const consentText = renderConsentTextV2({ orgName: org.name, contactEmail })
 
   return (
     // CSS custom properties injected via React style object — NEVER via a
@@ -114,7 +135,12 @@ export default async function ApplyPage({ params }: Props) {
         </div>
       </header>
 
-      <ApplyForm orgSlug={org.slug} orgName={org.name} consentText={consentText} />
+      <ApplyForm
+        orgSlug={org.slug}
+        orgName={org.name}
+        consentText={consentText}
+        contactEmail={contactEmail}
+      />
     </div>
   )
 }
