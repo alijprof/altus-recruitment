@@ -29,6 +29,7 @@ import {
 } from '@/components/ui/table'
 import { getOrgAdminDetail } from '@/lib/admin/queries'
 import { OverrideForm } from './OverrideForm'
+import { ManualAccessForm } from './ManualAccessForm'
 
 type Props = {
   params: Promise<{ orgId: string }>
@@ -213,6 +214,27 @@ export default async function AdminOrgDetailPage({ params }: Props) {
         </CardHeader>
         <CardContent>
           <OverrideForm orgId={detail.orgId} override={detail.override} />
+        </CardContent>
+      </Card>
+
+      {/* Manual access — invoice-billed (no Stripe). Client component (form state). */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base font-semibold">Manual access (invoice-billed)</CardTitle>
+          <CardDescription>
+            Grant full access without Stripe — for customers you bill by invoice / bank transfer.
+            Sets an active subscription with no card, so they never see the paywall. Revoke to send
+            them back to it.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <ManualAccessForm
+            orgId={detail.orgId}
+            currentPlanKey={detail.planKey}
+            currentSeats={detail.planSeats}
+            status={detail.status}
+            hasStripeSubscription={detail.stripeSubscriptionId !== null}
+          />
         </CardContent>
       </Card>
     </div>
