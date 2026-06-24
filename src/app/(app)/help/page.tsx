@@ -120,8 +120,10 @@ export default function HelpPage() {
               fallback catches exact-match cases where semantic ranking misses.
             </p>
             <p>
-              Results show a match explanation — a one-line AI summary of why this candidate fits —
-              so you can triage quickly.
+              When you open a job and view its{' '}
+              <span className="text-foreground font-medium">top matches</span>, each ranked candidate
+              comes with a one-line AI explanation of why they fit the role — so you can triage a
+              live vacancy at a glance.
             </p>
           </div>
           <ScreenshotSlot
