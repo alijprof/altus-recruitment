@@ -80,6 +80,12 @@ export function ApplyForm({ orgSlug, orgName, consentText, contactEmail }: Apply
   // ref-based imperative reset() API and side-steps the React Compiler's
   // "no refs in render" rule.
   const [turnstileKey, setTurnstileKey] = useState(0)
+  // Set when the Turnstile widget fails to load/verify (e.g. a Cloudflare
+  // 110200 "domain not allowed" misconfig, or a network blip/outage). We surface
+  // a human fallback (email the recruiter) so an applicant never hits a silent
+  // dead end. This NEVER bypasses verification — submit stays disabled without a
+  // valid token; it only offers an alternative way to reach the agency.
+  const [turnstileError, setTurnstileError] = useState(false)
 
   const siteKey = process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY
   const devBypass = !siteKey
@@ -134,6 +140,7 @@ export function ApplyForm({ orgSlug, orgName, consentText, contactEmail }: Apply
   // Tokens are single-use; a failed submission must re-challenge.
   const resetTurnstile = useCallback(() => {
     form.setValue('turnstile_token', '')
+    setTurnstileError(false)
     setTurnstileKey((k) => k + 1)
   }, [form])
 
@@ -463,13 +470,31 @@ export function ApplyForm({ orgSlug, orgName, consentText, contactEmail }: Apply
               ) : null}
             </div>
           ) : (
-            <Turnstile
-              key={turnstileKey}
-              siteKey={siteKey ?? ''}
-              onSuccess={(token) => form.setValue('turnstile_token', token)}
-              onExpire={() => form.setValue('turnstile_token', '')}
-              onError={() => form.setValue('turnstile_token', '')}
-            />
+            <>
+              <Turnstile
+                key={turnstileKey}
+                siteKey={siteKey ?? ''}
+                onSuccess={(token) => {
+                  setTurnstileError(false)
+                  form.setValue('turnstile_token', token)
+                }}
+                onExpire={() => form.setValue('turnstile_token', '')}
+                onError={() => {
+                  setTurnstileError(true)
+                  form.setValue('turnstile_token', '')
+                }}
+              />
+              {turnstileError ? (
+                <p role="alert" className="text-sm text-amber-700">
+                  We couldn&rsquo;t load the verification check. Please email your CV directly
+                  to{' '}
+                  <a href={`mailto:${contactEmail}`} className="font-medium underline">
+                    {contactEmail}
+                  </a>{' '}
+                  and we&rsquo;ll be in touch.
+                </p>
+              ) : null}
+            </>
           )}
           {/* The form-level field message attaches to turnstile_token. */}
           <FormField
