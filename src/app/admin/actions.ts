@@ -20,10 +20,13 @@
 // ---------------------------------------------------------------------------
 
 import { revalidatePath } from 'next/cache'
+import { headers } from 'next/headers'
 import * as Sentry from '@sentry/nextjs'
 import { z } from 'zod'
 
 import { requireSuperAdmin } from '@/lib/admin/guard'
+import { sendResendEmail } from '@/lib/email/resend'
+import { env } from '@/lib/env'
 import { createServiceClient } from '@/lib/supabase/service'
 
 // ---------------------------------------------------------------------------
@@ -433,4 +436,220 @@ export async function revokeManualAccessAction(orgId: string): Promise<AdminActi
   revalidatePath(`/admin/${orgId}`)
 
   return { ok: true, message: 'Manual access revoked — the org will see the paywall on next load.' }
+}
+
+// ---------------------------------------------------------------------------
+// provisionExternalOrgAction — one-click onboarding of a NEW external customer
+// (handover blocker 3).
+//
+// Creates the customer's auth user (the on_auth_user_created trigger builds
+// their isolated org + owner row from the metadata), comps the org with
+// invoice-billed access, sets a per-org monthly AI-spend cap, and emails them a
+// login link via Resend. Because the comp + cap are written BEFORE the link is
+// sent, the customer never hits the first-login paywall/card screen, and the
+// Resend-sent link bypasses Supabase's auth-email throttle entirely.
+//
+// GATE: requireSuperAdmin() first, before any service-role client.
+// ---------------------------------------------------------------------------
+
+const provisionExternalOrgSchema = z.object({
+  email: z.string().email(),
+  orgName: z.string().min(1).max(200),
+  fullName: z.string().max(200).optional(),
+  planKey: z.enum(MANUAL_PLAN_KEYS),
+  seats: z.number().int().positive().max(500),
+  // null = no per-org cap (global backstop still applies). 0 = freeze all AI.
+  monthlySpendCapPence: z.number().int().min(0).max(10_000_000).nullable(),
+})
+
+// Absolute origin for building the login link. Prefers the configured public
+// site URL; falls back to the request host (safe on Vercel).
+async function resolveSiteUrl(): Promise<string> {
+  if (env.NEXT_PUBLIC_SITE_URL) return env.NEXT_PUBLIC_SITE_URL.replace(/\/$/, '')
+  const h = await headers()
+  const host = h.get('x-forwarded-host') ?? h.get('host') ?? 'altusrecruit.com'
+  const proto = h.get('x-forwarded-proto') ?? 'https'
+  return `${proto}://${host}`
+}
+
+function provisionWelcomeHtml(args: { orgName: string; loginUrl: string; siteUrl: string }): string {
+  // Minimal branded welcome email. The orgName is operator-entered (trusted),
+  // but escape it anyway for defence in depth in email clients.
+  const safeOrg = args.orgName
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+  return `<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="font-family:sans-serif;max-width:600px;margin:0 auto;padding:24px;color:#1a1a1a">
+  <h1 style="font-size:20px;color:#0A3D5C;margin:0 0 16px">Welcome to Altus</h1>
+  <p style="margin:0 0 16px">Your workspace for <strong>${safeOrg}</strong> is ready. Click below to sign in — no password needed.</p>
+  <p style="margin:0 0 24px">
+    <a href="${args.loginUrl}" style="display:inline-block;background:#0A3D5C;color:#fff;text-decoration:none;padding:12px 20px;border-radius:6px;font-weight:600">Sign in to Altus</a>
+  </p>
+  <p style="font-size:13px;color:#6b7280;margin:0 0 8px">This link signs you in directly and expires after a short while. If it has expired, you can request a fresh link any time at <a href="${args.siteUrl}/sign-in" style="color:#0A3D5C">${args.siteUrl}/sign-in</a> using this email address.</p>
+  <p style="font-size:12px;color:#9ca3af;margin:16px 0 0">If you weren't expecting this, you can ignore this email.</p>
+</body></html>`
+}
+
+export async function provisionExternalOrgAction(input: {
+  email: string
+  orgName: string
+  fullName?: string
+  planKey: string
+  seats: number
+  monthlySpendCapPence: number | null
+}): Promise<AdminActionResult> {
+  // GATE — must be first.
+  const admin = await requireSuperAdmin()
+
+  const parsed = provisionExternalOrgSchema.safeParse(input)
+  if (!parsed.success) {
+    return { ok: false, error: 'Invalid input: ' + parsed.error.message }
+  }
+  const { email, orgName, fullName, planKey, seats, monthlySpendCapPence } = parsed.data
+
+  const serviceClient = createServiceClient()
+
+  // 1. Create the confirmed auth user. The on_auth_user_created trigger
+  //    (handle_new_user) creates the isolated org + owner row from the metadata,
+  //    inside the same transaction — so the org exists once this resolves.
+  const { data: created, error: createErr } = await serviceClient.auth.admin.createUser({
+    email,
+    email_confirm: true,
+    user_metadata: {
+      organization_name: orgName,
+      ...(fullName ? { full_name: fullName } : {}),
+    },
+  })
+  if (createErr || !created?.user) {
+    const alreadyExists = (createErr?.message ?? '').toLowerCase().includes('already')
+    if (!alreadyExists) {
+      Sentry.captureException(createErr ?? new Error('provision: createUser returned no user'), {
+        tags: { layer: 'admin', action: 'provisionExternalOrgAction', step: 'createUser' },
+      })
+    }
+    return {
+      ok: false,
+      error: alreadyExists
+        ? `A user with ${email} already exists — this tool is for brand-new customers only.`
+        : 'Could not create the user. Check Sentry for details.',
+    }
+  }
+  const userId = created.user.id
+
+  // 2. Resolve the org the trigger just created for this user.
+  const { data: userRow, error: userErr } = await serviceClient
+    .from('users')
+    .select('organization_id')
+    .eq('id', userId)
+    .maybeSingle()
+  if (userErr || !userRow?.organization_id) {
+    Sentry.captureException(userErr ?? new Error('provision: org row missing after createUser'), {
+      tags: { layer: 'admin', action: 'provisionExternalOrgAction', step: 'resolveOrg' },
+    })
+    return {
+      ok: false,
+      error: 'User created, but their organisation could not be resolved. Check /admin and Supabase.',
+    }
+  }
+  const orgId = userRow.organization_id
+
+  // 3. Comp the org: active, invoice-billed, no Stripe (same shape as
+  //    grantManualAccessAction). This lifts the paywall + allows AI.
+  const { error: subErr } = await serviceClient.from('subscriptions').upsert(
+    {
+      organization_id: orgId,
+      plan_key: planKey,
+      plan_seats: seats,
+      status: 'active',
+      trial_end: null,
+      current_period_end: null,
+    },
+    { onConflict: 'organization_id' },
+  )
+  if (subErr) {
+    Sentry.captureException(subErr, {
+      tags: { layer: 'admin', action: 'provisionExternalOrgAction', step: 'subscription', org_id: orgId },
+    })
+    return {
+      ok: false,
+      error: 'User + org created, but granting access failed. Use Manual access on the org page.',
+    }
+  }
+
+  // 4. Set the per-org monthly AI-spend ceiling (cost guardrail). Non-fatal:
+  //    if it fails, access is still granted and the global env backstop applies.
+  if (monthlySpendCapPence !== null) {
+    const overrideClient = serviceClient as unknown as {
+      from: (table: 'plan_overrides') => {
+        upsert: (
+          payload: {
+            organization_id: string
+            monthly_spend_cap_pence: number
+            note: string
+            updated_by: string
+            updated_at: string
+          },
+          opts: { onConflict: string },
+        ) => Promise<{ error: unknown }>
+      }
+    }
+    const { error: capErr } = await overrideClient.from('plan_overrides').upsert(
+      {
+        organization_id: orgId,
+        monthly_spend_cap_pence: monthlySpendCapPence,
+        note: `External trial — £${(monthlySpendCapPence / 100).toFixed(2)}/mo AI cap (provisioned)`,
+        updated_by: admin.id,
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: 'organization_id' },
+    )
+    if (capErr) {
+      Sentry.captureException(capErr, {
+        tags: { layer: 'admin', action: 'provisionExternalOrgAction', step: 'spendCap', org_id: orgId },
+      })
+    }
+  }
+
+  // 5. Generate a magic login link and email it via Resend (bypasses the
+  //    Supabase auth-email throttle). Non-fatal: if it fails, the account
+  //    already exists, so the customer can sign in at /sign-in instead.
+  const siteUrl = await resolveSiteUrl()
+  let emailed = false
+  const { data: linkData, error: linkErr } = await serviceClient.auth.admin.generateLink({
+    type: 'magiclink',
+    email,
+  })
+  const tokenHash = linkData?.properties?.hashed_token
+  if (!linkErr && tokenHash) {
+    const loginUrl = `${siteUrl}/auth/confirm?token_hash=${encodeURIComponent(tokenHash)}&type=magiclink&next=%2F`
+    const sendResult = await sendResendEmail({
+      to: email,
+      subject: 'Your Altus account is ready',
+      html: provisionWelcomeHtml({ orgName, loginUrl, siteUrl }),
+    })
+    emailed = sendResult.ok
+    if (!sendResult.ok) {
+      Sentry.captureMessage('provision: welcome email send failed', {
+        level: 'warning',
+        tags: { layer: 'admin', action: 'provisionExternalOrgAction', reason: sendResult.reason },
+      })
+    }
+  } else if (linkErr) {
+    Sentry.captureException(linkErr, {
+      tags: { layer: 'admin', action: 'provisionExternalOrgAction', step: 'generateLink', org_id: orgId },
+    })
+  }
+
+  revalidatePath('/admin')
+
+  const capLabel =
+    monthlySpendCapPence !== null ? `, £${(monthlySpendCapPence / 100).toFixed(2)}/mo AI cap` : ''
+  return {
+    ok: true,
+    message: emailed
+      ? `Provisioned "${orgName}" (${planKey}${capLabel}) and emailed a login link to ${email}.`
+      : `Provisioned "${orgName}" (${planKey}${capLabel}), but the login email could NOT be sent — have them sign in at ${siteUrl}/sign-in (their account already exists).`,
+  }
 }

@@ -82,6 +82,19 @@ export const env = createEnv({
     // `process.env` while exposing a number at the call site.
     MAX_MONTHLY_MATCH_SPEND_PENCE: z.coerce.number().int().positive().default(10_000),
 
+    // --- Handover cost guardrail: global AI-spend backstop --------------
+    // A per-org hard ceiling on TOTAL month-to-date AI spend (sum of
+    // ai_usage.cost_pence across ALL purposes), enforced in checkCap
+    // (src/lib/stripe/spend-ceiling.ts + cap-enforcement.ts). This is a
+    // generous BACKSTOP against runaway/abuse on the founder's shared API
+    // keys — every comped org's AI spend is paid by the founder. It is NOT a
+    // per-customer budget: a tight per-customer limit is set via
+    // plan_overrides.monthly_spend_cap_pence, which takes precedence when
+    // lower. Default 300000 pence = £3000/org/month — only genuine runaway
+    // trips it (a normal 2-3 person agency spends ~£20-50/month). Set to 0 to
+    // disable the global backstop entirely (per-org caps still apply).
+    MAX_MONTHLY_AI_SPEND_PENCE: z.coerce.number().int().min(0).default(300_000),
+
     // --- Phase 3: LinkedIn capture (Plan 03-01) -------------------------
     // Pinned chrome-extension ID. The extension's manifest.json "key" field
     // ensures the ID is stable across reloads + side-loads on every

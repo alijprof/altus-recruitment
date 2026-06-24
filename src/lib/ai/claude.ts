@@ -103,7 +103,7 @@ export async function runWithLogging(args: RunArgs): Promise<Anthropic.Message> 
       )
       try {
         const supabase = createServiceClient()
-        await supabase.rpc('record_ai_usage', {
+        const { error: logError } = await supabase.rpc('record_ai_usage', {
           p_organization_id: args.organizationId,
           p_model: args.model,
           p_purpose: args.purpose,
@@ -113,9 +113,20 @@ export async function runWithLogging(args: RunArgs): Promise<Anthropic.Message> 
           p_latency_ms: Date.now() - started,
           ...(args.userId ? { p_user_id: args.userId } : {}),
         })
+        if (logError) {
+          // supabase.rpc() resolves with { error } on a DB failure — it does
+          // NOT throw. Without this check a dropped cost row is invisible and
+          // the founder under-counts per-tenant spend (non-negotiable,
+          // CLAUDE.md). Wrap to code only — never pass the raw error (PII).
+          Sentry.captureException(
+            new Error(`record_ai_usage:${logError.code ?? 'rpc_error'}`),
+            { tags: { layer: 'ai', helper: 'record_ai_usage', model: args.model } },
+          )
+        }
       } catch (logErr) {
-        Sentry.captureException(logErr, {
-          tags: { layer: 'ai', helper: 'record_ai_usage' },
+        const name = logErr instanceof Error ? logErr.name : 'UnknownError'
+        Sentry.captureException(new Error(`record_ai_usage:${name}`), {
+          tags: { layer: 'ai', helper: 'record_ai_usage', model: args.model },
         })
       }
       return response

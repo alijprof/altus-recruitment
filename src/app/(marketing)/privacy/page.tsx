@@ -3,17 +3,21 @@ import type { Metadata } from 'next'
 // Public privacy notice. Reachable unauthenticated (added to PUBLIC_PATHS) so
 // job applicants on the /apply/<slug> form can read it from the consent block.
 //
-// ⚠️ SCAFFOLD — this is a TEMPLATE with sensible UK GDPR/PECR defaults. It MUST
-// be reviewed and finalised by a UK data-protection solicitor before launch and
-// the [BRACKETED] placeholders filled in. It resolves pre-launch audit blocker 3
-// (the apply-form consent text promised a privacy policy that did not exist).
+// MULTI-TENANT: this is a PLATFORM-PROVIDED notice shown to applicants of every
+// agency using Altus. The data controller is the recruitment agency the
+// applicant applied to (which differs per tenant), so the notice refers to "the
+// recruitment agency you applied to" generically rather than naming one agency.
+// Altus is the processor. Agencies with specific requirements (named ICO
+// registration, bespoke retention) should still take their own legal advice;
+// the Article 28 controller–processor DPA between Altus and each agency is a
+// separate signed document, not this page.
 
 export const metadata: Metadata = {
   title: 'Privacy Policy — Altus',
   description: 'How Altus and the recruitment agencies using it handle personal data.',
 }
 
-const LAST_UPDATED = '2026-06-18'
+const LAST_UPDATED = '2026-06-24'
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
@@ -34,32 +38,23 @@ export default function PrivacyPage() {
       </h1>
       <p className="text-muted-foreground mt-2 text-sm">Last updated: {LAST_UPDATED}</p>
 
-      {/* Visible draft banner — remove only once a solicitor has signed off. */}
-      <div
-        role="note"
-        className="mt-6 rounded-md border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900"
-      >
-        <strong>Draft — pending legal review.</strong> This notice is a template provided with the
-        Altus platform. Before you collect applicant data, have it reviewed by a UK
-        data-protection adviser and replace the <code>[bracketed]</code> placeholders with your
-        agency&rsquo;s details.
-      </div>
-
       <Section title="1. Who we are">
         <p>
-          This privacy notice explains how <strong>[AGENCY LEGAL NAME]</strong> (&ldquo;we&rdquo;,
-          the recruitment agency) handles your personal data when you apply for roles or are
-          considered for opportunities. We are the <strong>data controller</strong> for your
-          application data.
+          This privacy notice explains how the recruitment agency you applied to
+          (&ldquo;the agency&rdquo;, &ldquo;we&rdquo;) handles your personal data when you apply for
+          roles or are considered for opportunities. The agency is the{' '}
+          <strong>data controller</strong> for your application data.
         </p>
         <p>
-          We use Altus, an AI-first recruitment CRM, to manage candidate data on our behalf. Altus
-          acts as our <strong>data processor</strong> under a written data-processing agreement and
-          only processes your data on our documented instructions.
+          The agency uses Altus, an AI-first recruitment CRM, to manage candidate data on its
+          behalf. Altus acts as the agency&rsquo;s <strong>data processor</strong> under a written
+          data-processing agreement and only processes your data on the agency&rsquo;s documented
+          instructions.
         </p>
         <p>
-          Contact for data-protection matters: <strong>[AGENCY DP CONTACT EMAIL]</strong>. ICO
-          registration: <strong>[ICO REGISTRATION NUMBER]</strong>.
+          For data-protection matters, contact the recruitment agency you applied to — if you
+          applied through a link they sent you, you can reply to that email. You can also escalate to
+          the Information Commissioner&rsquo;s Office (see section 8).
         </p>
       </Section>
 
@@ -120,8 +115,8 @@ export default function PrivacyPage() {
       <Section title="6. International transfers">
         <p>
           Some sub-processors may process data outside the UK. Where they do, transfers are covered
-          by appropriate safeguards (such as the UK International Data Transfer Agreement or adequacy
-          decisions). [Confirm and detail with your adviser.]
+          by appropriate safeguards, such as the UK International Data Transfer Agreement or an
+          adequacy decision.
         </p>
       </Section>
 
@@ -136,8 +131,8 @@ export default function PrivacyPage() {
           <li>Withdraw consent at any time, without affecting prior processing</li>
         </ul>
         <p>
-          To exercise any of these, email us at <strong>[AGENCY DP CONTACT EMAIL]</strong>. We will
-          respond within one month.
+          To exercise any of these rights, contact the recruitment agency you applied to (the
+          controller of your data). We will respond within one month.
         </p>
       </Section>
 

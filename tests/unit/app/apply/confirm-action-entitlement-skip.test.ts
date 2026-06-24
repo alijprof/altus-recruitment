@@ -70,6 +70,12 @@ vi.mock('@/lib/stripe/require-entitlement', () => ({
   isOrgEntitled: vi.fn(async () => false),
 }))
 
+// confirmApplyAction now derives the org from the slug (the org UUID is no
+// longer passed by the client). Mock the slug → org lookup.
+vi.mock('@/lib/db/organizations', () => ({
+  getOrganizationBySlug: vi.fn(async () => ({ ok: true, data: { id: 'org-1' } })),
+}))
+
 describe('confirmApplyAction — entitlement AI-spend skip', () => {
   it('keeps the candidate (ok=true) but does NOT enqueue cv/uploaded when not entitled', async () => {
     inngestSendMock.mockClear()
@@ -78,7 +84,6 @@ describe('confirmApplyAction — entitlement AI-spend skip', () => {
     const result = await confirmApplyAction({
       candidateId: 'cand-1',
       candidateCvId: 'cv-1',
-      organizationId: 'org-1',
       orgSlug: 'acme-co',
     })
 

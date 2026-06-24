@@ -96,9 +96,10 @@ export type EmbedResult = {
  *     API call (Voyage rejects empty arrays).
  *   - > 128 inputs → throws (Voyage's per-call batch cap).
  *
- * Cost-logging failure is non-fatal: the SDK result is returned even if
- * the `record_ai_usage` RPC throws, but the failure is captured to Sentry
- * so per-tenant cost gaps are surfaced.
+ * Cost-logging failure is non-fatal: the SDK result is returned even if the
+ * `record_ai_usage` RPC reports an error (supabase.rpc resolves with { error }
+ * — it does NOT throw) or the call throws; either way the failure is captured
+ * to Sentry (code/name only) so per-tenant cost gaps are surfaced.
  */
 export async function embed(args: EmbedArgs): Promise<EmbedResult> {
   if (args.inputs.length === 0) {
@@ -124,7 +125,7 @@ export async function embed(args: EmbedArgs): Promise<EmbedResult> {
   // write — the caller still gets the vectors back.
   try {
     const supabase = createServiceClient()
-    await supabase.rpc('record_ai_usage', {
+    const { error: logError } = await supabase.rpc('record_ai_usage', {
       p_organization_id: args.organizationId,
       p_model: 'voyage-3',
       p_purpose: args.purpose,
@@ -134,8 +135,18 @@ export async function embed(args: EmbedArgs): Promise<EmbedResult> {
       p_latency_ms: Date.now() - started,
       ...(args.userId ? { p_user_id: args.userId } : {}),
     })
+    if (logError) {
+      // supabase.rpc() resolves with { error } on a DB failure — it does NOT
+      // throw. Check it explicitly or cost-log gaps are invisible (per-tenant
+      // cost logging is non-negotiable, CLAUDE.md). Wrap to code only (PII).
+      Sentry.captureException(
+        new Error(`record_ai_usage:${logError.code ?? 'rpc_error'}`),
+        { tags: { layer: 'ai', helper: 'record_ai_usage', model: 'voyage-3' } },
+      )
+    }
   } catch (logErr) {
-    Sentry.captureException(logErr, {
+    const name = logErr instanceof Error ? logErr.name : 'UnknownError'
+    Sentry.captureException(new Error(`record_ai_usage:${name}`), {
       tags: { layer: 'ai', helper: 'record_ai_usage', model: 'voyage-3' },
     })
   }

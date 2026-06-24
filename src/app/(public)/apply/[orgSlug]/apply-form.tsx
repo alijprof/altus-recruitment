@@ -186,7 +186,6 @@ export function ApplyForm({ orgSlug, orgName, consentText, contactEmail }: Apply
       const confirmResult = await confirmApplyAction({
         candidateId: submitResult.candidateId,
         candidateCvId: submitResult.candidateCvId,
-        organizationId: submitResult.organizationId,
         orgSlug,
       })
       if (!confirmResult.ok) {

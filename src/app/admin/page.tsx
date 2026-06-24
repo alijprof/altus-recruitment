@@ -21,6 +21,7 @@ import {
 } from '@/components/ui/table'
 import { Badge } from '@/components/ui/badge'
 import { getAllOrgsBillingOverview } from '@/lib/admin/queries'
+import { ProvisionExternalOrgForm } from './ProvisionExternalOrgForm'
 
 function statusBadgeVariant(
   status: string,
@@ -51,6 +52,8 @@ export default async function AdminOverviewPage() {
           cost (highest first)
         </p>
       </div>
+
+      <ProvisionExternalOrgForm />
 
       {dataIncomplete ? (
         <div className="rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">

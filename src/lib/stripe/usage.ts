@@ -26,6 +26,13 @@ export const PURPOSE_CAP_BUCKETS: Record<string, keyof AiUsageAggregate> = {
   outreach_draft: 'writingCalls',
   dormant_outreach_draft: 'writingCalls',
   jd_extract: 'writingCalls',
+  // Handover cost guardrail: these two purposes were previously absent from
+  // this map and so bypassed checkCap entirely (the unknown-purpose branch
+  // returns allow:true unconditionally). spec_jd_extract = spec-call JD
+  // extraction (Sonnet); ad_inclusivity_score = the ad inclusivity scorer
+  // (Sonnet, loopable). Both now count + cap under writingCalls.
+  spec_jd_extract: 'writingCalls',
+  ad_inclusivity_score: 'writingCalls',
   // Phase 4 additions (D4-09 / 04-01-PLAN.md):
   // voice_note_transcribe shares the specMinutes meter with spec_transcribe —
   // both are Whisper audio minutes billed per minute. Resolved in 04-RESEARCH.md Q2.

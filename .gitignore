@@ -54,3 +54,7 @@ supabase/.temp
 chrome-extension/dist/
 chrome-extension/node_modules/
 
+
+# Internal security/audit reports — attack narratives + remediation
+# roadmaps. NEVER publish to the (public) repo.
+.planning/audits/

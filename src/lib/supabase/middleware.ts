@@ -9,6 +9,10 @@ const PUBLIC_PATHS = [
   '/sign-in',
   '/sign-up',
   '/auth/callback',
+  // Admin-generated magic-link confirmation (token_hash flow). The customer is
+  // unauthenticated when they click the emailed login link; the route calls
+  // verifyOtp and sets the session. Same rationale as /auth/callback.
+  '/auth/confirm',
   '/auth/auth-code-error',
   // Inngest webhook — guarded by Inngest signing key, not Supabase auth.
   '/api/inngest',

@@ -65,7 +65,6 @@ export type SubmitApplyResult =
       signedUrl: string
       candidateCvId: string
       candidateId: string
-      organizationId: string
     }
   | { ok: false; fieldErrors: Record<string, string[] | undefined> }
   | { ok: false; formError: string }
@@ -444,7 +443,6 @@ export async function submitApplyAction(
       signedUrl: signed.signedUrl,
       candidateCvId,
       candidateId,
-      organizationId: org.id,
     }
   } catch (err) {
     // PII discipline (R4): NEVER pass `err` directly. Only err.name + a
@@ -469,20 +467,28 @@ export async function submitApplyAction(
 export async function confirmApplyAction(args: {
   candidateId: string
   candidateCvId: string
-  organizationId: string
   orgSlug: string
 }): Promise<ConfirmApplyResult> {
   try {
     const supabase = createServiceClient()
 
+    // 0. Re-derive the tenant server-side from the slug — the ONLY trusted
+    //    tenancy signal (see header block). The org UUID is NEVER accepted
+    //    from the client; submitApplyAction no longer returns it.
+    const orgResult = await getOrganizationBySlug(supabase, args.orgSlug)
+    if (!orgResult.ok) {
+      return { ok: false, formError: 'CV record not found.' }
+    }
+    const organizationId = orgResult.data.id
+
     // 1. Re-verify tenant boundary: the CV row must exist AND belong to
-    //    the (org, candidate) pair the client claims. This blocks a
-    //    malicious client from confirming a CV they don't own.
+    //    the (org, candidate) pair — org derived from the slug above. This
+    //    blocks a malicious client from confirming a CV they don't own.
     const { data: cvRow, error: cvReadError } = await supabase
       .from('candidate_cvs')
       .select('id, organization_id, candidate_id, storage_path, mime_type')
       .eq('id', args.candidateCvId)
-      .eq('organization_id', args.organizationId)
+      .eq('organization_id', organizationId)
       .eq('candidate_id', args.candidateId)
       .maybeSingle()
     if (cvReadError || !cvRow) {
@@ -534,7 +540,7 @@ export async function confirmApplyAction(args: {
     //     isOrgEntitled fails CLOSED on a getEntitlement error → no AI spend,
     //     which is the safe outcome (the recruiter can re-trigger parsing
     //     from the candidate detail page once billing is active).
-    if (!(await isOrgEntitled(args.organizationId))) {
+    if (!(await isOrgEntitled(organizationId))) {
       Sentry.addBreadcrumb({
         category: 'apply-form',
         message: 'confirm: org not entitled — candidate kept, AI parse/embed skipped',
@@ -556,7 +562,7 @@ export async function confirmApplyAction(args: {
       await inngest.send({
         name: 'cv/uploaded',
         data: {
-          organization_id: args.organizationId,
+          organization_id: organizationId,
           candidate_id: args.candidateId,
           candidate_cv_id: args.candidateCvId,
           storage_path: cvRow.storage_path,
