@@ -1,4 +1,4 @@
--- Handover cost guardrail (follow-up to 20260624000200) — server-side
+-- Handover cost guardrail (follow-up to 20260624151706) — server-side
 -- month-to-date AI-spend aggregate.
 --
 -- The £-ceiling helper (src/lib/stripe/spend-ceiling.ts) must sum an org's

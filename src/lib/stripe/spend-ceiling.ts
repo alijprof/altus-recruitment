@@ -29,7 +29,7 @@ import { createServiceClient } from '@/lib/supabase/service'
 
 // Sum of ai_usage.cost_pence for the org since the start of the current UTC
 // month (all purposes). Computed SERVER-SIDE via the
-// org_ai_spend_pence_this_month RPC (migration 20260624000300) so a busy/runaway
+// org_ai_spend_pence_this_month RPC (migration 20260624151720) so a busy/runaway
 // org's spend is never truncated by the PostgREST row cap (config.toml sets
 // max_rows = 1000) — a client-side row sum would silently under-count and fail
 // the ceiling open, exactly the case it exists to catch (review finding ceiling-2).
