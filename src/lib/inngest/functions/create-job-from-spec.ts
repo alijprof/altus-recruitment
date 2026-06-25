@@ -168,8 +168,12 @@ export const createJobFromSpec = inngest.createFunction(
         salary_min: number | null
         salary_max: number | null
         currency: string
-        created_by: string
-        owner_user_id: string
+        // Nullable: spec_drafts.created_by becomes NULL if the draft's author is
+        // removed (migration 20260625130000, ON DELETE SET NULL). jobs.created_by
+        // / owner_user_id are likewise ON DELETE SET NULL, so a null here is a
+        // valid "unowned" job rather than a failed insert.
+        created_by: string | null
+        owner_user_id: string | null
       } = {
         organization_id,
         company_id: companyId,

@@ -28,6 +28,7 @@ import {
   TableRow,
 } from '@/components/ui/table'
 import { getOrgAdminDetail } from '@/lib/admin/queries'
+import { DangerZone } from './DangerZone'
 import { OverrideForm } from './OverrideForm'
 import { ManualAccessForm } from './ManualAccessForm'
 
@@ -235,6 +236,20 @@ export default async function AdminOrgDetailPage({ params }: Props) {
             status={detail.status}
             hasStripeSubscription={detail.stripeSubscriptionId !== null}
           />
+        </CardContent>
+      </Card>
+
+      {/* Danger zone — export + irreversible erasure (GDPR Art.17). */}
+      <Card className="border-red-200">
+        <CardHeader>
+          <CardTitle className="text-base font-semibold text-red-700">Danger zone</CardTitle>
+          <CardDescription>
+            Export this org&apos;s data, or permanently erase the org (files, users, and all
+            records). Erasure is irreversible — export first.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <DangerZone orgId={detail.orgId} orgSlug={detail.orgSlug} />
         </CardContent>
       </Card>
     </div>

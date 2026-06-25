@@ -25,3 +25,8 @@ export const resendInviteSchema = z.object({
   inviteId: z.string().uuid('Invalid invitation id.'),
 })
 export type ResendInviteInput = z.infer<typeof resendInviteSchema>
+
+export const removeMemberSchema = z.object({
+  userId: z.string().uuid('Invalid member id.'),
+})
+export type RemoveMemberInput = z.infer<typeof removeMemberSchema>

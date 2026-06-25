@@ -8,6 +8,7 @@ import { getProfile } from '@/lib/db/profiles'
 import { setRequestScope } from '@/lib/observability/sentry'
 import { createClient } from '@/lib/supabase/server'
 
+import { RemoveMemberButton } from './remove-member-button'
 import { TeamInvites, type InviteView } from './team-invites'
 
 // Quick task 260524-bpy: Owner-facing Team settings page. Owner-only — non-owners
@@ -117,9 +118,19 @@ export default async function TeamSettingsPage() {
                       Joined {formatDateLong(row.created_at)} ({formatTimeAgo(row.created_at)})
                     </p>
                   </div>
-                  <Badge variant="outline" className="font-normal capitalize">
-                    {row.role}
-                  </Badge>
+                  <div className="flex items-center gap-2">
+                    <Badge variant="outline" className="font-normal capitalize">
+                      {row.role}
+                    </Badge>
+                    {row.id === user.id ? (
+                      <span className="text-muted-foreground text-xs font-normal">You</span>
+                    ) : (
+                      <RemoveMemberButton
+                        userId={row.id}
+                        label={row.full_name?.trim() || row.email}
+                      />
+                    )}
+                  </div>
                 </li>
               ))}
             </ul>

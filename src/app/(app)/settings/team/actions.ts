@@ -33,9 +33,14 @@ import type { TablesInsert } from '@/types/database'
 
 import {
   inviteMemberSchema,
+  removeMemberSchema,
   resendInviteSchema,
   revokeInviteSchema,
 } from './schema'
+
+// Remove-member returns a minimal shape (no email is sent), distinct from the
+// invite ActionResult so the UI handler isn't forced to thread emailDelivered.
+type RemoveMemberResult = { ok: true } | { ok: false; formError: string }
 
 type ActionResult =
   // emailDelivered tells the UI whether the Resend send actually went out.
@@ -317,6 +322,110 @@ export async function revokeInviteAction(rawInput: unknown): Promise<ActionResul
   // Revoke sends no email — emailDelivered is irrelevant here; report true
   // to satisfy the shared result type (the revoke UI ignores this field).
   return { ok: true, emailDelivered: true }
+}
+
+// Batch B item 5 — remove a teammate (GDPR access-control).
+//
+// Owner-only. Deletes the member's Supabase AUTH user via the service-role
+// admin API, which (a) invalidates their session and (b) cascades the
+// public.users row (FK ON DELETE CASCADE). Their authored rows are preserved
+// with created_by nulled (FK ON DELETE SET NULL — see migration
+// 20260625130000). Guards: cannot remove yourself; cannot remove the last
+// owner. Deliberately NOT entitlement-gated — revoking a departed teammate's
+// access must work even on a lapsed subscription (it reduces cost/seats, and
+// blocking it would be a security/GDPR regression).
+//
+// VERIFICATION R8 ordering: parse → user-scoped client → RLS role check →
+// reject non-owner BEFORE any service-role escalation → then mutate.
+export async function removeMemberAction(rawInput: unknown): Promise<RemoveMemberResult> {
+  const parsed = removeMemberSchema.safeParse(rawInput)
+  if (!parsed.success) {
+    return { ok: false, formError: 'Invalid member id.' }
+  }
+  const { userId } = parsed.data
+
+  const supabase = await createClient()
+  const {
+    data: { user },
+  } = await supabase.auth.getUser()
+  if (!user) return { ok: false, formError: 'Not signed in.' }
+
+  const { data: me, error: meError } = await supabase
+    .from('users')
+    .select('role, organization_id')
+    .eq('id', user.id)
+    .maybeSingle()
+  if (meError || !me) return { ok: false, formError: 'Could not load your profile.' }
+  if (me.role !== 'owner') {
+    return { ok: false, formError: 'Only owners can remove teammates.' }
+  }
+
+  setRequestScope(user.id, me.organization_id)
+
+  // Cannot remove yourself — prevents accidental self-lockout and any
+  // remove-self-into-no-owner race. Self-removal is also hidden in the UI.
+  if (userId === user.id) {
+    return { ok: false, formError: 'You cannot remove yourself.' }
+  }
+
+  // Confirm the target is in the caller's org. The user-scoped client's RLS
+  // scopes SELECT to same-org rows, so a missing row means the member is in a
+  // different org (forged id) or already gone — either way there is nothing to
+  // do, so treat as a no-op success (no information leak, idempotent).
+  const { data: target, error: targetError } = await supabase
+    .from('users')
+    .select('id, role, organization_id')
+    .eq('id', userId)
+    .maybeSingle()
+  if (targetError) {
+    Sentry.captureException(targetError, {
+      tags: { feature: 'team_management', step: 'load_target' },
+    })
+    return { ok: false, formError: 'Could not load that teammate. Please try again.' }
+  }
+  if (!target) {
+    return { ok: true }
+  }
+
+  // Last-owner guard: never leave the org with zero owners. (When the remover
+  // is an owner and the target is a different owner, the count is already ≥2,
+  // so this is defence-in-depth against races / future role changes.)
+  if (target.role === 'owner') {
+    const { count: ownerCount, error: ownerErr } = await supabase
+      .from('users')
+      .select('id', { count: 'exact', head: true })
+      .eq('organization_id', me.organization_id)
+      .eq('role', 'owner')
+    if (ownerErr) {
+      Sentry.captureException(ownerErr, {
+        tags: { feature: 'team_management', step: 'owner_count' },
+      })
+      return { ok: false, formError: 'Could not verify owners. Please try again.' }
+    }
+    if ((ownerCount ?? 0) <= 1) {
+      return {
+        ok: false,
+        formError: 'You cannot remove the last owner. Make someone else an owner first.',
+      }
+    }
+  }
+
+  // Service-role: delete the auth user. Cascades public.users; nulls created_by
+  // on their spec_drafts / voice_notes / email_campaigns (migration 20260625130000).
+  const admin = createServiceClient()
+  const { error: deleteErr } = await admin.auth.admin.deleteUser(userId)
+  if (deleteErr) {
+    // NEVER log the email/id beyond Sentry's scoped tags (PII guard). If the
+    // FK-relaxation migration hasn't been pushed yet, deleteUser fails on the
+    // RESTRICT FK — surface a clear, non-leaky message.
+    Sentry.captureException(deleteErr, {
+      tags: { feature: 'team_management', step: 'delete_user' },
+    })
+    return { ok: false, formError: 'Could not remove the teammate. Please try again.' }
+  }
+
+  revalidatePath('/settings/team')
+  return { ok: true }
 }
 
 export async function resendInviteAction(rawInput: unknown): Promise<ActionResult> {

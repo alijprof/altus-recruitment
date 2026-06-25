@@ -25,6 +25,7 @@ import * as Sentry from '@sentry/nextjs'
 import { z } from 'zod'
 
 import { requireSuperAdmin } from '@/lib/admin/guard'
+import { deleteAllOrgStorage, deleteOrgAuthUsers } from '@/lib/admin/org-erasure'
 import { sendResendEmail } from '@/lib/email/resend'
 import { env } from '@/lib/env'
 import { createServiceClient } from '@/lib/supabase/service'
@@ -651,5 +652,156 @@ export async function provisionExternalOrgAction(input: {
     message: emailed
       ? `Provisioned "${orgName}" (${planKey}${capLabel}) and emailed a login link to ${email}.`
       : `Provisioned "${orgName}" (${planKey}${capLabel}), but the login email could NOT be sent — have them sign in at ${siteUrl}/sign-in (their account already exists).`,
+  }
+}
+
+// ---------------------------------------------------------------------------
+// eraseOrganizationAction — IRREVERSIBLY erase an org (GDPR Art.17, item 6).
+//
+// Deletes, in order:
+//   1. ALL Storage objects under <org_id>/ in the cvs / spec-audio /
+//      voice-note-audio buckets (storage is NOT cascade-deleted by the DB).
+//   2. ALL Supabase auth users in the org (cascades public.users; nulls
+//      created_by on their authored rows — needs migration 20260625130000).
+//   3. The organizations row — which CASCADE-deletes every org-scoped table.
+//
+// Storage runs FIRST so a storage failure aborts before any DB destruction
+// (the org is left intact and the admin can retry). The global
+// stripe_webhook_events ledger is intentionally untouched.
+//
+// SAFETY GUARDS:
+//   - requireSuperAdmin() first.
+//   - `confirmation` must EXACTLY equal the org slug (type-to-confirm).
+//   - Refuses to erase the calling admin's OWN org.
+//   - Refuses an org with a LIVE Stripe subscription (cancel in Stripe first,
+//     so erasure can never leave a dangling paid subscription).
+// ---------------------------------------------------------------------------
+
+const eraseOrgSchema = z.object({
+  orgId: z.string().uuid(),
+  confirmation: z.string().min(1).max(200),
+})
+
+export async function eraseOrganizationAction(
+  orgId: string,
+  confirmation: string,
+): Promise<AdminActionResult> {
+  // GATE — must be first.
+  const admin = await requireSuperAdmin()
+
+  const parsed = eraseOrgSchema.safeParse({ orgId, confirmation })
+  if (!parsed.success) {
+    return { ok: false, error: 'Invalid input.' }
+  }
+
+  const serviceClient = createServiceClient()
+
+  // Load the org (name + slug) for confirmation matching + the success message.
+  const { data: org, error: orgErr } = await serviceClient
+    .from('organizations')
+    .select('id, name, slug')
+    .eq('id', orgId)
+    .maybeSingle()
+  if (orgErr) {
+    Sentry.captureException(orgErr, {
+      tags: { layer: 'admin', action: 'eraseOrganizationAction', step: 'load_org', org_id: orgId },
+    })
+    return { ok: false, error: 'Database read failed. Check Sentry for details.' }
+  }
+  if (!org) {
+    return { ok: false, error: 'Organisation not found — it may already be erased.' }
+  }
+
+  // Type-to-confirm: the typed value must match the slug exactly.
+  if (parsed.data.confirmation.trim() !== org.slug) {
+    return {
+      ok: false,
+      error: `Confirmation does not match. Type the org slug exactly to erase: ${org.slug}`,
+    }
+  }
+
+  // Never let an admin erase the org they themselves belong to. Fail CLOSED if
+  // the admin's own users row can't be resolved — for an irreversible op we
+  // must positively confirm this isn't a self-erase before proceeding.
+  const { data: adminRow, error: adminRowErr } = await serviceClient
+    .from('users')
+    .select('organization_id')
+    .eq('id', admin.id)
+    .maybeSingle()
+  if (adminRowErr || !adminRow) {
+    Sentry.captureException(adminRowErr ?? new Error('erase: admin users row missing'), {
+      tags: { layer: 'admin', action: 'eraseOrganizationAction', step: 'admin_org', org_id: orgId },
+    })
+    return { ok: false, error: 'Could not verify your own organisation. Sign out and back in, then retry.' }
+  }
+  if (adminRow.organization_id === orgId) {
+    return { ok: false, error: 'You cannot erase your own organisation.' }
+  }
+
+  // Refuse a live Stripe subscription — erasing the org would NOT cancel it in
+  // Stripe, leaving a dangling paid subscription. Cancel in Stripe first.
+  const { data: sub } = await serviceClient
+    .from('subscriptions')
+    .select('stripe_subscription_id')
+    .eq('organization_id', orgId)
+    .maybeSingle()
+  if (sub?.stripe_subscription_id) {
+    return {
+      ok: false,
+      error: 'This org has a live Stripe subscription — cancel it in Stripe before erasing.',
+    }
+  }
+
+  // 1. Storage FIRST (so a storage failure leaves the DB intact + retryable).
+  let storageDeleted = 0
+  try {
+    storageDeleted = await deleteAllOrgStorage(serviceClient, orgId)
+  } catch (err) {
+    Sentry.captureException(err, {
+      tags: { layer: 'admin', action: 'eraseOrganizationAction', step: 'storage', org_id: orgId },
+    })
+    return {
+      ok: false,
+      error: 'Could not delete the org files. Nothing was erased — please try again.',
+    }
+  }
+
+  // 2. Auth users (cascades public.users). Needs migration 20260625130000 so the
+  //    created_by RESTRICT FKs don't block deletion.
+  let usersResult: { deleted: number; failed: number }
+  try {
+    usersResult = await deleteOrgAuthUsers(serviceClient, orgId)
+  } catch (err) {
+    Sentry.captureException(err, {
+      tags: { layer: 'admin', action: 'eraseOrganizationAction', step: 'users', org_id: orgId },
+    })
+    return {
+      ok: false,
+      error: 'Files were deleted, but removing the org users failed. Re-run erase to finish.',
+    }
+  }
+  if (usersResult.failed > 0) {
+    return {
+      ok: false,
+      error: `Removed ${usersResult.deleted} user(s) but ${usersResult.failed} failed (the org record was NOT deleted). This usually means migration 20260625130000 has not been pushed. Push it, then re-run erase.`,
+    }
+  }
+
+  // 3. Delete the org row — CASCADE removes all remaining org-scoped tables.
+  const { error: delErr } = await serviceClient.from('organizations').delete().eq('id', orgId)
+  if (delErr) {
+    Sentry.captureException(delErr, {
+      tags: { layer: 'admin', action: 'eraseOrganizationAction', step: 'delete_org', org_id: orgId },
+    })
+    return {
+      ok: false,
+      error: 'Files + users were removed, but deleting the org record failed. Check Sentry.',
+    }
+  }
+
+  revalidatePath('/admin')
+  return {
+    ok: true,
+    message: `Erased "${org.name}" — ${storageDeleted} file(s), ${usersResult.deleted} user(s), and all org data deleted.`,
   }
 }
