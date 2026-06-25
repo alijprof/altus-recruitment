@@ -12,6 +12,7 @@ import { getSubscriptionForOrg } from '@/lib/db/subscriptions'
 import { getAiUsageThisMonth } from '@/lib/stripe/usage'
 import { PLANS } from '@/lib/stripe/plans'
 import type { PlanKey } from '@/lib/stripe/plans'
+import { getSpendCeilingState } from '@/lib/stripe/spend-ceiling'
 import { createServiceClient } from '@/lib/supabase/service'
 import type { Database } from '@/types/database'
 import type { EntitlementStatus, AiCaps, AiUsageAggregate } from '@/types/billing'
@@ -158,13 +159,18 @@ export async function getEntitlement(
   // Run subscription fetch, usage fetch, seat count, and overrides concurrently.
   // plan_overrides is read via service-role (which bypasses RLS) so we can read
   // it alongside subscriptions without a separate RLS-scoped client.
-  const [subscriptionResult, aiUsageThisMonth, activeSeats, override] = await Promise.all([
-    getSubscriptionForOrg(serviceClient, orgId),
-    getAiUsageThisMonth(serviceClient, orgId),
-    countActiveSeats(serviceClient, orgId),
-    // Fail-open: if the plan_overrides table doesn't exist yet (pre-push), returns null.
-    getPlanOverride(serviceClient, orgId),
-  ])
+  const [subscriptionResult, aiUsageThisMonth, activeSeats, override, spendState] =
+    await Promise.all([
+      getSubscriptionForOrg(serviceClient, orgId),
+      getAiUsageThisMonth(serviceClient, orgId),
+      countActiveSeats(serviceClient, orgId),
+      // Fail-open: if the plan_overrides table doesn't exist yet (pre-push), returns null.
+      getPlanOverride(serviceClient, orgId),
+      // Fail-open: month-to-date £ spend vs the effective ceiling. Drives the
+      // billing page spend card, the "AI budget reached" banner, and the
+      // cap-enforcement £ backstop (which now reads spendState.breached).
+      getSpendCeilingState(orgId),
+    ])
 
   // cap_multiplier from the override row (1.0 = no change; null = no override).
   const capMultiplier = override?.cap_multiplier ?? 1.0
@@ -197,6 +203,11 @@ export async function getEntitlement(
       aiUsageThisMonth,
       softCapBreached,
       hardCapBreached,
+      // No subscription row → no Stripe customer.
+      hasStripeCustomerId: false,
+      monthlySpendThisMonthPence: spendState.spentPence,
+      effectiveSpendCeilingPence: spendState.ceilingPence,
+      spendCeilingBreached: spendState.breached,
     }
   }
 
@@ -244,5 +255,11 @@ export async function getEntitlement(
     aiUsageThisMonth,
     softCapBreached,
     hardCapBreached,
+    // A real Stripe customer id means self-serve Stripe billing; a comped /
+    // invoice-billed org has an active subscription with null stripe ids.
+    hasStripeCustomerId: !!sub.stripe_customer_id,
+    monthlySpendThisMonthPence: spendState.spentPence,
+    effectiveSpendCeilingPence: spendState.ceilingPence,
+    spendCeilingBreached: spendState.breached,
   }
 }

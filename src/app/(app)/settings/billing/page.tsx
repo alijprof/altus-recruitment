@@ -104,6 +104,13 @@ export default async function BillingPage() {
   const planDetails =
     entitlement.planKey !== 'none' ? PLANS[entitlement.planKey] : PLANS.pro
 
+  // Monthly £ AI-budget progress (0 when no ceiling configured / ceiling is 0).
+  const spendCeilingPence = entitlement.effectiveSpendCeilingPence
+  const spendPct =
+    spendCeilingPence && spendCeilingPence > 0
+      ? Math.min(100, Math.round((entitlement.monthlySpendThisMonthPence / spendCeilingPence) * 100))
+      : 0
+
   return (
     <div className="mx-auto w-full max-w-3xl space-y-6">
       <div>
@@ -187,8 +194,21 @@ export default async function BillingPage() {
 
           {/* Actions */}
           <div className="pt-1">
-            {stripeConfigured && entitlement.status !== 'none' ? (
+            {stripeConfigured &&
+            entitlement.status !== 'none' &&
+            entitlement.hasStripeCustomerId ? (
               <ManageBillingButton />
+            ) : stripeConfigured &&
+              entitlement.status !== 'none' &&
+              !entitlement.hasStripeCustomerId ? (
+              // Comped / invoice-billed org: no Stripe customer, so the Stripe
+              // portal would 400. Show a clear manual-access notice instead of a
+              // dead-end button.
+              <div className="rounded-md border bg-muted/30 p-3">
+                <p className="text-sm">
+                  Access managed manually — contact us to change your plan.
+                </p>
+              </div>
             ) : stripeConfigured && entitlement.status === 'none' ? (
               <div className="space-y-3">
                 <div className="grid gap-3 sm:grid-cols-3">
@@ -265,14 +285,58 @@ export default async function BillingPage() {
         </CardContent>
       </Card>
 
+      {/* Monthly £ AI budget ceiling */}
+      {entitlement.effectiveSpendCeilingPence !== null && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base font-semibold">Monthly AI budget</CardTitle>
+            <CardDescription>
+              Total AI spend this month across all features, against your monthly £ ceiling. When
+              the ceiling is reached, AI features pause until the budget resets or is raised.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-2">
+            <div className="flex justify-between text-sm">
+              <span>
+                Spend this month{' '}
+                {entitlement.spendCeilingBreached && (
+                  <span className="text-destructive ml-1 text-xs font-medium">budget reached</span>
+                )}
+              </span>
+              <span className="text-muted-foreground tabular-nums">
+                {formatPenceGbp(entitlement.monthlySpendThisMonthPence)} /{' '}
+                {formatPenceGbp(entitlement.effectiveSpendCeilingPence)}
+              </span>
+            </div>
+            <Progress
+              value={spendPct}
+              aria-label="monthly AI budget"
+              className={
+                entitlement.spendCeilingBreached
+                  ? '[&>div]:bg-destructive'
+                  : spendPct >= 80
+                    ? '[&>div]:bg-amber-500'
+                    : ''
+              }
+            />
+            {entitlement.spendCeilingBreached && (
+              <p className="text-muted-foreground text-xs">
+                Your monthly AI budget is reached — contact us to raise it.
+              </p>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
       {/* Overage note */}
       <Card>
         <CardHeader>
           <CardTitle className="text-base font-semibold">About overages</CardTitle>
           <CardDescription>
             When a cap is reached, AI features degrade gracefully: match scoring falls back to
-            cached results, CV parsing queues for overnight processing. Your plan&apos;s caps are a
-            soft limit — you&apos;re never charged for overages, and no features are hard-blocked.
+            cached results, and CV parsing pauses until your monthly budget resets. You&apos;re
+            never charged for overages. If you reach your monthly AI budget ceiling, contact us to
+            raise it.
           </CardDescription>
         </CardHeader>
       </Card>

@@ -20,12 +20,20 @@ import {
 } from '@/lib/db/candidates'
 import { inngest } from '@/lib/inngest/client'
 import { readStatus } from '@/lib/observability/inngest'
+import { checkCap, CapExceededError } from '@/lib/stripe/cap-enforcement'
 import { createServiceClient } from '@/lib/supabase/service'
 
 // Friendly message shown in the UI when parsing fails. Locked to the
 // UI-SPEC §Error States literal so the panel renders the exact copy.
 const FAILED_USER_MESSAGE =
   'Parsing failed. You can retry now or continue and parse later.'
+
+// Shown when parsing is blocked by the AI budget (monthly £ ceiling or the
+// cv_parse cap). Batch A item 1: an honest "paused" message — NOT a misleading
+// "retry now", because retrying fails identically until the budget resets or is
+// raised. The cv-review panel keys off the 'AI budget' substring to swap the
+// retry button for a billing link. Keep that phrase if you edit this copy.
+const BUDGET_CAPPED_USER_MESSAGE = 'AI budget reached — parsing paused until reset.'
 
 // Cap raw CV text to avoid runaway tokens. Typical CV is < 10k chars;
 // 60k is the conservative ceiling — anything longer is either OCR noise
@@ -163,6 +171,30 @@ export const parseCVOnUpload = inngest.createFunction(
       // Caught by uploadCVAction already, but defensive: reject here too
       // so a forged event can't smuggle in an unsupported type.
       throw new NonRetriableError(`unsupported mime type: ${mime_type}`)
+    }
+
+    // -----------------------------------------------------------------------
+    // Pre-flight AI budget check (Batch A item 1).
+    //
+    // A hard cap — the monthly £ AI-spend ceiling OR the cv_parse bucket cap —
+    // is NOT a transient failure: parsing would fail identically on every one
+    // of Inngest's 3 retries (burning quota and confusing the recruiter with a
+    // "retry" button that never works). Detect it up-front, mark the row with
+    // an honest "AI budget reached — parsing paused" message, and return
+    // WITHOUT throwing so Inngest treats the run as complete (no retries, no
+    // onFailure). A manual re-parse after the budget resets / is raised will
+    // sail through. checkCap fails open, so a billing glitch never blocks here.
+    // Wrapped in a step so the check (and any soft-cap email it fires) is
+    // memoised and not re-run on later step replays.
+    const budget = await step.run('check-ai-budget', () =>
+      checkCap(organization_id, 'cv_parse'),
+    )
+    if (!budget.allow && budget.mode === 'hard') {
+      await markCvFailed({
+        candidateCvId: candidate_cv_id,
+        userMessage: BUDGET_CAPPED_USER_MESSAGE,
+      })
+      return
     }
 
     try {
@@ -341,10 +373,24 @@ export const parseCVOnUpload = inngest.createFunction(
         // retry the embed on its next 10-min cadence.
       }
     } catch (err) {
-      // Anything that fell through to here is either a NonRetriableError
-      // (final) or an unexpected throw from outside a step. Either way,
-      // mark the row failed so the UI shows the retry button. Inngest
-      // re-throws NonRetriableError to surface in its dashboard.
+      // Budget cap reached MID-PARSE (the pre-flight passed, but the AI £
+      // ceiling / cv_parse cap tripped between the pre-flight and parseCV's
+      // own internal checkCap, which throws CapExceededError). Treat it exactly
+      // like the pre-flight: honest "paused" message + return WITHOUT throwing
+      // so Inngest doesn't burn the 3 retries and onFailure can't overwrite the
+      // message. Mirrors precompute-matches-for-job / send-email-campaign.
+      if (err instanceof CapExceededError) {
+        await markCvFailed({
+          candidateCvId: candidate_cv_id,
+          userMessage: BUDGET_CAPPED_USER_MESSAGE,
+        })
+        return
+      }
+
+      // Anything else that fell through is either a NonRetriableError (final)
+      // or an unexpected throw from outside a step. Either way, mark the row
+      // failed so the UI shows the retry button. Inngest re-throws
+      // NonRetriableError to surface in its dashboard.
       //
       // VERIFICATION R4: pass only error.name + status to Sentry. Never
       // the original error object — Anthropic SDK errors can embed

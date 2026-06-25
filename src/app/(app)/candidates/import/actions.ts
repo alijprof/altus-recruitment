@@ -16,6 +16,7 @@ import { revalidatePath } from 'next/cache'
 import Papa from 'papaparse'
 
 import { findCandidateByEmail, createCandidate } from '@/lib/db/candidates'
+import { inngest } from '@/lib/inngest/client'
 import { CURRENT_CONSENT_VERSION } from '@/lib/legal/consent'
 import { ENTITLEMENT_BLOCKED_MESSAGE, requireEntitledOrg } from '@/lib/stripe/require-entitlement'
 import { createClient } from '@/lib/supabase/server'
@@ -189,7 +190,84 @@ export async function importCandidatesAction(
   if (summary.created > 0) {
     revalidatePath('/candidates')
     revalidatePath('/')
+
+    // Batch A item 3: kick off embedding immediately so the freshly imported
+    // candidates become searchable within minutes instead of waiting up to the
+    // full 10-min embed-batch cron cadence. Fire-and-forget — a transient
+    // Inngest blip must NOT fail the import (the cron sweep is the safety net),
+    // so we log the name only (no PII) and carry on. `orgId` + `user` are the
+    // session-derived values resolved above; never trust CSV-supplied ids here.
+    try {
+      await inngest.send({
+        name: 'embed/backfill-org',
+        data: { organization_id: orgId as string, user_id: user.id },
+      })
+    } catch (err) {
+      const errName = err instanceof Error ? err.name : 'UnknownError'
+      Sentry.captureException(
+        new Error(`${errName}: inngest.send embed/backfill-org (import) failed`),
+        {
+          tags: {
+            action: 'importCandidatesAction',
+            subop: 'inngest.send',
+            step: 'embed-backfill',
+          },
+        },
+      )
+    }
   }
 
   return { ok: true, summary }
+}
+
+/**
+ * Server Action: re-index (embed) the caller's org candidates on demand.
+ *
+ * Backs the "Re-index now" button on the import result screen (Batch A item 3).
+ * Fires the same `embed/backfill-org` event the import auto-fires and the
+ * Settings → Integrations backfill uses, so newly imported candidates that
+ * are still NULL-embedded get swept immediately rather than on the next cron.
+ *
+ * Entitlement-gated (the sweep enqueues Voyage embeds = AI spend) and
+ * org-scoped via current_organization_id() — never a client-supplied org.
+ */
+export async function reindexCandidatesAction(): Promise<
+  { ok: true } | { ok: false; error: string }
+> {
+  const supabase = await createClient()
+  const {
+    data: { user },
+  } = await supabase.auth.getUser()
+  if (!user) return { ok: false, error: 'You must be signed in to re-index.' }
+
+  const gate = await requireEntitledOrg()
+  if (!gate.ok) {
+    return { ok: false, error: ENTITLEMENT_BLOCKED_MESSAGE }
+  }
+
+  const { data: orgId } = await supabase.rpc('current_organization_id')
+  if (typeof orgId !== 'string' || !orgId) {
+    return { ok: false, error: 'Could not determine your organisation. Please try again.' }
+  }
+
+  try {
+    await inngest.send({
+      name: 'embed/backfill-org',
+      data: { organization_id: orgId, user_id: user.id },
+    })
+  } catch (err) {
+    const errName = err instanceof Error ? err.name : 'UnknownError'
+    Sentry.captureException(
+      new Error(`${errName}: inngest.send embed/backfill-org (reindex) failed`),
+      {
+        tags: {
+          action: 'reindexCandidatesAction',
+          subop: 'inngest.send',
+        },
+      },
+    )
+    return { ok: false, error: 'Could not start re-indexing. Please try again.' }
+  }
+
+  return { ok: true }
 }

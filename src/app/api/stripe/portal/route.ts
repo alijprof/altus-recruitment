@@ -14,6 +14,7 @@ import * as Sentry from '@sentry/nextjs'
 
 import { assertStripe, stripe } from '@/lib/stripe/client'
 import { getOrganization } from '@/lib/db/organizations'
+import { getSubscriptionForOrg } from '@/lib/db/subscriptions'
 import { createClient } from '@/lib/supabase/server'
 import { env } from '@/lib/env'
 
@@ -53,7 +54,15 @@ export async function POST(): Promise<NextResponse> {
     return NextResponse.json({ error: 'Could not load your organisation' }, { status: 400 })
   }
 
-  const stripeCustomerId = orgResult.data.stripe_customer_id
+  // Resolve the Stripe customer id from the SAME authoritative source the
+  // billing page gates the "Manage billing" button on — the subscriptions row
+  // (written by the Stripe webhook) — so the button and this route can never
+  // disagree (e.g. show the button but 400 here). Fall back to the denormalised
+  // copy on organizations for any legacy row. Comped/invoice-billed orgs have
+  // neither, and the billing page already hides the button for them.
+  const subResult = await getSubscriptionForOrg(supabase, me.organization_id)
+  const stripeCustomerId =
+    (subResult.ok ? subResult.data.stripe_customer_id : null) ?? orgResult.data.stripe_customer_id
   if (!stripeCustomerId) {
     return NextResponse.json(
       { error: 'No billing account found. Please start a subscription first.' },

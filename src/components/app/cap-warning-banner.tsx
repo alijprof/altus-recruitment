@@ -16,15 +16,23 @@ import { X } from 'lucide-react'
 type CapWarningBannerProps = {
   softCapBreached: boolean
   hardCapBreached: boolean
+  // True when the org has reached its monthly £ AI-spend ceiling. Distinct from
+  // hardCapBreached (a per-bucket cap): the budget ceiling is raised by us, not
+  // by self-serve plan upgrade — so it gets its own "contact us" message.
+  spendCeilingBreached?: boolean
 }
 
-export function CapWarningBanner({ softCapBreached, hardCapBreached }: CapWarningBannerProps) {
+export function CapWarningBanner({
+  softCapBreached,
+  hardCapBreached,
+  spendCeilingBreached = false,
+}: CapWarningBannerProps) {
   const [dismissed, setDismissed] = useState(false)
 
-  // Only show if a cap is breached.
-  if (dismissed || (!softCapBreached && !hardCapBreached)) return null
+  // Only show if a cap or the £ budget ceiling is breached.
+  if (dismissed || (!softCapBreached && !hardCapBreached && !spendCeilingBreached)) return null
 
-  const isHard = hardCapBreached
+  const isHard = hardCapBreached || spendCeilingBreached
 
   return (
     <div
@@ -36,20 +44,41 @@ export function CapWarningBanner({ softCapBreached, hardCapBreached }: CapWarnin
       }`}
     >
       <span>
-        {isHard ? (
+        {spendCeilingBreached ? (
+          <>
+            Your monthly AI budget is reached — contact us to raise it.{' '}
+            <Link
+              href="/settings/billing"
+              className="underline underline-offset-2 hover:opacity-80"
+            >
+              View AI spend
+            </Link>
+            .
+          </>
+        ) : isHard ? (
           <>
             Your team has hit the AI usage limit for this month. Some AI features are running in
             fallback mode.{' '}
+            <Link
+              href="/settings/billing"
+              className="underline underline-offset-2 hover:opacity-80"
+            >
+              Manage your plan
+            </Link>
+            {' '}to upgrade.
           </>
         ) : (
           <>
             Your team is approaching the AI usage limit for this month.{' '}
+            <Link
+              href="/settings/billing"
+              className="underline underline-offset-2 hover:opacity-80"
+            >
+              Manage your plan
+            </Link>
+            {' '}to upgrade.
           </>
         )}
-        <Link href="/settings/billing" className="underline underline-offset-2 hover:opacity-80">
-          Manage your plan
-        </Link>
-        {' '}to upgrade.
       </span>
       <button
         type="button"

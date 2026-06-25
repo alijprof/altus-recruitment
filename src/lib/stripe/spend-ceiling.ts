@@ -102,18 +102,29 @@ export async function getEffectiveSpendCeilingPence(orgId: string): Promise<numb
   return globalBackstop > 0 ? globalBackstop : null
 }
 
-// True when the org has reached/exceeded its effective monthly AI-spend ceiling.
-// FAILS OPEN (false) on any error.
-export async function isOverMonthlyAiSpendCeiling(orgId: string): Promise<boolean> {
+// Combined month-to-date spend + effective ceiling + breach flag for an org.
+// Used by getEntitlement (so the billing page + cap banner + cap enforcement
+// all read one consistent snapshot). FAILS OPEN: any error resolves to
+// { spentPence: 0, ceilingPence: null, breached: false } so a billing/DB glitch
+// never blocks AI or paints a false "budget reached" banner.
+export type SpendCeilingState = {
+  spentPence: number
+  ceilingPence: number | null
+  breached: boolean
+}
+
+export async function getSpendCeilingState(orgId: string): Promise<SpendCeilingState> {
   try {
-    const ceiling = await getEffectiveSpendCeilingPence(orgId)
-    if (ceiling === null) return false // no ceiling configured
-    const spent = await getOrgAiSpendThisMonthPence(orgId)
-    return spent >= ceiling // a 0 ceiling blocks all AI (spent >= 0)
+    const ceilingPence = await getEffectiveSpendCeilingPence(orgId)
+    if (ceilingPence === null) {
+      return { spentPence: 0, ceilingPence: null, breached: false }
+    }
+    const spentPence = await getOrgAiSpendThisMonthPence(orgId)
+    return { spentPence, ceilingPence, breached: spentPence >= ceilingPence }
   } catch (err) {
     Sentry.captureException(err, {
-      tags: { layer: 'billing', helper: 'isOverMonthlyAiSpendCeiling', organization_id: orgId },
+      tags: { layer: 'billing', helper: 'getSpendCeilingState', organization_id: orgId },
     })
-    return false
+    return { spentPence: 0, ceilingPence: null, breached: false }
   }
 }

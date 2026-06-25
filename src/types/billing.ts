@@ -66,4 +66,18 @@ export type EntitlementStatus = {
   softCapBreached: boolean
   // True when any cap dimension has hit 100%. AI features degrade gracefully.
   hardCapBreached: boolean
+  // True when the org has a real Stripe customer id (i.e. self-serve Stripe
+  // billing). False for comped/invoice-billed orgs (active subscription with
+  // null stripe ids) — the billing page hides the Stripe portal button for them.
+  hasStripeCustomerId: boolean
+  // Month-to-date total AI spend in pence (sum of ai_usage.cost_pence, all
+  // purposes). Surfaced on the billing page so owners can see budget headroom.
+  monthlySpendThisMonthPence: number
+  // The effective monthly £ AI-spend ceiling in pence (per-org override or
+  // global backstop), or null when no ceiling is configured.
+  effectiveSpendCeilingPence: number | null
+  // True when month-to-date spend has reached/exceeded the effective ceiling.
+  // Drives the "monthly AI budget reached" banner and CV-parse pause copy —
+  // distinct from a per-bucket hardCapBreached.
+  spendCeilingBreached: boolean
 }

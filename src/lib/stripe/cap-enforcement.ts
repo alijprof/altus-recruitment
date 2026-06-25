@@ -34,7 +34,6 @@ import { isEntitledStatus } from '@/lib/stripe/require-entitlement'
 import { PURPOSE_CAP_BUCKETS } from '@/lib/stripe/usage'
 import { createServiceClient } from '@/lib/supabase/service'
 import { sendCapWarningEmail } from '@/lib/email/billing-emails'
-import { isOverMonthlyAiSpendCeiling } from '@/lib/stripe/spend-ceiling'
 import type { AiUsageAggregate } from '@/types/billing'
 
 // ---------------------------------------------------------------------------
@@ -114,9 +113,10 @@ export async function checkCap(orgId: string, purpose: string): Promise<CapCheck
   // total month-to-date AI spend so a comped org — whose AI the founder pays
   // for on shared keys — cannot run unbounded cost. The per-org cap
   // (plan_overrides.monthly_spend_cap_pence) takes precedence when lower; a
-  // generous global env backstop applies otherwise. Fails open in the helper,
-  // so a billing/DB glitch never blocks AI.
-  if (await isOverMonthlyAiSpendCeiling(orgId)) {
+  // generous global env backstop applies otherwise. Read from the entitlement
+  // snapshot (computed by getSpendCeilingState, which fails open) so we don't
+  // re-query the spend sum on every capped Claude call.
+  if (entitlement.spendCeilingBreached) {
     return { allow: false, mode: 'hard', bucket }
   }
 

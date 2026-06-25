@@ -1,6 +1,7 @@
 'use client'
 
 import { AlertTriangle, Loader2 } from 'lucide-react'
+import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { useEffect, useState, useTransition } from 'react'
 import { toast } from 'sonner'
@@ -138,10 +139,19 @@ function PendingState() {
 
 function FailedState({
   candidateCvId,
+  parseError,
 }: {
   candidateCvId: string
+  parseError?: string | null
 }) {
   const [isPending, startTransition] = useTransition()
+
+  // Batch A item 1: a budget-capped parse is NOT retriable — retrying fails
+  // identically until the monthly AI budget resets or is raised. Detect it by
+  // the message the Inngest function writes (BUDGET_CAPPED_USER_MESSAGE) and
+  // swap the misleading "Try again" button for an honest "paused" message + a
+  // link to the billing page, rather than inviting a retry that can't succeed.
+  const isBudgetCapped = (parseError ?? '').includes('AI budget')
 
   const onRetry = () => {
     startTransition(async () => {
@@ -152,6 +162,29 @@ function FailedState({
       }
       toast.success('Retrying — parsing again…')
     })
+  }
+
+  if (isBudgetCapped) {
+    return (
+      <Alert
+        variant="default"
+        className="border-amber-200 bg-amber-50 text-amber-900 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-100"
+      >
+        <AlertTriangle className="size-4" aria-hidden />
+        <AlertTitle className="text-sm font-semibold">
+          AI budget reached — parsing paused until reset.
+        </AlertTitle>
+        <AlertDescription className="space-y-3">
+          <p className="text-xs font-normal">
+            Parsing resumes automatically when your monthly AI budget resets. To raise it sooner,
+            contact us. Everything else still works — the CV is saved.
+          </p>
+          <Button asChild size="sm" variant="outline" className="bg-background">
+            <Link href="/settings/billing">View AI budget</Link>
+          </Button>
+        </AlertDescription>
+      </Alert>
+    )
   }
 
   return (
@@ -265,7 +298,7 @@ export function CvReviewPanel({ candidateCv, candidateFullName }: CvReviewPanelP
     return <PendingState />
   }
   if (candidateCv.parsing_status === 'failed') {
-    return <FailedState candidateCvId={candidateCv.id} />
+    return <FailedState candidateCvId={candidateCv.id} parseError={candidateCv.parse_error} />
   }
   return <CompleteState candidateCv={candidateCv} candidateFullName={candidateFullName} />
 }

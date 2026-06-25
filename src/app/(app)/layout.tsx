@@ -37,6 +37,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   // Fail open: defaults ensure a billing blip never locks paying customers out.
   let softCapBreached = false
   let hardCapBreached = false
+  let spendCeilingBreached = false
   // Gate defaults — MUST be "entitled" so a DB/billing error fails open.
   let entitled = true
   let entitlementStatus: EntitlementStatus['status'] = 'active'
@@ -44,6 +45,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
     const entitlement = await getEntitlement(profile.data.organization_id)
     softCapBreached = entitlement.softCapBreached
     hardCapBreached = entitlement.hardCapBreached
+    spendCeilingBreached = entitlement.spendCeilingBreached
     entitlementStatus = entitlement.status
     entitled = entitlement.status === 'trialing' || entitlement.status === 'active'
   } catch (err) {
@@ -77,8 +79,13 @@ export default async function AppLayout({ children }: { children: React.ReactNod
         userName={profile.data.full_name ?? null}
         organizationName={organization.ok ? organization.data.name : null}
       />
-      {/* AI cap warning — shown when org crosses 80% or 100% of any AI cap */}
-      <CapWarningBanner softCapBreached={softCapBreached} hardCapBreached={hardCapBreached} />
+      {/* AI cap warning — shown when org crosses 80% or 100% of any AI cap,
+          or hits the monthly £ AI-spend ceiling. */}
+      <CapWarningBanner
+        softCapBreached={softCapBreached}
+        hardCapBreached={hardCapBreached}
+        spendCeilingBreached={spendCeilingBreached}
+      />
       <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-8 sm:px-6">{children}</main>
       <FloatingFeedbackButton />
     </div>

@@ -11,7 +11,7 @@
 
 import Link from 'next/link'
 import Papa from 'papaparse'
-import { useState } from 'react'
+import { useState, useTransition } from 'react'
 import { toast } from 'sonner'
 
 import { Button } from '@/components/ui/button'
@@ -24,7 +24,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 
-import { importCandidatesAction, type ImportSummary } from './actions'
+import { importCandidatesAction, reindexCandidatesAction, type ImportSummary } from './actions'
 import { detectMapping } from './column-map'
 
 // ---------------------------------------------------------------------------
@@ -377,6 +377,7 @@ function ResultStep({
         <CardDescription>Here is a summary of what was imported.</CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
+        {summary.created > 0 && <ReindexNotice />}
         <dl className="divide-y rounded-lg border">
           <div className="flex justify-between px-4 py-3 text-sm">
             <dt className="text-muted-foreground">Created</dt>
@@ -416,6 +417,50 @@ function ResultStep({
         </div>
       </CardContent>
     </Card>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Re-index notice — search-indexing delay + on-demand "Re-index now"
+// ---------------------------------------------------------------------------
+
+function ReindexNotice() {
+  // The import action already fires embedding automatically; this is the
+  // reassurance + manual trigger. `started` makes the success state sticky so
+  // the recruiter isn't tempted to spam the button (each press re-enqueues the
+  // same org-wide sweep, which is harmless but pointless).
+  const [isPending, startTransition] = useTransition()
+  const [started, setStarted] = useState(false)
+
+  function onReindex() {
+    startTransition(async () => {
+      const result = await reindexCandidatesAction()
+      if (!result.ok) {
+        toast.error(result.error)
+        return
+      }
+      setStarted(true)
+      toast.success('Re-indexing started — new candidates will be searchable shortly.')
+    })
+  }
+
+  return (
+    <div className="flex flex-col gap-2 rounded-lg border border-amber-200 bg-amber-50 p-4 sm:flex-row sm:items-center sm:justify-between dark:border-amber-900 dark:bg-amber-950">
+      <p className="text-sm text-amber-900 dark:text-amber-100">
+        New candidates appear in search within ~10 minutes — or re-index now to make them
+        searchable sooner.
+      </p>
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        onClick={onReindex}
+        disabled={isPending || started}
+        className="shrink-0 bg-background"
+      >
+        {isPending ? 'Re-indexing…' : started ? 'Re-indexing started' : 'Re-index now'}
+      </Button>
+    </div>
   )
 }
 
