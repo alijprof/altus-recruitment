@@ -35,13 +35,8 @@ export default defineConfig({
     url: 'http://localhost:3000',
     reuseExistingServer: !process.env.CI,
     timeout: 120_000,
-    // The golden-path suite signs in via the dev-only password fallback, which
-    // is gated by this flag (see sign-in-form.tsx). Without it the test dev
-    // server renders magic-link-only and global-setup can't authenticate.
-    // NOTE: if a dev server is already running on :3000 it is reused as-is
-    // (reuseExistingServer), so it must have been started with the flag too.
-    env: {
-      NEXT_PUBLIC_ALLOW_PASSWORD_AUTH: '1',
-    },
+    // The golden-path suite signs in with the always-available password method
+    // (global-setup clicks the "password instead" toggle). No env flag needed —
+    // password sign-in is a first-class feature, not a dev-only gate.
   },
 })

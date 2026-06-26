@@ -29,8 +29,9 @@ What it verifies (`tests/smoke/*.smoke.ts`):
 - **Public pages render** — `/sign-in`, `/sign-up`, `/auth/auth-code-error` load
   with their key elements and **no uncaught client-side errors** (catches the
   "200 but white screen" failure that HTTP checks miss).
-- **Password-bypass guard** — confirms the dev-only `?password=1` sign-in is
-  **not** exposed in production (a security regression check).
+- **Password is opt-in** — magic link is the default; no password field renders
+  until the user clicks the "Sign in with a password instead" toggle, and the
+  legacy `?password=1` URL param no longer auto-reveals it.
 - **Graceful not-found** — unknown apply-org slug and bogus invite token don't 5xx.
 
 The route inventory lives in `tests/smoke/routes.ts` — keep it in sync when you
@@ -115,12 +116,12 @@ ALLOW_NONLOCAL_E2E=1 pnpm test:e2e
 
 ### Password sign-in
 
-The suite authenticates via the dev-only password fallback, gated by
-`NEXT_PUBLIC_ALLOW_PASSWORD_AUTH=1`. Playwright sets this for the test dev
-server (`playwright.config.ts` → `webServer.env`). If a dev server is **already
-running** on `:3000`, Playwright reuses it as-is — restart that server with the
-flag, or stop it so Playwright can spawn its own. Global-setup fails loudly with
-this instruction if the password field never renders.
+The suite authenticates with the always-available password method: global-setup
+clicks the "Sign in with a password instead" toggle on `/sign-in`, then signs in
+as the deterministic seed owner (`owner@acme-recruitment.test`, password set by
+`supabase/seed.sql`). No env flag is required — password sign-in is a first-class
+feature. Global-setup fails loudly if the password field never renders after the
+toggle.
 
 > CV-upload + Inngest parsing is intentionally skipped in the golden path
 > (VERIFICATION R10) — Inngest isn't orchestrated inside Playwright.

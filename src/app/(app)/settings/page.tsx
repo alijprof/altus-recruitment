@@ -57,6 +57,27 @@ export default async function SettingsPage() {
 
       <Separator />
 
+      {/* Email + password auth (2026-06-25): every user signs up passwordless,
+          so this is where they set a first password (or change it). Visible to
+          all roles — it's per-user, not org-scoped. */}
+      <Link href="/settings/security" className="block">
+        <Card className="hover:bg-accent/40 transition-colors">
+          <CardHeader>
+            <div className="flex items-center justify-between">
+              <div className="space-y-1">
+                <CardTitle className="text-base font-semibold">Security</CardTitle>
+                <CardDescription>
+                  Set or change your password so you can sign in without waiting for a magic link.
+                </CardDescription>
+              </div>
+              <ChevronRight className="text-muted-foreground size-5" aria-hidden="true" />
+            </div>
+          </CardHeader>
+        </Card>
+      </Link>
+
+      <Separator />
+
       <Card>
         <CardHeader>
           <CardTitle className="text-base font-semibold">Organisation</CardTitle>
@@ -128,8 +149,7 @@ export default async function SettingsPage() {
           <CardHeader>
             <CardTitle className="text-base font-semibold">Public apply form</CardTitle>
             <CardDescription>
-              The shareable URL that lets candidates apply directly to your
-              organisation.
+              The shareable URL that lets candidates apply directly to your organisation.
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -146,14 +166,14 @@ export default async function SettingsPage() {
 
       {/* Plan 2 Task 2.3 — per-org AI spend dashboard, linked from settings. */}
       <Link href="/settings/usage" className="block">
-        <Card className="transition-colors hover:bg-accent/40">
+        <Card className="hover:bg-accent/40 transition-colors">
           <CardHeader>
             <div className="flex items-center justify-between">
               <div className="space-y-1">
                 <CardTitle className="text-base font-semibold">Usage</CardTitle>
                 <CardDescription>
-                  Month-to-date AI spend, per-feature breakdown, and the match-scoring
-                  ceiling indicator.
+                  Month-to-date AI spend, per-feature breakdown, and the match-scoring ceiling
+                  indicator.
                 </CardDescription>
               </div>
               <ChevronRight className="text-muted-foreground size-5" aria-hidden="true" />
@@ -167,7 +187,7 @@ export default async function SettingsPage() {
       {/* Phase 5 Plan 05-02 — per-org branding (owner-only). */}
       {isOwner ? (
         <Link href="/settings/branding" className="block">
-          <Card className="transition-colors hover:bg-accent/40">
+          <Card className="hover:bg-accent/40 transition-colors">
             <CardHeader>
               <div className="flex items-center justify-between">
                 <div className="space-y-1">
@@ -188,14 +208,14 @@ export default async function SettingsPage() {
       {/* Phase 5 Plan 05-01 — billing + plan management (owner-only). */}
       {isOwner ? (
         <Link href="/settings/billing" className="block">
-          <Card className="transition-colors hover:bg-accent/40">
+          <Card className="hover:bg-accent/40 transition-colors">
             <CardHeader>
               <div className="flex items-center justify-between">
                 <div className="space-y-1">
                   <CardTitle className="text-base font-semibold">Billing</CardTitle>
                   <CardDescription>
-                    Manage your plan, seats, and payment details. View AI usage against
-                    your plan limits.
+                    Manage your plan, seats, and payment details. View AI usage against your plan
+                    limits.
                   </CardDescription>
                 </div>
                 <ChevronRight className="text-muted-foreground size-5" aria-hidden="true" />

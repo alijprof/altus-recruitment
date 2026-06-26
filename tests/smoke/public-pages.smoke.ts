@@ -22,13 +22,21 @@ test.describe('@smoke public pages', () => {
     expect(errors, `uncaught client errors: ${errors.join(' | ')}`).toEqual([])
   })
 
-  test('production sign-in does NOT expose the password bypass (?password=1)', async ({ page }) => {
-    // Security regression guard. NEXT_PUBLIC_ALLOW_PASSWORD_AUTH must be OFF in
-    // production, so the dev-only password input must never render — even when
-    // the ?password=1 flag is present on the URL.
+  test('sign-in offers password as an opt-in method (magic link stays default)', async ({
+    page,
+  }) => {
+    // Password sign-in is now a first-class, always-available method. Guard the
+    // important properties: (1) magic link is the DEFAULT — no password field
+    // until the user opts in; (2) the legacy ?password=1 URL param no longer
+    // auto-reveals anything (no URL-driven mode switch); (3) the toggle reveals
+    // the password field on demand.
     await page.goto('/sign-in?password=1')
     await expect(page.getByRole('button', { name: /send magic link/i })).toBeVisible()
     await expect(page.locator('input[type="password"]')).toHaveCount(0)
+
+    await page.getByRole('button', { name: /password instead/i }).click()
+    await expect(page.locator('input[type="password"]')).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Sign in', exact: true })).toBeVisible()
   })
 
   test('sign-up renders an email field with no client errors', async ({ page }) => {

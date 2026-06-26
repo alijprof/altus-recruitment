@@ -30,11 +30,22 @@ export const PROTECTED_ROUTES = [
   '/settings/team',
   '/settings/integrations',
   '/settings/usage',
+  // Email+password auth (2026-06-25): per-user set/change-password page.
+  '/settings/security',
   '/help',
 ]
 
 // Routes reachable without authentication. These must render (2xx) for anyone.
-export const PUBLIC_ROUTES = ['/sign-in', '/sign-up', '/auth/auth-code-error']
+export const PUBLIC_ROUTES = [
+  '/sign-in',
+  '/sign-up',
+  '/auth/auth-code-error',
+  // Email+password auth (2026-06-25): unauthenticated reset entry points. With
+  // no token, /reset-password still renders a 2xx (the client flips to an
+  // "expired" state) — exactly what the no-5xx sweep checks.
+  '/forgot-password',
+  '/reset-password',
+]
 
 // GET-safe API endpoints — hitting them with GET must never 5xx and must have
 // no side effects. (Webhook POST endpoints are intentionally excluded: we never

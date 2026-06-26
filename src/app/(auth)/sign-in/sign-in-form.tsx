@@ -1,11 +1,13 @@
 'use client'
 
+import Link from 'next/link'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { useMemo, useState } from 'react'
 
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { safeNext } from '@/lib/auth/safe-next'
 import { createClient } from '@/lib/supabase/client'
 
 type Status =
@@ -14,11 +16,7 @@ type Status =
   | { kind: 'sent' }
   | { kind: 'error'; message: string }
 
-// E2E-only password fallback: visiting /sign-in?password=1 renders a
-// password input alongside the email field. The form falls back to
-// signInWithPassword instead of signInWithOtp. Gated to non-production builds
-// so a leaked URL on prod still only allows magic-link sign-in.
-const PASSWORD_AUTH_AVAILABLE = process.env.NEXT_PUBLIC_ALLOW_PASSWORD_AUTH === '1'
+type Method = 'magic' | 'password'
 
 function decodeEmailParam(raw: string | null): string {
   if (!raw) return ''
@@ -39,6 +37,25 @@ function errorBannerMessage(errorParam: string | null): string | null {
   return null
 }
 
+// Maps a Supabase signInWithPassword error to a friendly, non-leaky message.
+// `invalid_credentials` is returned both for a wrong password AND for an account
+// that has no password set yet (every passwordless/magic-link user) — and also
+// for an unknown email, so it never reveals whether an account exists. We steer
+// the user to the magic link (which always works) and the reset flow.
+function passwordSignInMessage(error: { message: string; code?: string }): string {
+  const code = error.code
+  const msg = error.message.toLowerCase()
+  if (code === 'email_not_confirmed' || msg.includes('email not confirmed')) {
+    return 'Confirm your email first — sign in with a magic link below, which also confirms your address.'
+  }
+  if (code === 'invalid_credentials' || msg.includes('invalid login credentials')) {
+    return "We couldn't sign you in with that password. If you've never set one, use a magic link to sign in, then add a password in Settings → Security — or reset it below."
+  }
+  // Fallback: Supabase's other signInWithPassword messages (rate limiting,
+  // provider disabled) are themselves generic, so surfacing them is safe.
+  return error.message
+}
+
 interface SignInFormProps {
   inviteMode: boolean
 }
@@ -46,7 +63,6 @@ interface SignInFormProps {
 export function SignInForm({ inviteMode }: SignInFormProps) {
   const router = useRouter()
   const searchParams = useSearchParams()
-  const passwordMode = PASSWORD_AUTH_AVAILABLE && searchParams.get('password') === '1'
 
   // Quick task 260524-iav (B2): inviteMode is supplied as a prop by the
   // parent server component, which reads the httpOnly altus_invite_token
@@ -56,11 +72,12 @@ export function SignInForm({ inviteMode }: SignInFormProps) {
   // searchParams is preserved — it's harmless on its own (cannot create an
   // account without also flipping shouldCreateUser, which is now strictly
   // gated by the server-side cookie).
-  const prefilledEmail = useMemo(
-    () => decodeEmailParam(searchParams.get('email')),
-    [searchParams],
-  )
+  const prefilledEmail = useMemo(() => decodeEmailParam(searchParams.get('email')), [searchParams])
   const errorBanner = errorBannerMessage(searchParams.get('error'))
+  // Deep-link return: middleware bounces unauthenticated users here with
+  // ?next=<protected path>. safeNext() guards against open-redirect (returns '/'
+  // for anything off-origin or malformed). Honoured by both sign-in methods.
+  const nextPath = safeNext(searchParams.get('next'))
 
   // React-19 idiom: derive state from changing props by tracking the previous
   // prefilled value and resetting `email` inline during render when the URL
@@ -75,18 +92,33 @@ export function SignInForm({ inviteMode }: SignInFormProps) {
   const [password, setPassword] = useState('')
   const [status, setStatus] = useState<Status>({ kind: 'idle' })
 
+  // Magic link is the default and stays the canonical onboarding path. Password
+  // is a fully opt-in alternative for returning users who set one in Settings →
+  // Security. Invitees have no account yet (the OTP path uses
+  // shouldCreateUser:true), so the password method is hidden in invite mode —
+  // they MUST complete the magic-link round-trip for /accept-invite to attach
+  // them to the inviter's org.
+  const [method, setMethod] = useState<Method>('magic')
+  const passwordMode = method === 'password' && !inviteMode
+
+  function switchMethod(next: Method) {
+    setMethod(next)
+    setStatus({ kind: 'idle' })
+  }
+
   async function onSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
     setStatus({ kind: 'pending' })
 
     const supabase = createClient()
     if (passwordMode) {
+      // Never trim/normalise the password — pass the raw value through.
       const { error } = await supabase.auth.signInWithPassword({ email, password })
       if (error) {
-        setStatus({ kind: 'error', message: error.message })
+        setStatus({ kind: 'error', message: passwordSignInMessage(error) })
         return
       }
-      router.replace('/')
+      router.replace(nextPath)
       router.refresh()
       return
     }
@@ -99,11 +131,17 @@ export function SignInForm({ inviteMode }: SignInFormProps) {
     // the cookie's token against the invitation row inside the
     // public.accept_invitation() RPC, so even if the cookie is somehow
     // forged the worst case is the same as a regular /sign-up.
+    // Forward the deep-link target through the callback so /auth/callback can
+    // redirect there after the PKCE exchange (it reads ?next via safeNext).
+    const callbackUrl =
+      nextPath === '/'
+        ? `${window.location.origin}/auth/callback`
+        : `${window.location.origin}/auth/callback?next=${encodeURIComponent(nextPath)}`
     const { error } = await supabase.auth.signInWithOtp({
       email,
       options: {
         shouldCreateUser: inviteMode,
-        emailRedirectTo: `${window.location.origin}/auth/callback`,
+        emailRedirectTo: callbackUrl,
       },
     })
 
@@ -151,7 +189,15 @@ export function SignInForm({ inviteMode }: SignInFormProps) {
       </div>
       {passwordMode ? (
         <div className="space-y-2">
-          <Label htmlFor="password">Password</Label>
+          <div className="flex items-center justify-between">
+            <Label htmlFor="password">Password</Label>
+            <Link
+              href="/forgot-password"
+              className="text-muted-foreground hover:text-foreground text-xs underline-offset-4 hover:underline"
+            >
+              Forgot / set a password?
+            </Link>
+          </div>
           <Input
             id="password"
             type="password"
@@ -160,9 +206,6 @@ export function SignInForm({ inviteMode }: SignInFormProps) {
             value={password}
             onChange={(e) => setPassword(e.target.value)}
           />
-          <p className="text-muted-foreground text-xs font-normal">
-            Dev-only password sign-in (E2E). Production sign-in always uses magic link.
-          </p>
         </div>
       ) : null}
       {status.kind === 'error' && (
@@ -170,7 +213,7 @@ export function SignInForm({ inviteMode }: SignInFormProps) {
           {status.message}
         </p>
       )}
-      <Button type="submit" className="w-full h-11 md:h-10" disabled={status.kind === 'pending'}>
+      <Button type="submit" className="h-11 w-full md:h-10" disabled={status.kind === 'pending'}>
         {status.kind === 'pending'
           ? passwordMode
             ? 'Signing in…'
@@ -179,6 +222,27 @@ export function SignInForm({ inviteMode }: SignInFormProps) {
             ? 'Sign in'
             : 'Send magic link'}
       </Button>
+      {!inviteMode ? (
+        <p className="text-muted-foreground text-center text-sm">
+          {passwordMode ? (
+            <button
+              type="button"
+              onClick={() => switchMethod('magic')}
+              className="text-foreground font-medium underline-offset-4 hover:underline"
+            >
+              Email me a magic link instead
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={() => switchMethod('password')}
+              className="text-foreground font-medium underline-offset-4 hover:underline"
+            >
+              Sign in with a password instead
+            </button>
+          )}
+        </p>
+      ) : null}
     </form>
   )
 }

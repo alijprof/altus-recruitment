@@ -8,6 +8,14 @@ import type { Database } from '@/types/database'
 const PUBLIC_PATHS = [
   '/sign-in',
   '/sign-up',
+  // Email+password auth (2026-06-25): a user requesting/completing a password
+  // reset is unauthenticated by definition (they can't sign in — that's why
+  // they're here). The recovery token in the URL is the auth gate; the
+  // /reset-password client calls verifyOtp({ type: 'recovery' }) to establish
+  // the session. Omitting these would 307 the user back to /sign-in before the
+  // reset form ever renders.
+  '/forgot-password',
+  '/reset-password',
   '/auth/callback',
   // Admin-generated magic-link confirmation (token_hash flow). The customer is
   // unauthenticated when they click the emailed login link; the route calls

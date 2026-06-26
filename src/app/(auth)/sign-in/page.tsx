@@ -24,8 +24,9 @@ export default async function SignInPage() {
           We&apos;ll email you a magic link to sign you in.
         </p>
       </div>
-      {/* SignInForm reads useSearchParams() to opt into a dev-only password
-          fallback at /sign-in?password=1 and to pre-fill ?email=. Wrap in
+      {/* SignInForm reads useSearchParams() to pre-fill ?email= and surface
+          invite errors. Magic link is the default; users can toggle to a
+          password (set in Settings → Security or via /forgot-password). Wrap in
           Suspense so static export doesn't bail out. inviteMode is supplied
           here as a prop (server-derived from the httpOnly invite cookie); the
           URL ?invite=1 is no longer honoured — see REVIEW.md B2 (quick task

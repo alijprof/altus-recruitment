@@ -15,9 +15,9 @@ import { chromium, type FullConfig } from '@playwright/test'
 //   pnpm test:e2e:reset               # applies migrations + seed
 //   # .env.local must point NEXT_PUBLIC_SUPABASE_URL at the local stack
 //
-// If the seed user is missing, the password flag isn't set, or the target is
-// not a local database, this setup throws with an actionable message and
-// Playwright aborts before any tests execute.
+// If the seed user is missing or the target is not a local database, this setup
+// throws with an actionable message and Playwright aborts before any tests
+// execute.
 
 const STORAGE_PATH = 'tests/e2e/.auth/owner.json'
 const TEST_EMAIL = 'owner@acme-recruitment.test'
@@ -72,26 +72,27 @@ export default async function globalSetup(config: FullConfig) {
   const context = await browser.newContext({ baseURL })
   const page = await context.newPage()
 
-  // Drive the real sign-in form (same code path users hit). The password
-  // fallback is gated by NEXT_PUBLIC_ALLOW_PASSWORD_AUTH=1 — set for the test
-  // dev server in playwright.config.ts's webServer.env.
-  await page.goto('/sign-in?password=1')
-  const passwordField = page.getByLabel(/password/i)
+  // Drive the real sign-in form (same code path users hit). Password sign-in is
+  // a first-class, always-available method: magic link is the default, so we
+  // click the "Sign in with a password instead" toggle to reveal the password
+  // field, then authenticate as the deterministic seed owner.
+  await page.goto('/sign-in')
+  await page.getByRole('button', { name: /password instead/i }).click()
+  const passwordField = page.getByLabel(/^password$/i)
   try {
     await passwordField.waitFor({ state: 'visible', timeout: 10_000 })
   } catch {
     await browser.close()
     throw new Error(
-      'E2E sign-in password field never rendered. The dev server needs ' +
-        'NEXT_PUBLIC_ALLOW_PASSWORD_AUTH=1. It is set in playwright.config.ts ' +
-        'webServer.env, but a pre-existing dev server on :3000 is reused as-is — ' +
-        'restart it with the flag, or stop it so Playwright can spawn its own.',
+      'E2E sign-in password field never rendered after clicking the password ' +
+        'toggle. The sign-in form should expose "Sign in with a password instead" ' +
+        '— check src/app/(auth)/sign-in/sign-in-form.tsx.',
     )
   }
 
   await page.getByLabel(/email/i).fill(TEST_EMAIL)
   await passwordField.fill(TEST_PASSWORD)
-  await page.getByRole('button', { name: /sign in/i }).click()
+  await page.getByRole('button', { name: 'Sign in', exact: true }).click()
   // Successful sign-in lands on the dashboard ("/").
   await page.waitForURL((url) => new URL(url).pathname === '/', { timeout: 15_000 })
   await context.storageState({ path: STORAGE_PATH })
