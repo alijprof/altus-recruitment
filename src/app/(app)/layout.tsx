@@ -86,7 +86,14 @@ export default async function AppLayout({ children }: { children: React.ReactNod
         hardCapBreached={hardCapBreached}
         spendCeilingBreached={spendCeilingBreached}
       />
-      <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-8 sm:px-6">{children}</main>
+      {/* Content width: 1800px cap (was max-w-6xl / 1152px), matching the
+          altus-quay-forthports list/data pages so the app uses the screen
+          instead of a narrow centre strip. Data/list pages (candidates,
+          clients, jobs, pipeline + the card grid) fill this width and fit their
+          columns without horizontal scroll. Form pages set their own narrower
+          max-w-2xl inside this, so they stay readable — same tiering quay uses.
+          Still capped so tables don't stretch edge-to-edge on ultrawide. */}
+      <main className="mx-auto w-full max-w-[1800px] flex-1 px-4 py-8 sm:px-6">{children}</main>
       <FloatingFeedbackButton />
     </div>
   )
