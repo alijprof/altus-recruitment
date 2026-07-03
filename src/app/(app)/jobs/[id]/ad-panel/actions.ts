@@ -4,6 +4,7 @@ import * as Sentry from '@sentry/nextjs'
 import { revalidatePath } from 'next/cache'
 import { z } from 'zod'
 
+import { CapExceededError } from '@/lib/ai/claude'
 import {
   generateAdWithInclusivity,
   scoreInclusivityOnly,
@@ -98,6 +99,14 @@ export async function generateAdAction(
         })
         return { ok: true, data: result }
       } catch (err) {
+        // Hard AI cap (audit min-18): "retry" can never succeed until the month
+        // resets — surface an honest, actionable message instead.
+        if (err instanceof CapExceededError) {
+          return {
+            ok: false,
+            error: 'Monthly AI usage limit reached — upgrade your plan or wait for the reset.',
+          }
+        }
         // R4: capture name + (status if Anthropic.APIError-shaped). Never
         // pass the raw error — Anthropic SDK errors can echo prompt
         // fragments in `error.message`.
@@ -169,6 +178,14 @@ export async function scoreInclusivityAction(
         })
         return { ok: true, data: result }
       } catch (err) {
+        // Hard AI cap (audit min-18): honest message instead of a "retry" that
+        // can never succeed until the month resets.
+        if (err instanceof CapExceededError) {
+          return {
+            ok: false,
+            error: 'Monthly AI usage limit reached — upgrade your plan or wait for the reset.',
+          }
+        }
         const e = err as { name?: string; status?: number }
         Sentry.captureException(
           new Error(`${e.name ?? 'Error'}: ${e.status ?? 'no-status'}`),

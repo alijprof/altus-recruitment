@@ -4,6 +4,7 @@ import * as Sentry from '@sentry/nextjs'
 import { revalidatePath } from 'next/cache'
 import { z } from 'zod'
 
+import { CapExceededError } from '@/lib/ai/claude'
 import { buildMatchInputs, scoreCandidateForJob } from '@/lib/ai/match'
 import {
   getOrgMatchSpendThisMonth,
@@ -199,6 +200,16 @@ export async function explainCandidateMatchAction(
     revalidatePath(`/jobs/${parsed.data.jobId}/matches`)
     return { ok: true }
   } catch (err) {
+    // Hard AI cap (audit min-18, the "silent freeze" watch item). "Please try
+    // again" is misleading — the call can NEVER succeed until the month resets,
+    // so the recruiter retries in a loop and files a ticket instead of
+    // upgrading. Return an honest, actionable message for the cap case.
+    if (err instanceof CapExceededError) {
+      return {
+        ok: false,
+        error: 'Monthly AI usage limit reached — upgrade your plan or wait for the reset.',
+      }
+    }
     // Wrap name + status only — Anthropic SDK error.message can echo
     // prompt fragments which would bypass the global beforeSend PII
     // scrub (Phase 1 R4).
