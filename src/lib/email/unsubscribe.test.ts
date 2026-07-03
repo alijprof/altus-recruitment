@@ -302,11 +302,33 @@ describe('suppressByToken', () => {
     )
 
     expect(result).toEqual({ ok: true, alreadyUnsubscribed: false })
-    // The suppression update is scoped by organization_id + email, so every
-    // duplicate candidate row sharing that email is suppressed — closing the
-    // PECR gap where a second record kept receiving campaigns after unsubscribe.
+    // Suppression runs TWO writes: the recipient's own row by id (email-drift
+    // safe, review finding A) AND a sweep of every duplicate row sharing the
+    // email (MAJOR-7). So both 'id' and 'email' filters are used.
     expect(fake._updateEqCols).toContain('email')
+    expect(fake._updateEqCols).toContain('id')
     expect(fake._updateEqCols).toContain('organization_id')
-    expect(fake._updateEqCols).not.toContain('id')
+  })
+
+  it('still sweeps duplicate rows by email even when the recipient row is already suppressed (review finding B)', async () => {
+    const fake = buildFakeClient({
+      recipientRow: {
+        candidate_id: 'cand-1',
+        organization_id: 'org-1',
+        email: 'jane@example.com',
+      },
+      // Recipient's own row already suppressed — must NOT short-circuit the
+      // by-email sweep, or a newly-created duplicate row would never be caught.
+      candidateRow: { email_marketing_unsubscribed_at: '2025-01-01T00:00:00Z' },
+    })
+
+    const result = await suppressByToken(
+      fake as unknown as Parameters<typeof suppressByToken>[0],
+      'tok',
+    )
+
+    expect(result).toEqual({ ok: true, alreadyUnsubscribed: true })
+    // The by-email sweep still ran despite the idempotency signal.
+    expect(fake._updateEqCols).toContain('email')
   })
 })
