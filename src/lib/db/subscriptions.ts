@@ -65,10 +65,54 @@ export type UpsertSubscriptionInput = {
   currentPeriodEnd: string | null
 }
 
+export type UpsertSubscriptionOptions = {
+  // When false (default), a Stripe lifecycle event is NOT allowed to overwrite a
+  // comped / invoice-billed row (stripe_subscription_id IS NULL + entitled
+  // status). Only a checkout-originated event — the org converting to self-serve
+  // paid, which brings a real subscription id — passes true. See the comp-row
+  // guard below (audit MAJOR-5).
+  allowOverrideComp?: boolean
+}
+
 export async function upsertSubscriptionFromStripe(
   serviceClient: SupabaseClient<Database>,
   input: UpsertSubscriptionInput,
+  options?: UpsertSubscriptionOptions,
 ): Promise<DbResult<SubscriptionRow>> {
+  // COMP-ROW PROTECTION (audit MAJOR-5). A comped / invoice-billed org has a
+  // subscriptions row with stripe_subscription_id IS NULL and an entitled status
+  // (set by the /admin Manual-access grant or a grandfathering seed — see the
+  // manual-invoice-billing flow). A Stripe lifecycle event carrying that org's
+  // metadata_organization_id — e.g. a stale event from a subscription that was
+  // cancelled in Stripe AFTER the org moved to invoice billing, or an
+  // out-of-order delete — must NEVER flip that comp row to cancelled/past_due
+  // and lock the paying customer out. The upsert is last-write-wins, so we guard
+  // here: unless the caller explicitly allows it (checkout-originated), a write
+  // that would clobber a live comp row is skipped (no-op) and the comp row is
+  // preserved and returned as success.
+  if (!options?.allowOverrideComp) {
+    const existing = await getSubscriptionForOrg(serviceClient, input.organizationId)
+    if (
+      existing.ok &&
+      existing.data.stripe_subscription_id === null &&
+      existing.data.status !== 'cancelled' &&
+      existing.data.status !== 'none'
+    ) {
+      Sentry.captureMessage('stripe_webhook: refused to overwrite comp/invoice-billed row', {
+        level: 'warning',
+        tags: {
+          layer: 'db',
+          helper: 'upsertSubscriptionFromStripe',
+          org_id: input.organizationId,
+          incoming_status: input.status,
+        },
+      })
+      // Preserve the comp row. Return it as success so the webhook records the
+      // event as processed and does not retry.
+      return { ok: true, data: existing.data }
+    }
+  }
+
   const now = new Date().toISOString()
 
   // reason: TablesInsert<'subscriptions'> includes all live columns from the

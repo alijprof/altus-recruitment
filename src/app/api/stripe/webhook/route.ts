@@ -190,7 +190,12 @@ async function handleStripeEvent(
             ? session.subscription
             : session.subscription.id,
         )
-        await upsertFromSubscription(serviceClient, subscription, orgId)
+        // Checkout-originated: this is a genuine self-serve subscription and is
+        // allowed to replace a comp/invoice-billed row (the org is converting to
+        // paid). All other lifecycle events must NOT clobber a comp row (MAJOR-5).
+        await upsertFromSubscription(serviceClient, subscription, orgId, {
+          allowOverrideComp: true,
+        })
       }
       break
     }
@@ -239,9 +244,17 @@ async function handleStripeEvent(
       const subscription = event.data.object as Stripe.Subscription
       const orgId = extractOrgId(subscription)
       if (!orgId) break
-      // Best-effort email — fire-and-forget is intentional here.
-      // The actual trial end is handled by the subscription.updated event.
-      void sendTrialEndingEmail({ organizationId: orgId, trialEnd: subscription.trial_end })
+      // Await (not fire-and-forget) so the send completes before this
+      // serverless invocation can freeze after the 200 (audit min-67) — a
+      // void'd promise is not guaranteed to run to completion. The send is
+      // internally try/caught and never throws, but wrap defensively so a
+      // future change can't fail the webhook. The trial end itself is handled
+      // by the subscription.updated event.
+      try {
+        await sendTrialEndingEmail({ organizationId: orgId, trialEnd: subscription.trial_end })
+      } catch {
+        // best-effort — never fail the webhook on a notification email
+      }
       break
     }
 
@@ -275,8 +288,16 @@ async function handleStripeEvent(
       }
 
       // Dunning email fires for any resolved org whose renewal payment failed,
-      // independent of plan resolution below.
-      void sendPaymentFailedEmail({ organizationId: orgId })
+      // independent of plan resolution below. Await (not fire-and-forget) so a
+      // serverless freeze after the 200 can't drop it (audit min-67) — losing
+      // access would otherwise be the customer's first signal of a failed
+      // payment. Internally try/caught; wrap defensively so it can't fail the
+      // webhook.
+      try {
+        await sendPaymentFailedEmail({ organizationId: orgId })
+      } catch {
+        // best-effort — never fail the webhook on a notification email
+      }
 
       const planKey = derivePlanKey(subscription)
       if (!planKey) {
@@ -336,6 +357,10 @@ async function upsertFromSubscription(
   serviceClient: ReturnType<typeof createServiceClient>,
   subscription: Stripe.Subscription,
   orgId: string,
+  // Only the checkout.session.completed path passes allowOverrideComp — every
+  // other lifecycle caller (created/updated) leaves it false so a comp/
+  // invoice-billed row can't be clobbered by a stale event (audit MAJOR-5).
+  options?: { allowOverrideComp?: boolean },
 ): Promise<void> {
   const planKey = derivePlanKey(subscription)
   if (!planKey) {
@@ -346,19 +371,23 @@ async function upsertFromSubscription(
   const planSeats = PLANS[planKey].seats
   const status = mapStripeStatus(subscription.status)
 
-  const result = await upsertSubscriptionFromStripe(serviceClient, {
-    organizationId: orgId,
-    stripeCustomerId:
-      typeof subscription.customer === 'string' ? subscription.customer : subscription.customer.id,
-    stripeSubscriptionId: subscription.id,
-    planKey,
-    planSeats,
-    status,
-    trialEnd: subscription.trial_end
-      ? new Date(subscription.trial_end * 1000).toISOString()
-      : null,
-    currentPeriodEnd: getCurrentPeriodEnd(subscription),
-  })
+  const result = await upsertSubscriptionFromStripe(
+    serviceClient,
+    {
+      organizationId: orgId,
+      stripeCustomerId:
+        typeof subscription.customer === 'string' ? subscription.customer : subscription.customer.id,
+      stripeSubscriptionId: subscription.id,
+      planKey,
+      planSeats,
+      status,
+      trialEnd: subscription.trial_end
+        ? new Date(subscription.trial_end * 1000).toISOString()
+        : null,
+      currentPeriodEnd: getCurrentPeriodEnd(subscription),
+    },
+    { allowOverrideComp: options?.allowOverrideComp ?? false },
+  )
   // H1: propagate a failed DB write so the webhook returns 500 and Stripe
   // retries — previously the {ok:false} was ignored and the write was lost.
   if (!result.ok) throw new Error(`subscription upsert failed: ${result.code}`)
