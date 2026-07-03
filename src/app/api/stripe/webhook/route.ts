@@ -21,7 +21,7 @@
 
 export const runtime = 'nodejs'
 
-import { NextResponse } from 'next/server'
+import { NextResponse, after } from 'next/server'
 import type Stripe from 'stripe'
 import * as Sentry from '@sentry/nextjs'
 
@@ -244,17 +244,20 @@ async function handleStripeEvent(
       const subscription = event.data.object as Stripe.Subscription
       const orgId = extractOrgId(subscription)
       if (!orgId) break
-      // Await (not fire-and-forget) so the send completes before this
-      // serverless invocation can freeze after the 200 (audit min-67) — a
-      // void'd promise is not guaranteed to run to completion. The send is
-      // internally try/caught and never throws, but wrap defensively so a
-      // future change can't fail the webhook. The trial end itself is handled
-      // by the subscription.updated event.
-      try {
-        await sendTrialEndingEmail({ organizationId: orgId, trialEnd: subscription.trial_end })
-      } catch {
-        // best-effort — never fail the webhook on a notification email
-      }
+      // Run AFTER the response is sent (audit min-67 + review finding 4).
+      // Fire-and-forget (void) risks the send being dropped on a serverless
+      // freeze; awaiting inline risks a hung Resend call (no AbortSignal)
+      // blocking the handler to the function timeout → 500 → Stripe retry +
+      // double-send. after() keeps the function alive for the send without
+      // delaying or failing the response. The trial end itself is handled by
+      // the subscription.updated event.
+      after(async () => {
+        try {
+          await sendTrialEndingEmail({ organizationId: orgId, trialEnd: subscription.trial_end })
+        } catch {
+          // best-effort — the send never throws; guard defensively
+        }
+      })
       break
     }
 
@@ -288,16 +291,17 @@ async function handleStripeEvent(
       }
 
       // Dunning email fires for any resolved org whose renewal payment failed,
-      // independent of plan resolution below. Await (not fire-and-forget) so a
-      // serverless freeze after the 200 can't drop it (audit min-67) — losing
-      // access would otherwise be the customer's first signal of a failed
-      // payment. Internally try/caught; wrap defensively so it can't fail the
-      // webhook.
-      try {
-        await sendPaymentFailedEmail({ organizationId: orgId })
-      } catch {
-        // best-effort — never fail the webhook on a notification email
-      }
+      // independent of plan resolution below. Run it AFTER the response (audit
+      // min-67 + review finding 4) so a hung Resend call can't delay the
+      // past_due downgrade below or 500 the webhook, and a serverless freeze
+      // can't silently drop it.
+      after(async () => {
+        try {
+          await sendPaymentFailedEmail({ organizationId: orgId })
+        } catch {
+          // best-effort
+        }
+      })
 
       const planKey = derivePlanKey(subscription)
       if (!planKey) {

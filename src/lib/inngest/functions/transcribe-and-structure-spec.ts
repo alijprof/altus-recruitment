@@ -214,14 +214,27 @@ export const transcribeAndStructureSpec = inngest.createFunction(
           // stream is unreliable on Vercel (ffprobe needs seekable input for
           // the moov atom; streams aren't seekable), so eliminating the
           // probe step removes a whole class of failures.
-          const transcript = await transcribe({
-            organizationId: organization_id,
-            userId: user_id,
-            purpose: 'spec_transcribe',
-            audioBuffer: compressed,
-            // After recompress the container is WebM/Opus — match it.
-            mimeType: 'audio/webm',
-          })
+          let transcript
+          try {
+            transcript = await transcribe({
+              organizationId: organization_id,
+              userId: user_id,
+              purpose: 'spec_transcribe',
+              audioBuffer: compressed,
+              // After recompress the container is WebM/Opus — match it.
+              mimeType: 'audio/webm',
+            })
+          } catch (e) {
+            // Budget cap tripped between the pre-flight and here. transcribe()
+            // throws CapExceededError BEFORE any Whisper spend; catch it inside
+            // the step (prototype intact) and signal with a -3 sentinel — a
+            // function-level instanceof would miss the StepError re-wrap (review
+            // finding 1). Handled after the step as a clean "budget reached".
+            if (e instanceof CapExceededError) {
+              return { transcriptText: '', durationSeconds: -3, whisperCostPence: 0 }
+            }
+            throw e
+          }
           if (transcript.durationSeconds <= 0) {
             return { transcriptText: '', durationSeconds: -1, whisperCostPence: 0 }
           }
@@ -236,6 +249,16 @@ export const transcribeAndStructureSpec = inngest.createFunction(
         },
       )
 
+      if (durationSeconds === -3) {
+        // Budget cap tripped mid-run (sentinel from process-audio). Mark the row
+        // and return cleanly — no retry, no onFailure (review finding 1).
+        await markSpecFailed({
+          draftId: spec_draft_id,
+          organizationId: organization_id,
+          userMessage: BUDGET_CAPPED_USER_MESSAGE,
+        })
+        return
+      }
       if (durationSeconds === -1) {
         await markSpecFailed({
           draftId: spec_draft_id,
@@ -307,19 +330,10 @@ export const transcribeAndStructureSpec = inngest.createFunction(
         }
       })
     } catch (err) {
-      // Budget cap tripped between the pre-flight and transcribe()'s internal
-      // gate (audit MAJOR-10). Treat exactly like the pre-flight: honest
-      // "budget reached" message + return WITHOUT rethrowing, so Inngest doesn't
-      // burn its retries on a cap that won't clear until the month resets and
-      // onFailure can't overwrite the message. Mirrors parse-cv.ts.
-      if (err instanceof CapExceededError) {
-        await markSpecFailed({
-          draftId: spec_draft_id,
-          organizationId: organization_id,
-          userMessage: BUDGET_CAPPED_USER_MESSAGE,
-        })
-        return
-      }
+      // (The AI-budget cap is handled via the pre-flight check above and the
+      // -3 sentinel from the process-audio step — review finding 1 — because a
+      // CapExceededError thrown across the step boundary arrives here as a
+      // StepError, not the original class, so an instanceof guard here is dead.)
       // VERIFICATION R4: never pass the raw err to Sentry. Wrap to
       // name + status only so SDK errors that echo prompts can't bypass
       // the global beforeSend PII scrub.

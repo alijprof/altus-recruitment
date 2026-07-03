@@ -140,11 +140,13 @@ export async function runWithLogging(args: RunArgs): Promise<Anthropic.Message> 
           const retryAfter = Number(retryAfterRaw)
           const waitMs =
             Number.isFinite(retryAfter) && retryAfter > 0
-              ? // Clamp the server-supplied Retry-After too (audit min-19): an
-                // Anthropic 429 with a large header value (e.g. 60s) would
-                // otherwise block a synchronous server action until the Vercel
-                // function timeout kills it. 30s cap matches the backoff path.
-                Math.min(30_000, retryAfter * 1000)
+              ? // Honour the server-supplied Retry-After but bound it (audit
+                // min-19 + review finding 6). Clamping too low retries before
+                // Anthropic's window reopens (drawing another 429); not clamping
+                // at all lets a pathological header hang a request to the
+                // function timeout. 60s covers Anthropic's typical windows while
+                // keeping the worst case (4 attempts) within the 300s budget.
+                Math.min(60_000, retryAfter * 1000)
               : Math.min(30_000, 1000 * 2 ** attempt)
           await new Promise((resolve) => setTimeout(resolve, waitMs))
           attempt++

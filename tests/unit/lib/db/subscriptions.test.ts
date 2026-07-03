@@ -21,14 +21,17 @@ import { upsertSubscriptionFromStripe } from '@/lib/db/subscriptions'
 
 type Row = Record<string, unknown> | null
 
-function makeClient(existing: Row) {
+function makeClient(existing: Row, opts?: { readError?: boolean }) {
   const state = { upsertCalls: 0 }
   const client = {
     from: () => ({
       // read path used by getSubscriptionForOrg: select().eq().maybeSingle()
       select: () => ({
         eq: () => ({
-          maybeSingle: async () => ({ data: existing, error: null }),
+          maybeSingle: async () =>
+            opts?.readError
+              ? { data: null, error: { message: 'transient db error' } }
+              : { data: existing, error: null },
         }),
       }),
       // write path: upsert().select().single()
@@ -114,6 +117,32 @@ describe('upsertSubscriptionFromStripe — comp-row protection', () => {
   it('creates a new row when none exists (no comp to protect)', async () => {
     const { client, state } = makeClient(null)
     await upsertSubscriptionFromStripe(client as unknown as ClientArg, INPUT)
+    expect(state.upsertCalls).toBe(1)
+  })
+
+  it('fails closed (no write, returns internal) when the existing-row read errors', async () => {
+    // Review finding 2: a transient read error must not let a stale event
+    // clobber a possible comp row. Fail closed → webhook 500 → Stripe retries.
+    const { client, state } = makeClient(null, { readError: true })
+    const result = await upsertSubscriptionFromStripe(client as unknown as ClientArg, INPUT)
+    expect(state.upsertCalls).toBe(0)
+    expect(result.ok).toBe(false)
+  })
+
+  it('lets a genuine out-of-band paid subscription (real id + active) replace a comp row', async () => {
+    // Review finding 3: an org comped via /admin can be moved onto a real Stripe
+    // subscription outside Checkout; its created/updated event (real sub id +
+    // active) must be persisted, not skipped.
+    const { client, state } = makeClient({
+      organization_id: 'org-1',
+      stripe_subscription_id: null,
+      status: 'active',
+    })
+    await upsertSubscriptionFromStripe(client as unknown as ClientArg, {
+      ...INPUT,
+      stripeSubscriptionId: 'sub_real',
+      status: 'active',
+    })
     expect(state.upsertCalls).toBe(1)
   })
 })

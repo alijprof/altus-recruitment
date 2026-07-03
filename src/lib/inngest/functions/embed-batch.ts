@@ -2,6 +2,7 @@ import * as Sentry from '@sentry/nextjs'
 
 import { candidateEmbeddingText, jobEmbeddingText } from '@/lib/ai/embed-text'
 import { embed } from '@/lib/ai/voyage'
+import { CapExceededError } from '@/lib/stripe/cap-enforcement'
 import {
   bumpCandidateEmbedding,
   type CandidateForEmbedding,
@@ -158,6 +159,12 @@ export const embedBatch = inngest.createFunction(
             }
           }
         } catch (err) {
+          // Over-budget org: embed() throws CapExceededError before any Voyage
+          // spend. That's an expected state, not an error — skip this org
+          // without Sentry noise and let a future sweep retry once the budget
+          // frees (review finding 6). instanceof works here because the catch is
+          // INSIDE the step callback (no Inngest StepError re-wrap).
+          if (err instanceof CapExceededError) continue
           const name = err instanceof Error ? err.name : 'UnknownError'
           const status = readStatus(err)
           Sentry.captureException(new Error(`${name}: ${status}`), {
@@ -229,6 +236,9 @@ export const embedBatch = inngest.createFunction(
             }
           }
         } catch (err) {
+          // Over-budget org: skip without Sentry noise (review finding 6);
+          // instanceof works — catch is inside the step callback.
+          if (err instanceof CapExceededError) continue
           const name = err instanceof Error ? err.name : 'UnknownError'
           const status = readStatus(err)
           Sentry.captureException(new Error(`${name}: ${status}`), {

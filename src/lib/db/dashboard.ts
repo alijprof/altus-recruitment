@@ -39,6 +39,9 @@ export async function getDashboardMetrics(
   const monthStart = new Date(
     Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1),
   ).toISOString()
+  const nextMonthStart = new Date(
+    Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1),
+  ).toISOString()
 
   const [candidates, openJobs, openApplications, placements] = await Promise.all([
     supabase.from('candidates').select('id', { count: 'exact', head: true }),
@@ -47,13 +50,20 @@ export async function getDashboardMetrics(
       .from('applications')
       .select('id', { count: 'exact', head: true })
       .not('stage', 'in', '(rejected,withdrawn,placed)'),
-    // Placements this month: applications currently at stage 'placed' whose last
-    // stage change lands in the current calendar month (audit min-41).
+    // Placements this month (audit min-41 + review finding 5). Count placed
+    // applications by the EFFECTIVE placement date coalesce(placed_at,
+    // stage_changed_at) — matching the buyer-value + source-attribution RPCs —
+    // NOT by stage_changed_at alone. placed_at is the user-entered placement
+    // date (nullable); when it's set the KPI must agree with the reports, and a
+    // placement dated into a future/past month must land in that month's total.
     supabase
       .from('applications')
       .select('id', { count: 'exact', head: true })
       .eq('stage', 'placed')
-      .gte('stage_changed_at', monthStart),
+      .or(
+        `and(placed_at.gte.${monthStart},placed_at.lt.${nextMonthStart}),` +
+          `and(placed_at.is.null,stage_changed_at.gte.${monthStart},stage_changed_at.lt.${nextMonthStart})`,
+      ),
   ])
 
   if (candidates.error) {

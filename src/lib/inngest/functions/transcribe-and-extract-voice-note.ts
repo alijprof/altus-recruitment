@@ -161,14 +161,26 @@ export const transcribeAndExtractVoiceNote = inngest.createFunction(
             bitrate: '32k',
             channels: 1,
           })
-          const transcript = await transcribe({
-            organizationId: organization_id,
-            userId: user_id,
-            purpose: 'voice_note_transcribe',
-            audioBuffer: compressed,
-            // After recompress the container is WebM/Opus — match it.
-            mimeType: 'audio/webm',
-          })
+          let transcript
+          try {
+            transcript = await transcribe({
+              organizationId: organization_id,
+              userId: user_id,
+              purpose: 'voice_note_transcribe',
+              audioBuffer: compressed,
+              // After recompress the container is WebM/Opus — match it.
+              mimeType: 'audio/webm',
+            })
+          } catch (e) {
+            // Budget cap tripped mid-run. transcribe() throws CapExceededError
+            // BEFORE any Whisper spend; catch inside the step (prototype intact)
+            // and signal with a -3 sentinel — a function-level instanceof would
+            // miss the StepError re-wrap (review finding 1).
+            if (e instanceof CapExceededError) {
+              return { transcriptText: '', durationSeconds: -3, whisperCostPence: 0 }
+            }
+            throw e
+          }
           return {
             transcriptText: transcript.text ?? '',
             durationSeconds: transcript.durationSeconds,
@@ -176,6 +188,17 @@ export const transcribeAndExtractVoiceNote = inngest.createFunction(
           }
         },
       )
+
+      if (durationSeconds === -3) {
+        // Budget cap tripped mid-run (sentinel from process-audio). Mark the row
+        // and return cleanly — no retry, no onFailure (review finding 1).
+        await markVoiceNoteFailed({
+          voiceNoteId: voice_note_id,
+          organizationId: organization_id,
+          userMessage: BUDGET_CAPPED_USER_MESSAGE,
+        })
+        return
+      }
 
       const proposal = await step.run('sonnet-extract', async () => {
         const result = await extractVoiceNoteUpdates({
@@ -220,17 +243,10 @@ export const transcribeAndExtractVoiceNote = inngest.createFunction(
         void whisperCostPence // logged to ai_usage by the transcribe wrapper
       })
     } catch (err) {
-      // Budget cap tripped between the pre-flight and transcribe()'s internal
-      // gate (audit MAJOR-10). Mark 'budget reached' + return WITHOUT rethrowing
-      // so Inngest doesn't burn retries on a cap that won't clear until reset.
-      if (err instanceof CapExceededError) {
-        await markVoiceNoteFailed({
-          voiceNoteId: voice_note_id,
-          organizationId: organization_id,
-          userMessage: BUDGET_CAPPED_USER_MESSAGE,
-        })
-        return
-      }
+      // (The AI-budget cap is handled via the pre-flight check above and the
+      // -3 sentinel from the process-audio step — review finding 1 — because a
+      // CapExceededError thrown across the step boundary arrives here as a
+      // StepError, not the original class, so an instanceof guard here is dead.)
       // NEVER pass raw err to Sentry — wrap to name+status only so SDK errors
       // that echo prompts can't bypass the global beforeSend PII scrub.
       const name = err instanceof Error ? err.name : 'UnknownError'

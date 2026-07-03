@@ -92,12 +92,34 @@ export async function upsertSubscriptionFromStripe(
   // preserved and returned as success.
   if (!options?.allowOverrideComp) {
     const existing = await getSubscriptionForOrg(serviceClient, input.organizationId)
-    if (
+
+    // Fail CLOSED on a transient read error (review finding 2). If we can't read
+    // the current row we can't rule out that it's a comp/invoice-billed row, so
+    // we must not risk the last-write-wins upsert clobbering it. Returning
+    // internal makes the webhook 500 → Stripe re-delivers → the retry re-reads
+    // cleanly. 'not_found' is a definite "no row yet" and is safe to proceed on.
+    if (!existing.ok && existing.code !== 'not_found') {
+      return { ok: false, code: 'internal' }
+    }
+
+    const isLiveComp =
       existing.ok &&
       existing.data.stripe_subscription_id === null &&
       existing.data.status !== 'cancelled' &&
       existing.data.status !== 'none'
-    ) {
+
+    // A GENUINE new paid subscription — a real Stripe subscription id with an
+    // entitled status — is allowed to replace a comp even outside Checkout
+    // (review finding 3: an org comped via /admin can later be moved onto a real
+    // Stripe subscription through the Dashboard/API, whose created/updated
+    // events carry a real sub id and an active/trialing status). Only a stale
+    // DOWNGRADE (cancelled/past_due, or a null sub id) targeting a comp row is
+    // refused — that is the MAJOR-5 lock-out we are guarding against.
+    const incomingIsGenuinePaid =
+      input.stripeSubscriptionId !== null &&
+      (input.status === 'active' || input.status === 'trialing')
+
+    if (isLiveComp && !incomingIsGenuinePaid) {
       Sentry.captureMessage('stripe_webhook: refused to overwrite comp/invoice-billed row', {
         level: 'warning',
         tags: {

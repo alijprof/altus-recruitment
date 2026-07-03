@@ -121,16 +121,27 @@ export const embedCandidateFromLinkedIn = inngest.createFunction(
       // Step 3: Voyage embed. Logs cost to ai_usage automatically (D3-24
       // non-negotiable). purpose='linkedin_candidate_embed' separates
       // these from CV-driven embeds in the /settings/usage view.
-      const { vectors } = await step.run('voyage-embed', async () =>
-        embed({
-          organizationId: organization_id,
-          userId: user_id,
-          purpose: 'linkedin_candidate_embed' as never,
-          inputType: 'document',
-          inputs: [text],
-        }),
-      )
-      const vector = vectors[0]
+      const embedded = await step.run('voyage-embed', async () => {
+        try {
+          const { vectors } = await embed({
+            organizationId: organization_id,
+            userId: user_id,
+            purpose: 'linkedin_candidate_embed' as never,
+            inputType: 'document',
+            inputs: [text],
+          })
+          return { vectors }
+        } catch (e) {
+          // Over budget: skip cleanly (review finding 1). Catch inside the step
+          // where the prototype survives — a function-level `instanceof` would
+          // miss the StepError re-wrap. The embed-batch sweep re-attempts once
+          // the budget frees.
+          if (e instanceof CapExceededError) return { capped: true as const }
+          throw e
+        }
+      })
+      if ('capped' in embedded) return
+      const vector = embedded.vectors[0]
       if (!vector || vector.length === 0) {
         throw new Error('voyage embed returned no vector')
       }
@@ -153,13 +164,9 @@ export const embedCandidateFromLinkedIn = inngest.createFunction(
         }
       })
     } catch (err) {
-      // AI budget cap (audit MAJOR-1). embed() gates on checkCap and throws
-      // CapExceededError when the org is non-entitled / over the £ ceiling —
-      // not a transient failure. Return WITHOUT rethrowing so Inngest doesn't
-      // burn retries; the embed-batch sweep re-attempts once the budget frees.
-      if (err instanceof CapExceededError) {
-        return
-      }
+      // (The AI-budget cap is handled inside the 'voyage-embed' step above via a
+      // sentinel — review finding 1 — because a CapExceededError thrown across
+      // the step boundary arrives here as a StepError, not the original class.)
       // VERIFICATION R4: wrap name + status only — Voyage SDK errors can
       // echo input fragments in error.message which would bypass the
       // global Sentry beforeSend PII scrub.

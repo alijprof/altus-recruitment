@@ -83,17 +83,30 @@ export const embedJobOnJDChange = inngest.createFunction(
         return
       }
 
-      const { vectors } = await step.run('embed', async () => {
-        return await embed({
-          organizationId: organization_id,
-          userId: user_id,
-          purpose: 'job_embed',
-          inputType: 'document',
-          inputs: [embeddingText],
-        })
+      const embedded = await step.run('embed', async () => {
+        try {
+          const { vectors } = await embed({
+            organizationId: organization_id,
+            userId: user_id,
+            purpose: 'job_embed',
+            inputType: 'document',
+            inputs: [embeddingText],
+          })
+          return { vectors }
+        } catch (e) {
+          // Over budget: embed() throws CapExceededError BEFORE any Voyage spend
+          // (audit MAJOR-1). Catch it HERE, inside the step, where the prototype
+          // is intact — Inngest re-wraps errors thrown across a step boundary as
+          // a StepError, so a function-level `instanceof` misses it (review
+          // finding 1). Return a sentinel so we skip cleanly (no retry, no Sentry
+          // noise); the embed-batch sweep re-attempts once the budget frees.
+          if (e instanceof CapExceededError) return { capped: true as const }
+          throw e
+        }
       })
+      if ('capped' in embedded) return
 
-      const vector = vectors[0]
+      const vector = embedded.vectors[0]
       if (!vector || vector.length === 0) {
         throw new Error('voyage embed returned no vector')
       }
@@ -122,16 +135,10 @@ export const embedJobOnJDChange = inngest.createFunction(
         },
       })
     } catch (err) {
-      // AI budget cap (audit MAJOR-1). embed() now gates on checkCap and throws
-      // CapExceededError when the org is non-entitled / over the £ ceiling. That
-      // is not a transient failure — retrying stays capped until the month
-      // resets. Return WITHOUT rethrowing so Inngest doesn't burn its 3 retries;
-      // the job's embedding stays NULL and the embed-batch sweep re-attempts it
-      // once the budget frees (and skips it while still capped). No Sentry noise
-      // — an over-budget org is an expected state, not an error.
-      if (err instanceof CapExceededError) {
-        return
-      }
+      // (The AI-budget cap is handled inside the 'embed' step above via a
+      // sentinel — see review finding 1 — because a CapExceededError thrown
+      // across the step boundary arrives here as a StepError, not the original
+      // class, so an `instanceof` guard here would be dead code.)
       // VERIFICATION R4: wrap name + status only — never pass the raw
       // error to Sentry (Voyage SDK error.message can include input
       // fragments that would bypass beforeSend PII scrub).
