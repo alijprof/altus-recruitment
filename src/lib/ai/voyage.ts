@@ -5,6 +5,7 @@ import { createRequire } from 'node:module'
 import * as Sentry from '@sentry/nextjs'
 
 import { env } from '@/lib/env'
+import { checkCap, CapExceededError } from '@/lib/stripe/cap-enforcement'
 import { createServiceClient } from '@/lib/supabase/service'
 
 // voyageai 0.2.1 ships a broken ESM build (dist/esm/extended/index.mjs
@@ -107,6 +108,18 @@ export async function embed(args: EmbedArgs): Promise<EmbedResult> {
   }
   if (args.inputs.length > 128) {
     throw new Error(`voyage embed: batch size ${args.inputs.length} exceeds 128`)
+  }
+
+  // AI spend gate (audit MAJOR-1). Voyage spend previously bypassed all cap
+  // enforcement — checkCap was only consulted before Claude calls. Gate here,
+  // in the wrapper, so NO caller can bypass it. On a hard cap (non-entitled,
+  // over the £ ceiling, or over the per-unit search cap) throw CapExceededError;
+  // every caller either catches it (search → keyword fallback; Inngest jobs →
+  // skip/mark-failed) or lets it surface as an intentional deny. Fails open
+  // inside checkCap on any billing error, so a glitch never blocks embeds.
+  const cap = await checkCap(args.organizationId, args.purpose)
+  if (!cap.allow) {
+    throw new CapExceededError(cap.bucket, args.purpose, args.organizationId)
   }
 
   const started = Date.now()

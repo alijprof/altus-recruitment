@@ -259,4 +259,71 @@ describe('checkCap', () => {
     expect(result.allow).toBe(true)
     expect(result.mode).toBe('normal')
   })
+
+  // Audit MAJOR-1 regression guard. Whisper/Voyage document-embed purposes
+  // (candidate_embed / job_embed / voice_note_transcribe etc.) previously
+  // bypassed the entitlement + £-ceiling gates because the unknown-purpose /
+  // pre-ceiling ordering short-circuited before them. After the reorder, EVERY
+  // purpose passes those two gates first — only the per-unit ratio is bucketed.
+  it.each(['candidate_embed', 'job_embed', 'linkedin_candidate_embed'] as const)(
+    'unmapped purpose %s → hard deny when org is non-entitled (MAJOR-1)',
+    async (purpose) => {
+      mockGetEntitlement.mockResolvedValue({
+        ...BASE_ENTITLEMENT,
+        status: 'cancelled',
+        aiUsageThisMonth: {
+          matchScores: 0,
+          cvParses: 0,
+          searches: 0,
+          specMinutes: 0,
+          writingCalls: 0,
+        },
+      })
+
+      const result = await checkCap('org-1', purpose)
+
+      expect(result.allow).toBe(false)
+      expect(result.mode).toBe('hard')
+      expect(result.bucket).toBe(purpose)
+    },
+  )
+
+  it('unmapped purpose → hard deny when the £ spend ceiling is breached (MAJOR-1)', async () => {
+    mockGetEntitlement.mockResolvedValue({
+      ...BASE_ENTITLEMENT,
+      spendCeilingBreached: true,
+      aiUsageThisMonth: {
+        matchScores: 0,
+        cvParses: 0,
+        searches: 0,
+        specMinutes: 0,
+        writingCalls: 0,
+      },
+    })
+
+    const result = await checkCap('org-1', 'candidate_embed')
+
+    expect(result.allow).toBe(false)
+    expect(result.mode).toBe('hard')
+  })
+
+  it('mapped Whisper purpose → hard deny at the £ ceiling even at 0% bucket usage (MAJOR-1/MAJOR-10)', async () => {
+    mockGetEntitlement.mockResolvedValue({
+      ...BASE_ENTITLEMENT,
+      spendCeilingBreached: true,
+      aiUsageThisMonth: {
+        matchScores: 0,
+        cvParses: 0,
+        searches: 0,
+        specMinutes: 0,
+        writingCalls: 0,
+      },
+    })
+
+    const result = await checkCap('org-1', 'spec_transcribe')
+
+    expect(result.allow).toBe(false)
+    expect(result.mode).toBe('hard')
+    expect(result.bucket).toBe('specMinutes')
+  })
 })

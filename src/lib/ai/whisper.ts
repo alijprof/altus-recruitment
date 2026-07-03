@@ -4,6 +4,7 @@ import OpenAI, { toFile } from 'openai'
 import * as Sentry from '@sentry/nextjs'
 
 import { env } from '@/lib/env'
+import { checkCap, CapExceededError } from '@/lib/stripe/cap-enforcement'
 import { createServiceClient } from '@/lib/supabase/service'
 
 // ---------------------------------------------------------------------------
@@ -106,6 +107,18 @@ export type TranscribeResult = {
 export async function transcribe(args: TranscribeArgs): Promise<TranscribeResult> {
   if (args.audioBuffer.byteLength === 0) {
     throw new Error('whisper: empty audio buffer')
+  }
+
+  // AI spend gate (audit MAJOR-1 / MAJOR-10). Whisper spend previously bypassed
+  // ALL cap enforcement — a comped org (whose OpenAI cost the founder pays on a
+  // shared key) could transcribe unlimited audio past every cap and the £
+  // ceiling. Gate here, in the wrapper, so no caller can bypass it. On a hard
+  // cap throw CapExceededError; the Inngest callers catch it and mark the row
+  // 'AI budget reached' without retrying (retries would stay capped). The
+  // callers also pre-flight checkCap so this is a backstop, not the first line.
+  const cap = await checkCap(args.organizationId, args.purpose)
+  if (!cap.allow) {
+    throw new CapExceededError(cap.bucket, args.purpose, args.organizationId)
   }
 
   const started = Date.now()

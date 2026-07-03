@@ -82,11 +82,15 @@ function currentMonth(): string {
 // ---------------------------------------------------------------------------
 export async function checkCap(orgId: string, purpose: string): Promise<CapCheckResult> {
   const bucket = PURPOSE_CAP_BUCKETS[purpose]
-
-  // Unknown purpose → not capped. Allow.
-  if (!bucket) {
-    return { allow: true, mode: 'normal', bucket: purpose }
-  }
+  // A purpose may have NO bucket (e.g. the document-embed purposes
+  // candidate_embed / job_embed / linkedin_candidate_embed). Those are not
+  // metered against a per-unit cap — but they must STILL be denied when the
+  // org is non-entitled or over the global £ ceiling. Otherwise Whisper/Voyage
+  // document work runs unbounded on the founder's shared keys for a lapsed or
+  // over-budget org (audit MAJOR-1: "AI caps only cover Claude"). So the
+  // entitlement + spend-ceiling gates below run for EVERY purpose; only the
+  // final per-unit ratio check is bucket-specific and skipped when unmapped.
+  const reportBucket = bucket ?? purpose
 
   let entitlement
   try {
@@ -96,17 +100,17 @@ export async function checkCap(orgId: string, purpose: string): Promise<CapCheck
       tags: { layer: 'billing', helper: 'checkCap', step: 'getEntitlement', organization_id: orgId },
     })
     // Fail open — a billing error should not block AI features.
-    return { allow: true, mode: 'normal', bucket }
+    return { allow: true, mode: 'normal', bucket: reportBucket }
   }
 
   // Entitlement gate (audit blocker 2). Fail-open-on-error (above) vs
   // fail-closed-on-definitive-status (here): a transient DB error must not
   // block a paying customer's AI, but a DEFINITIVE non-entitled status
   // (lapsed/cancelled/past_due/none) must deny — those orgs otherwise burn
-  // paid AI keys to the monthly cap. Status entitled ⟺ {trialing, active}
-  // (matches the layout + requireEntitledOrg exactly).
+  // paid AI keys. Status entitled ⟺ {trialing, active} (matches the layout +
+  // requireEntitledOrg exactly). Runs for ALL purposes (MAJOR-1).
   if (!isEntitledStatus(entitlement.status)) {
-    return { allow: false, mode: 'hard', bucket }
+    return { allow: false, mode: 'hard', bucket: reportBucket }
   }
 
   // GLOBAL / PER-ORG £ CEILING (handover cost guardrail). Hard backstop on
@@ -115,9 +119,17 @@ export async function checkCap(orgId: string, purpose: string): Promise<CapCheck
   // (plan_overrides.monthly_spend_cap_pence) takes precedence when lower; a
   // generous global env backstop applies otherwise. Read from the entitlement
   // snapshot (computed by getSpendCeilingState, which fails open) so we don't
-  // re-query the spend sum on every capped Claude call.
+  // re-query the spend sum on every capped call. Runs for ALL purposes so
+  // Whisper/Voyage spend is bounded too (MAJOR-1), not just Claude.
   if (entitlement.spendCeilingBreached) {
-    return { allow: false, mode: 'hard', bucket }
+    return { allow: false, mode: 'hard', bucket: reportBucket }
+  }
+
+  // Passed the entitlement + £ ceiling gates. A purpose with no bucket is not
+  // additionally unit-capped — allow it (its spend is still bounded by the £
+  // ceiling above).
+  if (!bucket) {
+    return { allow: true, mode: 'normal', bucket: reportBucket }
   }
 
   const cap = entitlement.aiCaps[bucket as keyof AiUsageAggregate]

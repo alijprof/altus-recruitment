@@ -4,6 +4,7 @@ import { NonRetriableError } from 'inngest'
 import { recompressToOpus } from '@/lib/ai/ffmpeg'
 import { extractVoiceNoteUpdates } from '@/lib/ai/voice-note-extract'
 import { transcribe } from '@/lib/ai/whisper'
+import { checkCap, CapExceededError } from '@/lib/stripe/cap-enforcement'
 import { markVoiceNoteFailed } from '@/lib/db/voice-notes'
 import { inngest } from '@/lib/inngest/client'
 import { readStatus } from '@/lib/observability/inngest'
@@ -32,6 +33,12 @@ import { createServiceClient } from '@/lib/supabase/service'
 
 const FAILED_USER_MESSAGE =
   'Transcription failed. Try uploading again, or contact support.'
+
+// Honest message when a hard AI budget cap (the monthly £ ceiling or the
+// specMinutes bucket) blocks transcription — distinct from a generic failure so
+// the recruiter knows to upgrade / wait for the reset (audit MAJOR-10 / min-18).
+const BUDGET_CAPPED_USER_MESSAGE =
+  'Monthly AI usage limit reached — transcription paused. Upgrade your plan or wait for the reset.'
 
 type VoiceNoteUploadedEventData = {
   organization_id: string
@@ -95,6 +102,22 @@ export const transcribeAndExtractVoiceNote = inngest.createFunction(
     // -------------------------------------------------------------------------
     if (!storage_path.startsWith(`${organization_id}/`)) {
       throw new NonRetriableError('cross-tenant-storage-path')
+    }
+
+    // Pre-flight AI budget check (audit MAJOR-1 / MAJOR-10). A hard cap is NOT
+    // transient — transcription would fail identically on every retry. Detect it
+    // up-front, mark the row with an honest "budget reached" message, and return
+    // WITHOUT throwing so Inngest treats the run as complete. Mirrors parse-cv.ts.
+    const budget = await step.run('check-ai-budget', () =>
+      checkCap(organization_id, 'voice_note_transcribe'),
+    )
+    if (!budget.allow && budget.mode === 'hard') {
+      await markVoiceNoteFailed({
+        voiceNoteId: voice_note_id,
+        organizationId: organization_id,
+        userMessage: BUDGET_CAPPED_USER_MESSAGE,
+      })
+      return
     }
 
     try {
@@ -197,6 +220,17 @@ export const transcribeAndExtractVoiceNote = inngest.createFunction(
         void whisperCostPence // logged to ai_usage by the transcribe wrapper
       })
     } catch (err) {
+      // Budget cap tripped between the pre-flight and transcribe()'s internal
+      // gate (audit MAJOR-10). Mark 'budget reached' + return WITHOUT rethrowing
+      // so Inngest doesn't burn retries on a cap that won't clear until reset.
+      if (err instanceof CapExceededError) {
+        await markVoiceNoteFailed({
+          voiceNoteId: voice_note_id,
+          organizationId: organization_id,
+          userMessage: BUDGET_CAPPED_USER_MESSAGE,
+        })
+        return
+      }
       // NEVER pass raw err to Sentry — wrap to name+status only so SDK errors
       // that echo prompts can't bypass the global beforeSend PII scrub.
       const name = err instanceof Error ? err.name : 'UnknownError'

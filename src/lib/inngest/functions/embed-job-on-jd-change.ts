@@ -3,6 +3,7 @@ import { NonRetriableError } from 'inngest'
 
 import { jobEmbeddingText } from '@/lib/ai/embed-text'
 import { embed } from '@/lib/ai/voyage'
+import { CapExceededError } from '@/lib/stripe/cap-enforcement'
 import { bumpJobEmbedding, getJobForEmbedding } from '@/lib/db/jobs'
 import { inngest } from '@/lib/inngest/client'
 import { readStatus } from '@/lib/observability/inngest'
@@ -121,6 +122,16 @@ export const embedJobOnJDChange = inngest.createFunction(
         },
       })
     } catch (err) {
+      // AI budget cap (audit MAJOR-1). embed() now gates on checkCap and throws
+      // CapExceededError when the org is non-entitled / over the £ ceiling. That
+      // is not a transient failure — retrying stays capped until the month
+      // resets. Return WITHOUT rethrowing so Inngest doesn't burn its 3 retries;
+      // the job's embedding stays NULL and the embed-batch sweep re-attempts it
+      // once the budget frees (and skips it while still capped). No Sentry noise
+      // — an over-budget org is an expected state, not an error.
+      if (err instanceof CapExceededError) {
+        return
+      }
       // VERIFICATION R4: wrap name + status only — never pass the raw
       // error to Sentry (Voyage SDK error.message can include input
       // fragments that would bypass beforeSend PII scrub).

@@ -3,6 +3,7 @@ import { NonRetriableError } from 'inngest'
 
 import { candidateEmbeddingText } from '@/lib/ai/embed-text'
 import { embed } from '@/lib/ai/voyage'
+import { CapExceededError } from '@/lib/stripe/cap-enforcement'
 import { bumpCandidateEmbedding, getCandidateForEmbedding } from '@/lib/db/candidates'
 import { inngest } from '@/lib/inngest/client'
 import { readStatus } from '@/lib/observability/inngest'
@@ -152,6 +153,13 @@ export const embedCandidateFromLinkedIn = inngest.createFunction(
         }
       })
     } catch (err) {
+      // AI budget cap (audit MAJOR-1). embed() gates on checkCap and throws
+      // CapExceededError when the org is non-entitled / over the £ ceiling —
+      // not a transient failure. Return WITHOUT rethrowing so Inngest doesn't
+      // burn retries; the embed-batch sweep re-attempts once the budget frees.
+      if (err instanceof CapExceededError) {
+        return
+      }
       // VERIFICATION R4: wrap name + status only — Voyage SDK errors can
       // echo input fragments in error.message which would bypass the
       // global Sentry beforeSend PII scrub.

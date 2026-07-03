@@ -140,7 +140,11 @@ export async function runWithLogging(args: RunArgs): Promise<Anthropic.Message> 
           const retryAfter = Number(retryAfterRaw)
           const waitMs =
             Number.isFinite(retryAfter) && retryAfter > 0
-              ? retryAfter * 1000
+              ? // Clamp the server-supplied Retry-After too (audit min-19): an
+                // Anthropic 429 with a large header value (e.g. 60s) would
+                // otherwise block a synchronous server action until the Vercel
+                // function timeout kills it. 30s cap matches the backoff path.
+                Math.min(30_000, retryAfter * 1000)
               : Math.min(30_000, 1000 * 2 ** attempt)
           await new Promise((resolve) => setTimeout(resolve, waitMs))
           attempt++

@@ -4,6 +4,7 @@ import { NonRetriableError } from 'inngest'
 import { recompressToOpus } from '@/lib/ai/ffmpeg'
 import { extractJdFromTranscript } from '@/lib/ai/jd-extract'
 import { transcribe } from '@/lib/ai/whisper'
+import { checkCap, CapExceededError } from '@/lib/stripe/cap-enforcement'
 import { inngest } from '@/lib/inngest/client'
 import { readStatus } from '@/lib/observability/inngest'
 import { createServiceClient } from '@/lib/supabase/service'
@@ -32,6 +33,13 @@ import { createServiceClient } from '@/lib/supabase/service'
 
 const FAILED_USER_MESSAGE =
   'Transcription failed. Try uploading again, or contact support.'
+
+// Honest message when a hard AI budget cap (the monthly £ ceiling or the
+// specMinutes bucket) blocks transcription — distinct from a generic failure so
+// the recruiter knows to upgrade / wait for the reset rather than re-uploading
+// the same file (audit MAJOR-10 / min-18).
+const BUDGET_CAPPED_USER_MESSAGE =
+  'Monthly AI usage limit reached — transcription paused. Upgrade your plan or wait for the reset.'
 
 // Defensive cap. The DB CHECK enforces ≤ 50 000 chars (D3-11) but we
 // truncate here first so the UX surfaces a friendlier "truncated" hint
@@ -133,6 +141,27 @@ export const transcribeAndStructureSpec = inngest.createFunction(
     // ---------------------------------------------------------------------
     if (!storage_path.startsWith(`${organization_id}/`)) {
       throw new NonRetriableError('cross-tenant-storage-path')
+    }
+
+    // Pre-flight AI budget check (audit MAJOR-1 / MAJOR-10). A hard cap — the
+    // monthly £ AI-spend ceiling OR the specMinutes bucket — is NOT transient:
+    // transcription would fail identically on every retry (burning Whisper
+    // quota and confusing the recruiter with a retry button that never works).
+    // Detect it up-front, mark the row with an honest "budget reached" message,
+    // and return WITHOUT throwing so Inngest treats the run as complete (no
+    // retries, no onFailure). Mirrors parse-cv.ts. checkCap fails open, so a
+    // billing glitch never blocks here. Wrapped in a step so the check (and any
+    // soft-cap email it fires) is memoised across step replays.
+    const budget = await step.run('check-ai-budget', () =>
+      checkCap(organization_id, 'spec_transcribe'),
+    )
+    if (!budget.allow && budget.mode === 'hard') {
+      await markSpecFailed({
+        draftId: spec_draft_id,
+        organizationId: organization_id,
+        userMessage: BUDGET_CAPPED_USER_MESSAGE,
+      })
+      return
     }
 
     try {
@@ -278,6 +307,19 @@ export const transcribeAndStructureSpec = inngest.createFunction(
         }
       })
     } catch (err) {
+      // Budget cap tripped between the pre-flight and transcribe()'s internal
+      // gate (audit MAJOR-10). Treat exactly like the pre-flight: honest
+      // "budget reached" message + return WITHOUT rethrowing, so Inngest doesn't
+      // burn its retries on a cap that won't clear until the month resets and
+      // onFailure can't overwrite the message. Mirrors parse-cv.ts.
+      if (err instanceof CapExceededError) {
+        await markSpecFailed({
+          draftId: spec_draft_id,
+          organizationId: organization_id,
+          userMessage: BUDGET_CAPPED_USER_MESSAGE,
+        })
+        return
+      }
       // VERIFICATION R4: never pass the raw err to Sentry. Wrap to
       // name + status only so SDK errors that echo prompts can't bypass
       // the global beforeSend PII scrub.
