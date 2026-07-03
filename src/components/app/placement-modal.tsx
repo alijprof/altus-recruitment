@@ -123,6 +123,8 @@ export function PlacementModal({
         placementDate: placementDateIso,
         placementType,
         placementCurrency: 'GBP',
+        // Audit min-66: previously collected but never sent — silently lost.
+        placementNotes: notes.trim() || null,
         jobId: jobId ?? null,
         candidateId: candidateId ?? null,
       })

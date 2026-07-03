@@ -236,13 +236,53 @@ export async function suppressByToken(
     }
 
     // Step 4: set suppression timestamp (org-scoped — T-0f4-XTENANT).
-    const { error: updateErr } = await sbCand
-      .from('candidates')
-      .update({
-        email_marketing_unsubscribed_at: new Date().toISOString(),
-      } as unknown as Record<string, unknown>)
-      .eq('id', recipient.candidate_id)
-      .eq('organization_id', recipient.organization_id)
+    //
+    // Suppress by EMAIL, not by row id (audit MAJOR-7). A person can have more
+    // than one candidate record with the same email (manual re-add, an
+    // apply-form race, a Firefish import). Suppressing only recipient.candidate_id
+    // leaves the duplicate rows still emailable — the next campaign would email a
+    // withdrawn-consent person again, a PECR/UK-GDPR breach. Emails are stored
+    // lowercased+trimmed at write time (createCandidate), so a case-sensitive
+    // .eq against the normalised recipient email matches every duplicate. When
+    // the recipient email is missing, fall back to the single-row id suppression.
+    const normalisedEmail = recipient.email?.toLowerCase().trim() || null
+
+    const suppressionPatch = {
+      email_marketing_unsubscribed_at: new Date().toISOString(),
+    } as unknown as Record<string, unknown>
+
+    let updateErr: { message?: string } | null
+    if (normalisedEmail) {
+      // reason: same escape-hatch cast as the reads above — the update-by-email
+      // shape (.eq(org).eq(email).is(null)) isn't on the pre-regen Database type.
+      const sbSuppress = supabase as unknown as {
+        from: (table: 'candidates') => {
+          update: (patch: Record<string, unknown>) => {
+            eq: (col: string, val: string) => {
+              eq: (col: string, val: string) => {
+                is: (col: string, val: null) => Promise<{ error: { message?: string } | null }>
+              }
+            }
+          }
+        }
+      }
+      // Only rows not already suppressed — preserves each row's original
+      // unsubscribe timestamp and keeps the write idempotent.
+      const res = await sbSuppress
+        .from('candidates')
+        .update(suppressionPatch)
+        .eq('organization_id', recipient.organization_id)
+        .eq('email', normalisedEmail)
+        .is('email_marketing_unsubscribed_at', null)
+      updateErr = res.error
+    } else {
+      const res = await sbCand
+        .from('candidates')
+        .update(suppressionPatch)
+        .eq('id', recipient.candidate_id)
+        .eq('organization_id', recipient.organization_id)
+      updateErr = res.error
+    }
 
     if (updateErr) {
       Sentry.captureException(new Error('suppressByToken: suppression update failed'), {

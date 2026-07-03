@@ -159,9 +159,11 @@ describe('suppressByToken', () => {
     updateError?: { message: string }
   }) {
     const fromCalls: string[] = []
+    const updateEqCols: string[] = []
 
     return {
       _fromCalls: fromCalls,
+      _updateEqCols: updateEqCols,
       from: vi.fn((table: string) => {
         fromCalls.push(table)
         if (table === 'email_campaign_recipients') {
@@ -179,8 +181,7 @@ describe('suppressByToken', () => {
           return chain
         }
         if (table === 'candidates') {
-          // Two branches: .select().eq().maybeSingle() for the fresh read
-          //               .update().eq().eq() for the suppression write
+          // Fresh read: .select().eq().eq().maybeSingle()
           const selectChain = {
             select: vi.fn(() => selectChain),
             eq: vi.fn(() => selectChain),
@@ -191,23 +192,28 @@ describe('suppressByToken', () => {
               }),
             ),
           }
-          const updateChain = {
+          // Suppression write is a thenable chain supporting BOTH the by-id
+          // fallback (.update().eq().eq()) and the by-email suppression
+          // (.update().eq().eq().is()) — audit MAJOR-7. It records the eq column
+          // names so a test can assert suppression is scoped by email.
+          const updateResult = { error: opts.updateError ?? null }
+          const updateChain: {
+            update: (...a: unknown[]) => typeof updateChain
+            eq: (col: string, val: unknown) => typeof updateChain
+            is: (...a: unknown[]) => typeof updateChain
+            then: (f: (v: { error: unknown }) => void) => void
+          } = {
             update: vi.fn(() => updateChain),
-            eq: vi.fn(() => updateChain),
-            // The second .eq() resolves the promise.
-            then: (onFulfilled: (v: { error: unknown }) => void) =>
-              onFulfilled({ error: opts.updateError ?? null }),
+            eq: vi.fn((col: string) => {
+              updateEqCols.push(col)
+              return updateChain
+            }),
+            is: vi.fn(() => updateChain),
+            then: (onFulfilled) => onFulfilled(updateResult),
           }
-          // Return the selectChain by default; callers that do .update() get updateChain
           const combined = {
             select: vi.fn(() => selectChain),
-            update: vi.fn(() => ({
-              eq: vi.fn(() => ({
-                eq: vi.fn(() =>
-                  Promise.resolve({ error: opts.updateError ?? null }),
-                ),
-              })),
-            })),
+            update: vi.fn(() => updateChain),
           }
           return combined
         }
@@ -278,5 +284,29 @@ describe('suppressByToken', () => {
     )
 
     expect(result.ok).toBe(false)
+  })
+
+  it('suppresses by EMAIL (all duplicate rows), not by candidate id, when the recipient has an email (MAJOR-7)', async () => {
+    const fake = buildFakeClient({
+      recipientRow: {
+        candidate_id: 'cand-1',
+        organization_id: 'org-1',
+        email: 'Jane@Example.com',
+      },
+      candidateRow: { email_marketing_unsubscribed_at: null },
+    })
+
+    const result = await suppressByToken(
+      fake as unknown as Parameters<typeof suppressByToken>[0],
+      'tok',
+    )
+
+    expect(result).toEqual({ ok: true, alreadyUnsubscribed: false })
+    // The suppression update is scoped by organization_id + email, so every
+    // duplicate candidate row sharing that email is suppressed — closing the
+    // PECR gap where a second record kept receiving campaigns after unsubscribe.
+    expect(fake._updateEqCols).toContain('email')
+    expect(fake._updateEqCols).toContain('organization_id')
+    expect(fake._updateEqCols).not.toContain('id')
   })
 })

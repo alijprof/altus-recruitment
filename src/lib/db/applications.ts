@@ -362,6 +362,9 @@ export type MoveApplicationArgs = {
   placementDate?: string | null // ISO 8601 timestamptz string
   placementType?: Enums<'placement_type'> | null
   placementCurrency?: string | null // ISO 4217, defaults to 'GBP'
+  // Audit min-66: optional free-text placement notes (fee splits, rebate
+  // terms, etc). Persisted into the stage_change activity metadata by the RPC.
+  placementNotes?: string | null
 }
 
 export async function moveApplication(
@@ -389,6 +392,7 @@ export async function moveApplication(
     p_placement_date:      args.placementDate ?? null,
     p_placement_type:      args.placementType ?? null,
     p_placement_currency:  args.placementCurrency ?? null,
+    p_placement_notes:     args.placementNotes ?? null,
   })
 
   if (error) {

@@ -191,6 +191,8 @@ const moveSchema = z.object({
     .nullable(),
   // ISO 4217 currency code, e.g. "GBP"
   placementCurrency: z.string().length(3).optional().nullable(),
+  // Audit min-66: optional free-text placement notes.
+  placementNotes: z.string().trim().max(5_000, 'Too long').optional().nullable(),
 })
 
 export type MoveApplicationResult =
@@ -215,6 +217,7 @@ export async function moveApplicationAction(
     placementDate,
     placementType,
     placementCurrency,
+    placementNotes,
   } = parsed.data
 
   // UI-SPEC error state: terminal stages require a decline reason. The
@@ -251,6 +254,7 @@ export async function moveApplicationAction(
     placementDate: placementDate ?? null,
     placementType: (placementType ?? null) as Enums<'placement_type'> | null,
     placementCurrency: placementCurrency ?? null,
+    placementNotes: placementNotes ?? null,
   })
 
   if (!res.ok) {
