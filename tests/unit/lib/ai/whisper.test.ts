@@ -2,6 +2,7 @@
  * @vitest-environment node
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import type { Mock } from 'vitest'
 
 // Stub `server-only` — whisper.ts is server-only but the test exercises the
 // pure transcribe() function with mocked SDK + service client.
@@ -49,6 +50,25 @@ vi.mock('@/lib/env', () => ({
     OPENAI_API_KEY: 'sk-test-fake',
     NEXT_PUBLIC_SUPABASE_URL: 'http://localhost:54321',
     SUPABASE_SERVICE_ROLE_KEY: 'service-role-fake',
+  },
+}))
+
+// transcribe() now gates on checkCap (audit MAJOR-1). Mock it so these tests
+// stay isolated to the record_ai_usage logging behaviour — the real checkCap
+// would route getEntitlement through the same mocked service client and
+// pollute recordedRpcCalls. Default: allow. Individual tests override for the
+// hard-cap deny path.
+vi.mock('@/lib/stripe/cap-enforcement', () => ({
+  checkCap: vi.fn(async () => ({ allow: true, mode: 'normal', bucket: 'specMinutes' })),
+  CapExceededError: class CapExceededError extends Error {
+    constructor(
+      public bucket: string,
+      public purpose: string,
+      public organizationId: string,
+    ) {
+      super('AI cap exceeded')
+      this.name = 'CapExceededError'
+    }
   },
 }))
 
@@ -128,6 +148,25 @@ describe('transcribe()', () => {
         mimeType: 'audio/webm',
       }),
     ).rejects.toThrow('empty audio buffer')
+  })
+
+  it('throws CapExceededError and logs nothing when the AI budget is hard-capped (audit MAJOR-1)', async () => {
+    const { checkCap, CapExceededError } = await import('@/lib/stripe/cap-enforcement')
+    ;(checkCap as Mock).mockResolvedValueOnce({ allow: false, mode: 'hard', bucket: 'specMinutes' })
+    const { transcribe } = await import('@/lib/ai/whisper')
+
+    await expect(
+      transcribe({
+        organizationId: 'org-capped',
+        purpose: 'spec_transcribe',
+        audioBuffer: Buffer.from('x', 'utf8'),
+        mimeType: 'audio/webm',
+      }),
+    ).rejects.toBeInstanceOf(CapExceededError)
+
+    // The OpenAI SDK must never be hit and no cost row written when capped.
+    expect(createTranscription).not.toHaveBeenCalled()
+    expect(recordedRpcCalls).toHaveLength(0)
   })
 
   it('passes UK English prompt + verbose_json to the SDK', async () => {
