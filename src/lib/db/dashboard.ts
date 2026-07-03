@@ -26,21 +26,34 @@ export type DashboardMetrics = {
   candidates: number
   openJobs: number
   openApplications: number
-  // Phase 4 lands the placements table; until then the card renders 0 so the
-  // layout doesn't shift when Phase 4 lights it up.
+  // Applications currently at stage 'placed' whose last stage change falls in
+  // the current calendar month (audit min-41 — previously hardcoded to 0 even
+  // though placement capture shipped in Phase 4).
   placementsThisMonth: number
 }
 
 export async function getDashboardMetrics(
   supabase: SupabaseClient<Database>,
 ): Promise<DashboardMetrics> {
-  const [candidates, openJobs, openApplications] = await Promise.all([
+  const now = new Date()
+  const monthStart = new Date(
+    Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1),
+  ).toISOString()
+
+  const [candidates, openJobs, openApplications, placements] = await Promise.all([
     supabase.from('candidates').select('id', { count: 'exact', head: true }),
     supabase.from('jobs').select('id', { count: 'exact', head: true }).eq('status', 'open'),
     supabase
       .from('applications')
       .select('id', { count: 'exact', head: true })
       .not('stage', 'in', '(rejected,withdrawn,placed)'),
+    // Placements this month: applications currently at stage 'placed' whose last
+    // stage change lands in the current calendar month (audit min-41).
+    supabase
+      .from('applications')
+      .select('id', { count: 'exact', head: true })
+      .eq('stage', 'placed')
+      .gte('stage_changed_at', monthStart),
   ])
 
   if (candidates.error) {
@@ -58,12 +71,17 @@ export async function getDashboardMetrics(
       tags: { layer: 'db', helper: 'getDashboardMetrics:openApplications' },
     })
   }
+  if (placements.error) {
+    Sentry.captureException(placements.error, {
+      tags: { layer: 'db', helper: 'getDashboardMetrics:placements' },
+    })
+  }
 
   return {
     candidates: candidates.count ?? 0,
     openJobs: openJobs.count ?? 0,
     openApplications: openApplications.count ?? 0,
-    placementsThisMonth: 0,
+    placementsThisMonth: placements.count ?? 0,
   }
 }
 

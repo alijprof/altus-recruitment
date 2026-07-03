@@ -73,11 +73,7 @@ export default async function DashboardPage() {
         <MetricCard label="Candidates" value={metrics.candidates} />
         <MetricCard label="Open jobs" value={metrics.openJobs} />
         <MetricCard label="Open applications" value={metrics.openApplications} />
-        <MetricCard
-          label="Placements this month"
-          value={metrics.placementsThisMonth}
-          caption="Lands in Phase 4"
-        />
+        <MetricCard label="Placements this month" value={metrics.placementsThisMonth} />
       </section>
 
       <section className="grid grid-cols-1 gap-6 lg:grid-cols-3">

@@ -90,7 +90,17 @@ export default async function GlobalPipelinePage({
       ) : (
         // No jobId on the global view — moves still write activity rows
         // and revalidate /pipeline.
-        <PipelineShell initial={grouped} jobId={null} />
+        //
+        // key by the active filter state (audit MAJOR-9): PipelineBoard seeds
+        // its column state from `initial` via useState and never re-syncs, so
+        // changing a filter returned fresh server data into a board that
+        // ignored it (filters appeared silently broken). Re-keying on the
+        // filter tuple remounts the board with the filtered data.
+        <PipelineShell
+          key={`${ownerId ?? ''}|${jobId ?? ''}|${clientId ?? ''}`}
+          initial={grouped}
+          jobId={null}
+        />
       )}
     </div>
   )
