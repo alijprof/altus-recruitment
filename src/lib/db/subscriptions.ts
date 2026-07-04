@@ -14,6 +14,29 @@ import type { DbResult } from './types'
 export type SubscriptionRow = Tables<'subscriptions'>
 
 // ---------------------------------------------------------------------------
+// Liveness (audit min-22). A Stripe subscription only "occupies" an org's
+// billing when it is in a live status — a churned row (cancelled/none) with a
+// leftover stripe_subscription_id must NOT block admin comp, revoke, or org
+// erasure, and must not 409 a fresh checkout. Test liveness, never bare
+// stripe_subscription_id presence.
+// ---------------------------------------------------------------------------
+export const LIVE_SUBSCRIPTION_STATUSES = ['active', 'trialing', 'past_due'] as const
+
+export function isLiveSubscriptionStatus(status: string): boolean {
+  return (LIVE_SUBSCRIPTION_STATUSES as readonly string[]).includes(status)
+}
+
+// True iff the row represents a LIVE Stripe-billed subscription (real Stripe
+// subscription id AND a live status). Comp/invoice-billed rows (null sub id)
+// and churned Stripe rows (cancelled/none) both return false.
+export function hasLiveStripeSubscription(
+  row: Pick<SubscriptionRow, 'stripe_subscription_id' | 'status'> | null | undefined,
+): boolean {
+  if (!row) return false
+  return row.stripe_subscription_id !== null && isLiveSubscriptionStatus(row.status)
+}
+
+// ---------------------------------------------------------------------------
 // getSubscriptionForOrg — reads the subscriptions table by organization_id.
 //
 // Returns not_found when no row exists (org has not subscribed yet).

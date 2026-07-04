@@ -15,6 +15,7 @@ import { probeFfmpeg } from '@/lib/inngest/functions/probe-ffmpeg'
 import { refreshOutlookSubscription } from '@/lib/inngest/functions/refresh-outlook-subscription'
 import { specAudioRetentionSweep } from '@/lib/inngest/functions/spec-audio-retention-sweep'
 import { specDraftCleanupSweep } from '@/lib/inngest/functions/spec-draft-cleanup-sweep'
+import { stripeReconcile } from '@/lib/inngest/functions/stripe-reconcile'
 import { syncOutlookHistory } from '@/lib/inngest/functions/sync-outlook-history'
 import { transcribeAndStructureSpec } from '@/lib/inngest/functions/transcribe-and-structure-spec'
 import { sendEmailCampaign } from '@/lib/inngest/functions/send-email-campaign'
@@ -50,5 +51,8 @@ export const { GET, POST, PUT } = serve({
     voiceNoteAudioRetentionSweep,
     // Phase 4 — campaign send engine (Plan 04-04).
     sendEmailCampaign,
+    // Remediation 2026-07-03 — daily Stripe ↔ local billing reconciliation
+    // (audit MAJOR-6).
+    stripeReconcile,
   ],
 })

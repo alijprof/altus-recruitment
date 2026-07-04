@@ -26,6 +26,7 @@ import { z } from 'zod'
 
 import { requireSuperAdmin } from '@/lib/admin/guard'
 import { deleteAllOrgStorage, deleteOrgAuthUsers } from '@/lib/admin/org-erasure'
+import { hasLiveStripeSubscription } from '@/lib/db/subscriptions'
 import { sendResendEmail } from '@/lib/email/resend'
 import { env } from '@/lib/env'
 import { createServiceClient } from '@/lib/supabase/service'
@@ -323,10 +324,12 @@ export async function grantManualAccessAction(
 
   const serviceClient = createServiceClient()
 
-  // Never clobber a live Stripe subscription.
+  // Never clobber a LIVE Stripe subscription. Liveness = real sub id AND an
+  // active/trialing/past_due status (audit min-22) — a churned Stripe customer
+  // (cancelled row with a leftover sub id) CAN be comped from here.
   const { data: existing, error: readError } = await serviceClient
     .from('subscriptions')
-    .select('stripe_subscription_id')
+    .select('stripe_subscription_id, status')
     .eq('organization_id', orgId)
     .maybeSingle()
 
@@ -336,7 +339,7 @@ export async function grantManualAccessAction(
     })
     return { ok: false, error: 'Database read failed. Check Sentry for details.' }
   }
-  if (existing?.stripe_subscription_id) {
+  if (hasLiveStripeSubscription(existing)) {
     return {
       ok: false,
       error: 'This org has a live Stripe subscription — manage it in Stripe, not here.',
@@ -349,10 +352,13 @@ export async function grantManualAccessAction(
       plan_key: parsed.data.planKey,
       plan_seats: parsed.data.seats,
       status: 'active',
-      // Invoice-billed access — no Stripe subscription. We deliberately OMIT the
-      // stripe_* columns: on a NEW row they default to null; on an existing row
-      // (guarded above to have no live subscription) they're preserved, so we
-      // never null an org's stripe_customer_id out from under the billing tables.
+      // Invoice-billed access — no Stripe subscription. stripe_subscription_id
+      // is explicitly NULLED: the guard above ensures any leftover sub id is
+      // dead (churned), and clearing it makes this a true comp row — protected
+      // from webhook clobber (MAJOR-5 guard keys on null sub id) and out of
+      // scope for the daily Stripe reconciliation cron. stripe_customer_id is
+      // OMITTED so an org's Stripe customer link survives for portal/history.
+      stripe_subscription_id: null,
       trial_end: null,
       current_period_end: null,
     },
@@ -414,7 +420,9 @@ export async function revokeManualAccessAction(orgId: string): Promise<AdminActi
   if (!existing) {
     return { ok: false, error: 'This org has no subscription to revoke.' }
   }
-  if (existing.stripe_subscription_id) {
+  // Liveness, not presence (audit min-22): only a LIVE Stripe subscription
+  // blocks revocation here — a leftover sub id on a churned row does not.
+  if (hasLiveStripeSubscription(existing)) {
     return { ok: false, error: 'This org is on Stripe billing — cancel it in Stripe, not here.' }
   }
   if (existing.status !== 'active') {
@@ -738,14 +746,16 @@ export async function eraseOrganizationAction(
     return { ok: false, error: 'You cannot erase your own organisation.' }
   }
 
-  // Refuse a live Stripe subscription — erasing the org would NOT cancel it in
+  // Refuse a LIVE Stripe subscription — erasing the org would NOT cancel it in
   // Stripe, leaving a dangling paid subscription. Cancel in Stripe first.
+  // Liveness, not presence (audit min-22): a churned org whose cancelled row
+  // still carries its old sub id must remain erasable (GDPR).
   const { data: sub } = await serviceClient
     .from('subscriptions')
-    .select('stripe_subscription_id')
+    .select('stripe_subscription_id, status')
     .eq('organization_id', orgId)
     .maybeSingle()
-  if (sub?.stripe_subscription_id) {
+  if (hasLiveStripeSubscription(sub)) {
     return {
       ok: false,
       error: 'This org has a live Stripe subscription — cancel it in Stripe before erasing.',

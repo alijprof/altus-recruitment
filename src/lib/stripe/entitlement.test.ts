@@ -243,3 +243,129 @@ describe('getEntitlement', () => {
     await expect(getEntitlement('org-x')).resolves.toBeDefined()
   })
 })
+
+// ---------------------------------------------------------------------------
+// Trial-expiry backstop (audit MAJOR-6): a trialing row whose trial_end is
+// beyond the grace window means the trial-end webhook never arrived — the org
+// must NOT stay entitled forever.
+// ---------------------------------------------------------------------------
+
+const DAY_MS = 24 * 60 * 60 * 1000
+
+function trialingSub(trialEndIso: string | null) {
+  return {
+    ok: true,
+    data: {
+      organization_id: 'org-1',
+      plan_key: 'pro',
+      plan_seats: 1,
+      status: 'trialing',
+      trial_end: trialEndIso,
+      current_period_end: null,
+      stripe_customer_id: 'cus_1',
+      stripe_subscription_id: 'sub_1',
+      id: 'sub-row-1',
+      created_at: '',
+      updated_at: '',
+    },
+  }
+}
+
+// Like makeSupabaseWithCount, but also serves a plan_overrides row so the
+// override-extends-expired-trial path can be driven.
+function makeSupabaseWithOverride(count: number, trialEndOverride: string) {
+  const overrideRow = {
+    organization_id: 'org-1',
+    trial_end_override: trialEndOverride,
+    cap_multiplier: null,
+    note: null,
+    updated_by: null,
+    updated_at: '',
+  }
+  return {
+    from: (table: string) => ({
+      select: () => ({
+        eq: () =>
+          table === 'plan_overrides'
+            ? Promise.resolve({ data: [overrideRow], error: null })
+            : Promise.resolve({ count, error: null, data: null, status: 200, statusText: 'OK' }),
+      }),
+    }),
+  }
+}
+
+describe('getEntitlement — trial-expiry backstop (MAJOR-6)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mockCreateServiceClient.mockReturnValue(makeSupabaseWithCount(1))
+    mockGetUsage.mockResolvedValue(ZERO_USAGE)
+  })
+
+  it('trialing with trial_end 4 days past → past_due (not entitled)', async () => {
+    mockGetSubscription.mockResolvedValue(
+      trialingSub(new Date(Date.now() - 4 * DAY_MS).toISOString()),
+    )
+
+    const result = await getEntitlement('org-1')
+    expect(result.status).toBe('past_due')
+  })
+
+  it('trialing with trial_end 1 day past (inside 3-day grace) → still trialing', async () => {
+    mockGetSubscription.mockResolvedValue(
+      trialingSub(new Date(Date.now() - 1 * DAY_MS).toISOString()),
+    )
+
+    const result = await getEntitlement('org-1')
+    expect(result.status).toBe('trialing')
+  })
+
+  it('trialing with a future trial_end → trialing (backstop does not fire early)', async () => {
+    mockGetSubscription.mockResolvedValue(
+      trialingSub(new Date(Date.now() + 7 * DAY_MS).toISOString()),
+    )
+
+    const result = await getEntitlement('org-1')
+    expect(result.status).toBe('trialing')
+  })
+
+  it('trialing with null trial_end → left as trialing (no date to backstop on)', async () => {
+    mockGetSubscription.mockResolvedValue(trialingSub(null))
+
+    const result = await getEntitlement('org-1')
+    expect(result.status).toBe('trialing')
+  })
+
+  it('an admin trial_end_override in the future keeps an expired trial entitled', async () => {
+    mockCreateServiceClient.mockReturnValue(
+      makeSupabaseWithOverride(1, new Date(Date.now() + 14 * DAY_MS).toISOString()),
+    )
+    mockGetSubscription.mockResolvedValue(
+      trialingSub(new Date(Date.now() - 30 * DAY_MS).toISOString()),
+    )
+
+    const result = await getEntitlement('org-1')
+    expect(result.status).toBe('trialing')
+  })
+
+  it('active status is never backstopped (comp + paying orgs untouched)', async () => {
+    mockGetSubscription.mockResolvedValue({
+      ok: true,
+      data: {
+        organization_id: 'org-1',
+        plan_key: 'pro',
+        plan_seats: 1,
+        status: 'active',
+        trial_end: new Date(Date.now() - 90 * DAY_MS).toISOString(),
+        current_period_end: new Date(Date.now() - 60 * DAY_MS).toISOString(),
+        stripe_customer_id: null,
+        stripe_subscription_id: null,
+        id: 'sub-row-1',
+        created_at: '',
+        updated_at: '',
+      },
+    })
+
+    const result = await getEntitlement('org-1')
+    expect(result.status).toBe('active')
+  })
+})

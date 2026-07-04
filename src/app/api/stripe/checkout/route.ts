@@ -20,7 +20,7 @@ import { assertStripe, stripe } from '@/lib/stripe/client'
 import { PLAN_PRICE_IDS } from '@/lib/stripe/plans'
 import type { PlanKey } from '@/lib/stripe/plans'
 import { getOrganization } from '@/lib/db/organizations'
-import { getSubscriptionForOrg } from '@/lib/db/subscriptions'
+import { getSubscriptionForOrg, isLiveSubscriptionStatus } from '@/lib/db/subscriptions'
 import { createClient } from '@/lib/supabase/server'
 import { createServiceClient } from '@/lib/supabase/service'
 import { env } from '@/lib/env'
@@ -83,7 +83,7 @@ export async function POST(request: Request): Promise<NextResponse> {
   // also be rejected — otherwise an owner can create duplicate Stripe
   // subscriptions, which are painful to reconcile against the webhook ledger.
   const existing = await getSubscriptionForOrg(createServiceClient(), organizationId)
-  if (existing.ok && ['active', 'trialing', 'past_due'].includes(existing.data.status)) {
+  if (existing.ok && isLiveSubscriptionStatus(existing.data.status)) {
     return NextResponse.json(
       { error: 'You already have an active subscription. Use "Manage billing" to make changes.' },
       { status: 409 },
@@ -163,19 +163,54 @@ export async function POST(request: Request): Promise<NextResponse> {
     }
 
     // Create the checkout session.
-    const session = await s.checkout.sessions.create({
-      customer: stripeCustomerId,
-      mode: 'subscription',
-      payment_method_collection: 'always',
-      subscription_data: {
-        trial_period_days: 14,
+    //
+    // DOUBLE-SUBSCRIBE HARDENING (audit min-23). The DB guard above is
+    // check-then-act: two tabs can both pass it and each create an open
+    // checkout session, and completing both creates duplicate Stripe
+    // subscriptions. Two mechanisms close this:
+    //   1. A Stripe idempotency key on (org, plan, minute-bucket) collapses
+    //      simultaneous same-plan creates into ONE session — both tabs get the
+    //      same URL, and a Checkout Session can only be completed once.
+    //   2. After create, every OTHER still-open session for this customer is
+    //      expired, so an older abandoned tab's session can't be completed
+    //      later after this one converts.
+    // The minute bucket bounds the key's replay window: without it, a replay
+    // hours later could return a session that step 2 has since expired.
+    const idempotencyKey = `co:${organizationId}:${planKey}:${Math.floor(Date.now() / 60_000)}`
+    const session = await s.checkout.sessions.create(
+      {
+        customer: stripeCustomerId,
+        mode: 'subscription',
+        payment_method_collection: 'always',
+        subscription_data: {
+          trial_period_days: 14,
+          metadata: { organization_id: organizationId },
+        },
+        line_items: [{ price: priceId, quantity: 1 }],
+        success_url: `${siteUrl}/stripe/return?session_id={CHECKOUT_SESSION_ID}`,
+        cancel_url: `${siteUrl}/pricing`,
         metadata: { organization_id: organizationId },
       },
-      line_items: [{ price: priceId, quantity: 1 }],
-      success_url: `${siteUrl}/stripe/return?session_id={CHECKOUT_SESSION_ID}`,
-      cancel_url: `${siteUrl}/pricing`,
-      metadata: { organization_id: organizationId },
-    })
+      { idempotencyKey },
+    )
+
+    // Expire every OTHER open checkout session for this customer (best-effort
+    // — a failure here must not block the checkout we just created).
+    try {
+      const openSessions = await s.checkout.sessions.list({
+        customer: stripeCustomerId,
+        status: 'open',
+        limit: 10,
+      })
+      for (const stale of openSessions.data) {
+        if (stale.id === session.id) continue
+        await s.checkout.sessions.expire(stale.id)
+      }
+    } catch (expireErr) {
+      Sentry.captureException(expireErr, {
+        tags: { layer: 'stripe', handler: 'checkout', step: 'expire-stale-sessions' },
+      })
+    }
 
     if (!session.url) {
       Sentry.captureMessage('stripe_checkout: Stripe returned a session with no url', {
