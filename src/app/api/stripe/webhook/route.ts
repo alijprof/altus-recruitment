@@ -168,11 +168,17 @@ async function handleStripeEvent(
             ? session.subscription
             : session.subscription.id,
         )
-        // Checkout-originated: this is a genuine self-serve subscription and is
-        // allowed to replace a comp/invoice-billed row (the org is converting to
-        // paid). All other lifecycle events must NOT clobber a comp row (MAJOR-5).
+        // Checkout-originated: a genuine self-serve subscription may replace a
+        // comp/invoice-billed row (the org is converting to paid) — but ONLY
+        // while the retrieved subscription is actually LIVE. retrieve() returns
+        // CURRENT state, not event-time state: a delayed retry of this event
+        // after the founder cancelled the sub and comped the org would
+        // otherwise clobber the live comp with 'cancelled' (review batch3
+        // round2 finding 1).
+        const retrievedStatus = mapStripeStatus(subscription.status)
         await upsertFromSubscription(serviceClient, subscription, orgId, {
-          allowOverrideComp: true,
+          allowOverrideComp: retrievedStatus === 'active' || retrievedStatus === 'trialing',
+          eventCreatedAtIso: new Date(event.created * 1000).toISOString(),
         })
       }
       break

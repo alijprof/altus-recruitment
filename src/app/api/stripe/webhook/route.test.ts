@@ -289,7 +289,7 @@ describe('stripe webhook — event handling', () => {
     })
   })
 
-  it('checkout.session.completed retrieves the subscription and DOES allow comp override', async () => {
+  it('checkout.session.completed with a LIVE retrieved sub DOES allow comp override', async () => {
     const { client } = makeServiceClient()
     mockCreateServiceClient.mockReturnValue(client)
     subscriptionsRetrieve.mockResolvedValue(makeStripeSubscription({ status: 'trialing' }))
@@ -307,7 +307,31 @@ describe('stripe webhook — event handling', () => {
     expect(subscriptionsRetrieve).toHaveBeenCalledWith('sub_test')
     expect(mockUpsert).toHaveBeenCalledTimes(1)
     expect(mockUpsert.mock.calls[0]![1]).toMatchObject({ status: 'trialing' })
-    expect(mockUpsert.mock.calls[0]![2]).toEqual({ allowOverrideComp: true })
+    expect(mockUpsert.mock.calls[0]![2]).toEqual({
+      allowOverrideComp: true,
+      eventCreatedAtIso: new Date(EVENT_CREATED_EPOCH * 1000).toISOString(),
+    })
+  })
+
+  it('checkout.session.completed with a since-CANCELLED sub does NOT allow comp override (round2 finding 1)', async () => {
+    // retrieve() returns CURRENT state: a delayed retry after the founder
+    // cancelled the sub and comped the org must not clobber the comp row.
+    const { client } = makeServiceClient()
+    mockCreateServiceClient.mockReturnValue(client)
+    subscriptionsRetrieve.mockResolvedValue(makeStripeSubscription({ status: 'canceled' }))
+    constructEvent.mockReturnValue(
+      makeEvent('checkout.session.completed', {
+        mode: 'subscription',
+        subscription: 'sub_test',
+        metadata: { organization_id: 'org-1' },
+      }),
+    )
+
+    const res = await POST(makeRequest())
+
+    expect(res.status).toBe(200)
+    expect(mockUpsert).toHaveBeenCalledTimes(1)
+    expect(mockUpsert.mock.calls[0]![2]).toMatchObject({ allowOverrideComp: false })
   })
 
   it('subscription event with no organization_id metadata → no write, still 200', async () => {

@@ -94,14 +94,53 @@ describe('upsertSubscriptionFromStripe — comp-row protection', () => {
     expect(state.upsertCalls).toBe(1)
   })
 
-  it('DOES overwrite a real paid row (non-null stripe id) — not a comp', async () => {
+  it('DOES overwrite a real paid row when the downgrade is about the SAME subscription', async () => {
+    // INPUT is a 'cancelled' downgrade for sub_stale — allowed only because
+    // the row tracks that same sub id (the normal churn path).
     const { client, state } = makeClient({
       organization_id: 'org-1',
-      stripe_subscription_id: 'sub_real',
+      stripe_subscription_id: 'sub_stale',
       status: 'active',
     })
     await upsertSubscriptionFromStripe(client as unknown as ClientArg, INPUT)
     expect(state.upsertCalls).toBe(1)
+  })
+
+  it('refuses a downgrade about a DIFFERENT subscription than the row tracks (round2 finding 2)', async () => {
+    // Delayed deleted/payment_failed for old sub_A must not clobber a row
+    // that has since moved to live sub_B (the org re-subscribed).
+    const { client, state } = makeClient({
+      organization_id: 'org-1',
+      stripe_subscription_id: 'sub_B',
+      status: 'active',
+    })
+    const result = await upsertSubscriptionFromStripe(client as unknown as ClientArg, {
+      ...INPUT,
+      stripeSubscriptionId: 'sub_A',
+      status: 'cancelled',
+    })
+    expect(state.upsertCalls).toBe(0)
+    expect(result.ok).toBe(true)
+    if (result.ok) expect(result.data.status).toBe('active') // live row preserved
+  })
+
+  it('a merely-TRIALING out-of-band sub does NOT replace a comp row (round2 finding 0)', async () => {
+    // A trial is not evidence of payment — converting a permanent comp into a
+    // 14-day trial would paywall an invoice-billed customer at trial end.
+    // Checkout-originated trials convert via allowOverrideComp instead.
+    const { client, state } = makeClient({
+      organization_id: 'org-1',
+      stripe_subscription_id: null,
+      status: 'active',
+    })
+    const result = await upsertSubscriptionFromStripe(client as unknown as ClientArg, {
+      ...INPUT,
+      stripeSubscriptionId: 'sub_trial',
+      status: 'trialing',
+    })
+    expect(state.upsertCalls).toBe(0)
+    expect(result.ok).toBe(true)
+    if (result.ok) expect(result.data.status).toBe('active') // comp preserved
   })
 
   it('DOES overwrite a cancelled null-stripe-id row — not a live comp', async () => {

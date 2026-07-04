@@ -128,6 +128,12 @@ export async function POST(request: Request): Promise<NextResponse> {
   try {
     const s = assertStripe()
 
+    // Shared idempotency window for the customer + session creates below:
+    // requests in the same minute (a double-click burst) collapse onto the
+    // same Stripe objects; a new minute mints fresh keys so a stored error
+    // or a params change can't wedge checkout beyond ~60s.
+    const minuteBucket = Math.floor(Date.now() / 60_000)
+
     if (!stripeCustomerId) {
       const customer = await s.customers.create(
         {
@@ -135,12 +141,17 @@ export async function POST(request: Request): Promise<NextResponse> {
           name: orgDetails.data.name,
           metadata: { organization_id: organizationId },
         },
-        // Per-org idempotency: two concurrent first-checkout requests (a
-        // double-click) must resolve to the SAME Stripe customer — otherwise
-        // they'd hit sessions.create below with identical idempotency keys
-        // but different `customer` params, which Stripe rejects as an
-        // idempotency_error (review batch3 finding 4).
-        { idempotencyKey: `cust:${organizationId}` },
+        // Per-org, per-minute idempotency: two concurrent first-checkout
+        // requests (a double-click) must resolve to the SAME Stripe customer —
+        // otherwise they'd hit sessions.create below with identical
+        // idempotency keys but different `customer` params, which Stripe
+        // rejects as an idempotency_error (review batch3 finding 4). The
+        // minute bucket bounds the key's life: Stripe replays a stored
+        // response — INCLUDING errors — for the key's full 24h, so an
+        // unbucketed key would make one transient 5xx (or a same-key
+        // params-drift after an org rename) wedge first checkout for a day
+        // (review batch3 round2 finding 6).
+        { idempotencyKey: `cust:${organizationId}:${minuteBucket}` },
       )
       stripeCustomerId = customer.id
 
@@ -184,7 +195,7 @@ export async function POST(request: Request): Promise<NextResponse> {
     //      later after this one converts.
     // The minute bucket bounds the key's replay window: without it, a replay
     // hours later could return a session that step 2 has since expired.
-    const idempotencyKey = `co:${organizationId}:${planKey}:${Math.floor(Date.now() / 60_000)}`
+    const idempotencyKey = `co:${organizationId}:${planKey}:${minuteBucket}`
     const sessionParams = {
       customer: stripeCustomerId,
       mode: 'subscription' as const,
@@ -201,10 +212,13 @@ export async function POST(request: Request): Promise<NextResponse> {
     let session = await s.checkout.sessions.create(sessionParams, { idempotencyKey })
 
     // An idempotent replay can return a session another request has since
-    // expired (same key, but a concurrent create's expire pass beat us) —
-    // hand the user a live session, not a dead URL: mint a fresh one under a
-    // unique key (review batch3 finding 5, replay tail).
-    if (session.status !== 'open') {
+    // expired (same key, but a concurrent create's expire pass beat us).
+    // The replay body is the STORED create-time response — its status always
+    // reads 'open' — so a fresh retrieve is required to see the real state
+    // (review batch3 round2 finding 5). If the session is no longer open,
+    // mint a fresh one under a unique key so the user gets a live URL.
+    const liveCheck = await s.checkout.sessions.retrieve(session.id)
+    if (liveCheck.status !== 'open') {
       session = await s.checkout.sessions.create(sessionParams, {
         idempotencyKey: `${idempotencyKey}:retry:${Date.now()}`,
       })

@@ -153,17 +153,22 @@ export function diffStripeAgainstLocal(args: {
   // stale_local_sub direction against metadata loss.
   const allStripeSubIds = new Set<string>()
   const subsByOrg = new Map<string, StripeSubSnapshot[]>()
+  const deadMetadataless: StripeSubSnapshot[] = []
   for (const sub of args.stripeSubs) {
     allStripeSubIds.add(sub.subscriptionId)
     if (sub.organizationId === null) {
-      // Only LIVE metadata-less subs are anomalies. A dead one carries no
-      // entitlement either way — alerting on it daily forever would train the
-      // founder to ignore the divergence email (review batch3 finding 10).
+      // A LIVE metadata-less sub is always an anomaly. A dead one is usually
+      // just noise (alerting on it daily forever would train the founder to
+      // ignore the divergence email — review batch3 finding 10) — EXCEPT when
+      // a live local row still points at it, which is checked after the local
+      // rows are indexed below (review batch3 round2 finding 3).
       if (isLiveSubscriptionStatus(sub.mappedStatus)) {
         anomalies.push({
           kind: 'missing_org_metadata',
           detail: `Stripe subscription ${sub.subscriptionId} (status ${sub.mappedStatus}) has no organization_id metadata — cannot reconcile it.`,
         })
+      } else {
+        deadMetadataless.push(sub)
       }
       continue
     }
@@ -273,6 +278,25 @@ export function diffStripeAgainstLocal(args: {
         reason: 'drift',
         detail: `Local row (status ${local.status}, plan ${local.plan_key}) diverges from Stripe subscription ${canonical.subscriptionId} (status ${desired.status}, plan ${desired.planKey}).`,
         input: desired,
+      })
+    }
+  }
+
+  // A dead metadata-less sub becomes reportable when a live LOCAL row still
+  // points at it: the per-org loop never saw it (no org id), the absence loop
+  // below skips the row (the sub id IS in the listing), so this anomaly is
+  // the ONLY signal that the org's entitlement is stuck on a subscription
+  // Stripe has already killed (review batch3 round2 finding 3).
+  for (const sub of deadMetadataless) {
+    const stuckRow = args.localRows.find(
+      (row) =>
+        row.stripe_subscription_id === sub.subscriptionId &&
+        isLiveSubscriptionStatus(row.status),
+    )
+    if (stuckRow) {
+      anomalies.push({
+        kind: 'missing_org_metadata',
+        detail: `Stripe subscription ${sub.subscriptionId} is ${sub.mappedStatus} with no organization_id metadata, but org ${stuckRow.organization_id}'s local row is still ${stuckRow.status} on it — fix the metadata or the local row manually.`,
       })
     }
   }

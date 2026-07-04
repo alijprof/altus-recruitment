@@ -145,9 +145,38 @@ export async function upsertSubscriptionFromStripe(
     // events carry a real sub id and an active/trialing status). Only a stale
     // DOWNGRADE (cancelled/past_due, or a null sub id) targeting a comp row is
     // refused — that is the MAJOR-5 lock-out we are guarding against.
-    let incomingIsGenuinePaid =
+    // STALE-SUB DOWNGRADE GUARD (review batch3 round2 finding 2). A downgrade
+    // event (cancelled/past_due/none) must be about the subscription the row
+    // currently tracks: a delayed deleted/payment_failed event for OLD sub_A
+    // must not clobber a row that has since moved to live sub_B (the org
+    // re-subscribed). Upgrades with a new sub id are legitimate re-subscribes
+    // and pass through.
+    const incomingIsDowngrade = input.status !== 'active' && input.status !== 'trialing'
+    if (
+      incomingIsDowngrade &&
+      existing.ok &&
+      existing.data.stripe_subscription_id !== null &&
       input.stripeSubscriptionId !== null &&
-      (input.status === 'active' || input.status === 'trialing')
+      existing.data.stripe_subscription_id !== input.stripeSubscriptionId
+    ) {
+      Sentry.captureMessage('stripe_webhook: refused downgrade from a different (stale) subscription', {
+        level: 'warning',
+        tags: {
+          layer: 'db',
+          helper: 'upsertSubscriptionFromStripe',
+          org_id: input.organizationId,
+          incoming_status: input.status,
+        },
+      })
+      return { ok: true, data: existing.data }
+    }
+
+    // 'active' ONLY — a trialing sub is not evidence of payment, and letting
+    // it through would auto-convert a permanent comp into a 14-day trial that
+    // lapses into the paywall (review batch3 round2 finding 0). A genuine
+    // checkout-originated trial converts via allowOverrideComp instead.
+    let incomingIsGenuinePaid =
+      input.stripeSubscriptionId !== null && input.status === 'active'
 
     // Staleness check (review batch3 finding 8): an event minted BEFORE the
     // comp row was written carries pre-comp state — e.g. sub A's final

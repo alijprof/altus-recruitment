@@ -304,15 +304,28 @@ describe('diffStripeAgainstLocal — conservatism / anomalies', () => {
     })
   })
 
-  it('a DEAD metadata-less Stripe sub raises no anomaly (batch3 finding 10) but still suppresses stale_local_sub', () => {
+  it('a DEAD metadata-less sub with NO local reference raises no anomaly (finding 10 noise rule)', () => {
     const { repairs, anomalies } = diffStripeAgainstLocal({
       stripeSubs: [snap({ organizationId: null, mappedStatus: 'cancelled' })],
-      localRows: [local({})], // local live row pointing at that same sub_1
+      localRows: [], // nothing points at it — pure legacy noise
       stripeListComplete: true,
     })
-    // No daily alert-noise for a dead sub that carries no entitlement…
     expect(anomalies).toEqual([])
-    // …but its presence in the listing still blocks the absence-based cancel.
     expect(repairs).toEqual([])
+  })
+
+  it('a DEAD metadata-less sub that a LIVE local row still points at IS an anomaly (round2 finding 3)', () => {
+    // The per-org loop can't see it (no org id) and the absence loop skips
+    // the row (the sub id IS in the listing) — this anomaly is the only
+    // signal that the org's entitlement is stuck on a dead subscription.
+    const { repairs, anomalies } = diffStripeAgainstLocal({
+      stripeSubs: [snap({ organizationId: null, mappedStatus: 'cancelled' })],
+      localRows: [local({})], // live local row pointing at that same sub_1
+      stripeListComplete: true,
+    })
+    expect(repairs).toEqual([]) // never auto-repair without org metadata
+    expect(anomalies).toHaveLength(1)
+    expect(anomalies[0]!.kind).toBe('missing_org_metadata')
+    expect(anomalies[0]!.detail).toContain('org-1')
   })
 })

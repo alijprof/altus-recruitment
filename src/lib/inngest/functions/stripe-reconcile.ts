@@ -104,13 +104,11 @@ export const stripeReconcile = inngest.createFunction(
       const serviceClient = createServiceClient()
       const LOCAL_PAGE = 1000
       const localRows: LocalSubscriptionRow[] = []
-      for (let page = 0; ; page++) {
-        if (page >= MAX_PAGES) {
-          // A partial local view cannot be reconciled safely — bail loudly.
-          throw new Error(
-            `stripe-reconcile: local subscriptions exceed ${MAX_PAGES * LOCAL_PAGE} rows — raise the page cap`,
-          )
-        }
+      // <= MAX_PAGES: the extra iteration exists so a table of EXACTLY
+      // MAX_PAGES*LOCAL_PAGE rows (whose last page is full) can prove itself
+      // complete with an empty fetch instead of false-positively throwing
+      // (review batch3 round2 finding 7).
+      for (let page = 0; page <= MAX_PAGES; page++) {
         const from = page * LOCAL_PAGE
         const { data, error: localErr } = await serviceClient
           .from('subscriptions')
@@ -121,6 +119,12 @@ export const stripeReconcile = inngest.createFunction(
           .range(from, from + LOCAL_PAGE - 1)
         if (localErr) {
           throw new Error(`stripe-reconcile: local read failed: ${localErr.message}`)
+        }
+        if (page === MAX_PAGES && data && data.length > 0) {
+          // A partial local view cannot be reconciled safely — bail loudly.
+          throw new Error(
+            `stripe-reconcile: local subscriptions exceed ${MAX_PAGES * LOCAL_PAGE} rows — raise the page cap`,
+          )
         }
         localRows.push(...(data ?? []))
         if (!data || data.length < LOCAL_PAGE) break

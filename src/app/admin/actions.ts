@@ -782,21 +782,36 @@ export async function eraseOrganizationAction(
       (id): id is string => typeof id === 'string' && id.length > 0,
     )),
   ]
-  if (stripe && customerIds.length > 0) {
+  if (customerIds.length > 0) {
+    // Fail CLOSED when the org demonstrably has Stripe history but the check
+    // can't run — a missing/rotated STRIPE_SECRET_KEY must not silently
+    // disable the guard on an irreversible op (review batch3 round2 finding 8).
+    if (!stripe) {
+      return {
+        ok: false,
+        error:
+          'This org has Stripe billing history but Stripe is not configured, so a live subscription cannot be ruled out. Configure STRIPE_SECRET_KEY and retry.',
+      }
+    }
     try {
       const s = assertStripe()
       for (const customerId of customerIds) {
-        const stripeSubs = await s.subscriptions.list({
+        // Auto-paginate — a live sub beyond the first page must still block
+        // (review batch3 round2 finding 4). Stripe lists newest-first; the
+        // scan cap is a runaway guard, not an expected bound.
+        let scanned = 0
+        for await (const stripeSub of s.subscriptions.list({
           customer: customerId,
           status: 'all',
           limit: 100,
-        })
-        const live = stripeSubs.data.find((x) => isLiveSubscriptionStatus(mapStripeStatus(x.status)))
-        if (live) {
-          return {
-            ok: false,
-            error: `Stripe still has a live subscription (${live.id}) for this org — cancel it in Stripe before erasing.`,
+        })) {
+          if (isLiveSubscriptionStatus(mapStripeStatus(stripeSub.status))) {
+            return {
+              ok: false,
+              error: `Stripe still has a live subscription (${stripeSub.id}) for this org — cancel it in Stripe before erasing.`,
+            }
           }
+          if (++scanned >= 1000) break
         }
       }
     } catch (err) {
