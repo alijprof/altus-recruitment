@@ -135,8 +135,10 @@ function makeStripeSubscription(overrides?: {
   }
 }
 
+const EVENT_CREATED_EPOCH = 1751500000
+
 function makeEvent(type: string, object: unknown) {
-  return { id: 'evt_1', type, data: { object } }
+  return { id: 'evt_1', type, created: EVENT_CREATED_EPOCH, data: { object } }
 }
 
 function makeRequest(body = 'raw-body', signature: string | null = 'sig_valid') {
@@ -279,7 +281,12 @@ describe('stripe webhook — event handling', () => {
 
     expect(mockUpsert).toHaveBeenCalledTimes(1)
     expect(mockUpsert.mock.calls[0]![1]).toMatchObject({ status: 'past_due' })
-    expect(mockUpsert.mock.calls[0]![2]).toEqual({ allowOverrideComp: false })
+    expect(mockUpsert.mock.calls[0]![2]).toEqual({
+      allowOverrideComp: false,
+      // event.created must be forwarded so the comp guard can refuse stale
+      // pre-cancellation events (batch3 finding 8).
+      eventCreatedAtIso: new Date(EVENT_CREATED_EPOCH * 1000).toISOString(),
+    })
   })
 
   it('checkout.session.completed retrieves the subscription and DOES allow comp override', async () => {

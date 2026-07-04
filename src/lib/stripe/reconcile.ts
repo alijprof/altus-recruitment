@@ -156,10 +156,15 @@ export function diffStripeAgainstLocal(args: {
   for (const sub of args.stripeSubs) {
     allStripeSubIds.add(sub.subscriptionId)
     if (sub.organizationId === null) {
-      anomalies.push({
-        kind: 'missing_org_metadata',
-        detail: `Stripe subscription ${sub.subscriptionId} (status ${sub.mappedStatus}) has no organization_id metadata — cannot reconcile it.`,
-      })
+      // Only LIVE metadata-less subs are anomalies. A dead one carries no
+      // entitlement either way — alerting on it daily forever would train the
+      // founder to ignore the divergence email (review batch3 finding 10).
+      if (isLiveSubscriptionStatus(sub.mappedStatus)) {
+        anomalies.push({
+          kind: 'missing_org_metadata',
+          detail: `Stripe subscription ${sub.subscriptionId} (status ${sub.mappedStatus}) has no organization_id metadata — cannot reconcile it.`,
+        })
+      }
       continue
     }
     const list = subsByOrg.get(sub.organizationId) ?? []
@@ -228,22 +233,25 @@ export function diffStripeAgainstLocal(args: {
     }
 
     if (isCompRow(local)) {
-      if (canonical.mappedStatus === 'active' || canonical.mappedStatus === 'trialing') {
-        // Genuinely paying in Stripe while comped locally → Stripe truth wins
-        // (mirrors the MAJOR-5 guard's incomingIsGenuinePaid carve-out; the
-        // upsert-level comp guard will allow exactly this shape).
+      if (canonical.mappedStatus === 'active') {
+        // Genuinely PAYING in Stripe while comped locally → Stripe truth wins
+        // (mirrors the MAJOR-5 guard's incomingIsGenuinePaid carve-out).
+        // 'active' only: a trialing sub is NOT evidence of payment, and
+        // auto-converting a permanent comp into a 14-day trial would paywall
+        // an invoice-billed customer when the trial lapses (review batch3
+        // finding 3) — that case is surfaced below instead.
         repairs.push({
           organizationId: orgId,
           reason: 'drift',
-          detail: `Org is comped locally but has a genuine ${canonical.mappedStatus} Stripe subscription ${canonical.subscriptionId} — converting to Stripe billing.`,
+          detail: `Org is comped locally but has a genuine active Stripe subscription ${canonical.subscriptionId} — converting to Stripe billing.`,
           input: desired,
         })
       } else if (canonicalIsLive) {
-        // past_due against a comp row: the upsert guard would refuse it, and
-        // rightly so — surface for a human decision instead of a silent no-op.
+        // trialing/past_due against a comp row: never auto-resolve — surface
+        // for a human decision instead of silently converting or no-opping.
         anomalies.push({
           kind: 'comp_row_conflict',
-          detail: `Org ${orgId} is comped locally but Stripe subscription ${canonical.subscriptionId} is past_due — resolve manually (cancel in Stripe or drop the comp).`,
+          detail: `Org ${orgId} is comped locally but Stripe subscription ${canonical.subscriptionId} is ${canonical.mappedStatus} — resolve manually (cancel in Stripe or drop the comp).`,
         })
       }
       // Dead Stripe sub + comp row = normal churned-then-comped shape. Skip.
@@ -276,6 +284,11 @@ export function diffStripeAgainstLocal(args: {
       if (row.stripe_subscription_id === null) continue // comp/none rows — out of scope
       if (!isLiveSubscriptionStatus(row.status)) continue // already downgraded
       if (allStripeSubIds.has(row.stripe_subscription_id)) continue // seen above
+      // The per-org loop already decided this org's end-state from its known
+      // Stripe subs — emitting a second, conflicting 'cancelled' repair here
+      // would clobber that repair on execution (review batch3 finding 2:
+      // local points at vanished sub_A while Stripe has live sub_B).
+      if (subsByOrg.has(row.organization_id)) continue
       repairs.push({
         organizationId: row.organization_id,
         reason: 'stale_local_sub',

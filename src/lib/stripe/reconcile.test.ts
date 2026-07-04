@@ -274,4 +274,45 @@ describe('diffStripeAgainstLocal — conservatism / anomalies', () => {
     expect(anomalies).toHaveLength(1)
     expect(anomalies[0]!.kind).toBe('comp_row_conflict')
   })
+
+  it('comp row + merely-TRIALING Stripe sub → anomaly, never auto-converted (batch3 finding 3)', () => {
+    // A trial is not evidence of payment: converting a permanent comp into a
+    // 14-day trial would paywall an invoice-billed customer at trial end.
+    const { repairs, anomalies } = diffStripeAgainstLocal({
+      stripeSubs: [snap({ mappedStatus: 'trialing' })],
+      localRows: [local({ stripe_subscription_id: null, status: 'active' })],
+      stripeListComplete: true,
+    })
+    expect(repairs).toEqual([])
+    expect(anomalies).toHaveLength(1)
+    expect(anomalies[0]!.kind).toBe('comp_row_conflict')
+  })
+
+  it('one org never gets BOTH a drift repair and a stale_local_sub repair (batch3 finding 2)', () => {
+    // Local points at vanished sub_A while Stripe has live sub_B: the per-org
+    // loop repairs to sub_B; the absence loop must NOT then append a
+    // 'cancelled' repair that would clobber it on execution.
+    const { repairs } = diffStripeAgainstLocal({
+      stripeSubs: [snap({ subscriptionId: 'sub_B' })],
+      localRows: [local({ stripe_subscription_id: 'sub_A', status: 'active' })],
+      stripeListComplete: true,
+    })
+    expect(repairs).toHaveLength(1)
+    expect(repairs[0]).toMatchObject({
+      reason: 'drift',
+      input: { stripeSubscriptionId: 'sub_B', status: 'active' },
+    })
+  })
+
+  it('a DEAD metadata-less Stripe sub raises no anomaly (batch3 finding 10) but still suppresses stale_local_sub', () => {
+    const { repairs, anomalies } = diffStripeAgainstLocal({
+      stripeSubs: [snap({ organizationId: null, mappedStatus: 'cancelled' })],
+      localRows: [local({})], // local live row pointing at that same sub_1
+      stripeListComplete: true,
+    })
+    // No daily alert-noise for a dead sub that carries no entitlement…
+    expect(anomalies).toEqual([])
+    // …but its presence in the listing still blocks the absence-based cancel.
+    expect(repairs).toEqual([])
+  })
 })

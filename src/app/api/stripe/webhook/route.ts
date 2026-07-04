@@ -189,7 +189,11 @@ async function handleStripeEvent(
         })
         break
       }
-      await upsertFromSubscription(serviceClient, subscription, orgId)
+      await upsertFromSubscription(serviceClient, subscription, orgId, {
+        // Lets the comp guard refuse a delayed pre-cancellation 'active'
+        // event that would otherwise clobber a comp granted after it.
+        eventCreatedAtIso: new Date(event.created * 1000).toISOString(),
+      })
       break
     }
 
@@ -314,7 +318,7 @@ async function upsertFromSubscription(
   // Only the checkout.session.completed path passes allowOverrideComp — every
   // other lifecycle caller (created/updated) leaves it false so a comp/
   // invoice-billed row can't be clobbered by a stale event (audit MAJOR-5).
-  options?: { allowOverrideComp?: boolean },
+  options?: { allowOverrideComp?: boolean; eventCreatedAtIso?: string },
 ): Promise<void> {
   const planKey = derivePlanKey(subscription)
   if (!planKey) {
@@ -337,7 +341,10 @@ async function upsertFromSubscription(
       trialEnd: getTrialEndIso(subscription),
       currentPeriodEnd: getCurrentPeriodEnd(subscription),
     },
-    { allowOverrideComp: options?.allowOverrideComp ?? false },
+    {
+      allowOverrideComp: options?.allowOverrideComp ?? false,
+      eventCreatedAtIso: options?.eventCreatedAtIso,
+    },
   )
   // H1: propagate a failed DB write so the webhook returns 500 and Stripe
   // retries — previously the {ok:false} was ignored and the write was lost.

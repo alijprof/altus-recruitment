@@ -129,11 +129,19 @@ export async function POST(request: Request): Promise<NextResponse> {
     const s = assertStripe()
 
     if (!stripeCustomerId) {
-      const customer = await s.customers.create({
-        email: user.email,
-        name: orgDetails.data.name,
-        metadata: { organization_id: organizationId },
-      })
+      const customer = await s.customers.create(
+        {
+          email: user.email,
+          name: orgDetails.data.name,
+          metadata: { organization_id: organizationId },
+        },
+        // Per-org idempotency: two concurrent first-checkout requests (a
+        // double-click) must resolve to the SAME Stripe customer — otherwise
+        // they'd hit sessions.create below with identical idempotency keys
+        // but different `customer` params, which Stripe rejects as an
+        // idempotency_error (review batch3 finding 4).
+        { idempotencyKey: `cust:${organizationId}` },
+      )
       stripeCustomerId = customer.id
 
       // Persist immediately — webhook may race here (Pitfall 1).
@@ -177,25 +185,38 @@ export async function POST(request: Request): Promise<NextResponse> {
     // The minute bucket bounds the key's replay window: without it, a replay
     // hours later could return a session that step 2 has since expired.
     const idempotencyKey = `co:${organizationId}:${planKey}:${Math.floor(Date.now() / 60_000)}`
-    const session = await s.checkout.sessions.create(
-      {
-        customer: stripeCustomerId,
-        mode: 'subscription',
-        payment_method_collection: 'always',
-        subscription_data: {
-          trial_period_days: 14,
-          metadata: { organization_id: organizationId },
-        },
-        line_items: [{ price: priceId, quantity: 1 }],
-        success_url: `${siteUrl}/stripe/return?session_id={CHECKOUT_SESSION_ID}`,
-        cancel_url: `${siteUrl}/pricing`,
+    const sessionParams = {
+      customer: stripeCustomerId,
+      mode: 'subscription' as const,
+      payment_method_collection: 'always' as const,
+      subscription_data: {
+        trial_period_days: 14,
         metadata: { organization_id: organizationId },
       },
-      { idempotencyKey },
-    )
+      line_items: [{ price: priceId, quantity: 1 }],
+      success_url: `${siteUrl}/stripe/return?session_id={CHECKOUT_SESSION_ID}`,
+      cancel_url: `${siteUrl}/pricing`,
+      metadata: { organization_id: organizationId },
+    }
+    let session = await s.checkout.sessions.create(sessionParams, { idempotencyKey })
 
-    // Expire every OTHER open checkout session for this customer (best-effort
-    // — a failure here must not block the checkout we just created).
+    // An idempotent replay can return a session another request has since
+    // expired (same key, but a concurrent create's expire pass beat us) —
+    // hand the user a live session, not a dead URL: mint a fresh one under a
+    // unique key (review batch3 finding 5, replay tail).
+    if (session.status !== 'open') {
+      session = await s.checkout.sessions.create(sessionParams, {
+        idempotencyKey: `${idempotencyKey}:retry:${Date.now()}`,
+      })
+    }
+
+    // Expire STRICTLY OLDER open checkout sessions for this customer
+    // (best-effort — a failure here must not block the checkout we just
+    // created). Only-older matters: if two near-simultaneous creates each
+    // expired "every other" session, both tabs would end on dead URLs
+    // (review batch3 finding 5). With the older-only rule (id as the
+    // tiebreak on equal timestamps), exactly one session — the newest —
+    // always survives.
     try {
       const openSessions = await s.checkout.sessions.list({
         customer: stripeCustomerId,
@@ -204,6 +225,10 @@ export async function POST(request: Request): Promise<NextResponse> {
       })
       for (const stale of openSessions.data) {
         if (stale.id === session.id) continue
+        const isOlder =
+          stale.created < session.created ||
+          (stale.created === session.created && stale.id < session.id)
+        if (!isOlder) continue
         await s.checkout.sessions.expire(stale.id)
       }
     } catch (expireErr) {

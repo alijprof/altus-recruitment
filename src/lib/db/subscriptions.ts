@@ -95,6 +95,13 @@ export type UpsertSubscriptionOptions = {
   // paid, which brings a real subscription id — passes true. See the comp-row
   // guard below (audit MAJOR-5).
   allowOverrideComp?: boolean
+  // Stripe event.created (ISO), passed by the webhook. When present, a
+  // genuine-paid override of a comp row is refused if the EVENT predates the
+  // comp row's last write — a delayed first delivery of a pre-cancellation
+  // 'active' event must not clobber a comp granted after that state was
+  // already dead (review batch3 finding 8). Callers whose input reflects
+  // CURRENT Stripe truth (the reconciliation cron's live listing) omit it.
+  eventCreatedAtIso?: string
 }
 
 export async function upsertSubscriptionFromStripe(
@@ -138,9 +145,24 @@ export async function upsertSubscriptionFromStripe(
     // events carry a real sub id and an active/trialing status). Only a stale
     // DOWNGRADE (cancelled/past_due, or a null sub id) targeting a comp row is
     // refused — that is the MAJOR-5 lock-out we are guarding against.
-    const incomingIsGenuinePaid =
+    let incomingIsGenuinePaid =
       input.stripeSubscriptionId !== null &&
       (input.status === 'active' || input.status === 'trialing')
+
+    // Staleness check (review batch3 finding 8): an event minted BEFORE the
+    // comp row was written carries pre-comp state — e.g. sub A's final
+    // 'active' updated event arriving days late (Stripe retries up to 3 days)
+    // after the org churned and was comped. The subscriptions updated_at
+    // trigger bumps on every write, so comparing event.created against it is
+    // sound. Unparsable/missing timestamps fall back to allowing (the
+    // pre-existing carve-out behaviour).
+    if (incomingIsGenuinePaid && isLiveComp && options?.eventCreatedAtIso && existing.ok) {
+      const eventMs = new Date(options.eventCreatedAtIso).getTime()
+      const compWrittenMs = new Date(existing.data.updated_at).getTime()
+      if (Number.isFinite(eventMs) && Number.isFinite(compWrittenMs) && eventMs < compWrittenMs) {
+        incomingIsGenuinePaid = false
+      }
+    }
 
     if (isLiveComp && !incomingIsGenuinePaid) {
       Sentry.captureMessage('stripe_webhook: refused to overwrite comp/invoice-billed row', {

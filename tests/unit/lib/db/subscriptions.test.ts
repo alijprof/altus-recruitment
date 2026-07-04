@@ -145,4 +145,57 @@ describe('upsertSubscriptionFromStripe — comp-row protection', () => {
     })
     expect(state.upsertCalls).toBe(1)
   })
+
+  it('refuses a STALE genuine-paid event minted before the comp row was written (batch3 finding 8)', async () => {
+    // Sub A's final pre-cancellation 'active' updated event arrives days late
+    // (Stripe retries up to 3 days), AFTER the org churned and was comped.
+    // event.created < comp row updated_at → the carve-out must not fire.
+    const { client, state } = makeClient({
+      organization_id: 'org-1',
+      stripe_subscription_id: null,
+      status: 'active',
+      updated_at: '2026-07-03T12:00:00+00:00', // comp granted here
+    })
+    const result = await upsertSubscriptionFromStripe(
+      client as unknown as ClientArg,
+      { ...INPUT, stripeSubscriptionId: 'sub_A', status: 'active' },
+      { eventCreatedAtIso: '2026-07-01T09:00:00.000Z' }, // event predates the comp
+    )
+    expect(state.upsertCalls).toBe(0)
+    expect(result.ok).toBe(true)
+    if (result.ok) expect(result.data.status).toBe('active') // comp row preserved
+  })
+
+  it('allows a genuine-paid event minted AFTER the comp row was written', async () => {
+    // A real post-comp conversion (Dashboard-created sub) must still persist.
+    const { client, state } = makeClient({
+      organization_id: 'org-1',
+      stripe_subscription_id: null,
+      status: 'active',
+      updated_at: '2026-07-03T12:00:00+00:00',
+    })
+    await upsertSubscriptionFromStripe(
+      client as unknown as ClientArg,
+      { ...INPUT, stripeSubscriptionId: 'sub_B', status: 'active' },
+      { eventCreatedAtIso: '2026-07-04T09:00:00.000Z' },
+    )
+    expect(state.upsertCalls).toBe(1)
+  })
+
+  it('without an event timestamp (reconciliation cron), genuine-paid still replaces a comp', async () => {
+    // The cron's input reflects CURRENT Stripe truth (live listing), so it
+    // omits eventCreatedAtIso — behaviour must match the pre-batch3 carve-out.
+    const { client, state } = makeClient({
+      organization_id: 'org-1',
+      stripe_subscription_id: null,
+      status: 'active',
+      updated_at: '2026-07-03T12:00:00+00:00',
+    })
+    await upsertSubscriptionFromStripe(client as unknown as ClientArg, {
+      ...INPUT,
+      stripeSubscriptionId: 'sub_live',
+      status: 'active',
+    })
+    expect(state.upsertCalls).toBe(1)
+  })
 })

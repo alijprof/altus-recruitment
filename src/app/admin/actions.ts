@@ -26,9 +26,11 @@ import { z } from 'zod'
 
 import { requireSuperAdmin } from '@/lib/admin/guard'
 import { deleteAllOrgStorage, deleteOrgAuthUsers } from '@/lib/admin/org-erasure'
-import { hasLiveStripeSubscription } from '@/lib/db/subscriptions'
+import { hasLiveStripeSubscription, isLiveSubscriptionStatus } from '@/lib/db/subscriptions'
 import { sendResendEmail } from '@/lib/email/resend'
 import { env } from '@/lib/env'
+import { assertStripe, stripe } from '@/lib/stripe/client'
+import { mapStripeStatus } from '@/lib/stripe/subscription-sync'
 import { createServiceClient } from '@/lib/supabase/service'
 
 // ---------------------------------------------------------------------------
@@ -707,7 +709,7 @@ export async function eraseOrganizationAction(
   // Load the org (name + slug) for confirmation matching + the success message.
   const { data: org, error: orgErr } = await serviceClient
     .from('organizations')
-    .select('id, name, slug')
+    .select('id, name, slug, stripe_customer_id')
     .eq('id', orgId)
     .maybeSingle()
   if (orgErr) {
@@ -750,15 +752,61 @@ export async function eraseOrganizationAction(
   // Stripe, leaving a dangling paid subscription. Cancel in Stripe first.
   // Liveness, not presence (audit min-22): a churned org whose cancelled row
   // still carries its old sub id must remain erasable (GDPR).
-  const { data: sub } = await serviceClient
+  const { data: sub, error: subErr } = await serviceClient
     .from('subscriptions')
-    .select('stripe_subscription_id, status')
+    .select('stripe_subscription_id, stripe_customer_id, status')
     .eq('organization_id', orgId)
     .maybeSingle()
+  if (subErr) {
+    // Fail CLOSED — erase is irreversible; an unreadable billing state must
+    // block it, exactly like the grant/revoke guards (review batch3 finding 6).
+    Sentry.captureException(subErr, {
+      tags: { layer: 'admin', action: 'eraseOrganizationAction', step: 'load_sub', org_id: orgId },
+    })
+    return { ok: false, error: 'Database read failed. Nothing was erased — try again.' }
+  }
   if (hasLiveStripeSubscription(sub)) {
     return {
       ok: false,
       error: 'This org has a live Stripe subscription — cancel it in Stripe before erasing.',
+    }
+  }
+
+  // The local status column is exactly what the reconciliation audit says can
+  // drift, so for an IRREVERSIBLE erase we also verify against Stripe itself:
+  // if any live subscription exists for the org's Stripe customer(s), refuse
+  // (review batch3 finding 1: local row drifted to {old sub, cancelled} while
+  // Stripe bills a newer live sub). Fail CLOSED on Stripe errors.
+  const customerIds = [
+    ...new Set([org.stripe_customer_id, sub?.stripe_customer_id].filter(
+      (id): id is string => typeof id === 'string' && id.length > 0,
+    )),
+  ]
+  if (stripe && customerIds.length > 0) {
+    try {
+      const s = assertStripe()
+      for (const customerId of customerIds) {
+        const stripeSubs = await s.subscriptions.list({
+          customer: customerId,
+          status: 'all',
+          limit: 100,
+        })
+        const live = stripeSubs.data.find((x) => isLiveSubscriptionStatus(mapStripeStatus(x.status)))
+        if (live) {
+          return {
+            ok: false,
+            error: `Stripe still has a live subscription (${live.id}) for this org — cancel it in Stripe before erasing.`,
+          }
+        }
+      }
+    } catch (err) {
+      Sentry.captureException(err, {
+        tags: { layer: 'admin', action: 'eraseOrganizationAction', step: 'stripe_verify', org_id: orgId },
+      })
+      return {
+        ok: false,
+        error: 'Could not verify the Stripe billing state. Nothing was erased — try again.',
+      }
     }
   }
 

@@ -10,7 +10,7 @@ import {
   diffStripeAgainstLocal,
   snapshotFromStripeSubscription,
 } from '@/lib/stripe/reconcile'
-import type { StripeSubSnapshot } from '@/lib/stripe/reconcile'
+import type { LocalSubscriptionRow, StripeSubSnapshot } from '@/lib/stripe/reconcile'
 import { assertStripe, stripe } from '@/lib/stripe/client'
 import { createServiceClient } from '@/lib/supabase/service'
 
@@ -70,6 +70,12 @@ export const stripeReconcile = inngest.createFunction(
     return await step.run('reconcile', async () => {
       const s = assertStripe()
 
+      // Freshness watermark (review batch3 finding 9): any local row written
+      // AFTER this instant may reflect a webhook that raced the run — the
+      // Stripe snapshot below could be older than that write, so repairs
+      // against such rows are skipped and left for tomorrow's run.
+      const listStartIso = new Date().toISOString()
+
       // 1. List EVERY Stripe subscription (status 'all' includes canceled).
       const snapshots: StripeSubSnapshot[] = []
       let startingAfter: string | undefined
@@ -91,32 +97,83 @@ export const stripeReconcile = inngest.createFunction(
         if (!startingAfter) break
       }
 
-      // 2. Load every local subscription row.
+      // 2. Load every local subscription row — PAGINATED. PostgREST silently
+      // caps any single response at max_rows (1000) regardless of .limit(),
+      // and a truncated local view would mislabel healthy orgs as
+      // missing_local_row every day (review batch3 finding 7).
       const serviceClient = createServiceClient()
-      const { data: localRows, error: localErr } = await serviceClient
-        .from('subscriptions')
-        .select(
-          'organization_id, stripe_customer_id, stripe_subscription_id, plan_key, plan_seats, status, trial_end, current_period_end',
-        )
-        .limit(2000)
-      if (localErr) {
-        throw new Error(`stripe-reconcile: local read failed: ${localErr.message}`)
+      const LOCAL_PAGE = 1000
+      const localRows: LocalSubscriptionRow[] = []
+      for (let page = 0; ; page++) {
+        if (page >= MAX_PAGES) {
+          // A partial local view cannot be reconciled safely — bail loudly.
+          throw new Error(
+            `stripe-reconcile: local subscriptions exceed ${MAX_PAGES * LOCAL_PAGE} rows — raise the page cap`,
+          )
+        }
+        const from = page * LOCAL_PAGE
+        const { data, error: localErr } = await serviceClient
+          .from('subscriptions')
+          .select(
+            'organization_id, stripe_customer_id, stripe_subscription_id, plan_key, plan_seats, status, trial_end, current_period_end',
+          )
+          .order('organization_id', { ascending: true })
+          .range(from, from + LOCAL_PAGE - 1)
+        if (localErr) {
+          throw new Error(`stripe-reconcile: local read failed: ${localErr.message}`)
+        }
+        localRows.push(...(data ?? []))
+        if (!data || data.length < LOCAL_PAGE) break
       }
 
       // 3. Diff (pure) …
       const { repairs, anomalies } = diffStripeAgainstLocal({
         stripeSubs: snapshots,
-        localRows: localRows ?? [],
+        localRows,
         stripeListComplete,
       })
 
       // 4. … and repair through the SAME guarded upsert the webhook uses —
-      // comp/invoice-billed rows keep their MAJOR-5 protection.
+      // comp/invoice-billed rows keep their MAJOR-5 protection. Each repair
+      // first re-reads the row: if it was written after listStartIso (a
+      // webhook landed mid-run) or its existence changed since the diff, the
+      // repair is SKIPPED — the fresher write is newer truth than our
+      // snapshot, and tomorrow's run re-verifies (review batch3 finding 9).
       const repairFailures: string[] = []
+      const skippedFresh: string[] = []
+      let appliedCount = 0
       for (const repair of repairs) {
+        const { data: freshRow, error: freshErr } = await serviceClient
+          .from('subscriptions')
+          .select('organization_id, updated_at')
+          .eq('organization_id', repair.organizationId)
+          .maybeSingle()
+        if (freshErr) {
+          repairFailures.push(`${repair.organizationId} (${repair.reason}): freshness read failed`)
+          continue
+        }
+        if (repair.reason === 'missing_local_row') {
+          if (freshRow) {
+            skippedFresh.push(`${repair.organizationId}: row appeared mid-run`)
+            continue
+          }
+        } else {
+          if (!freshRow) {
+            skippedFresh.push(`${repair.organizationId}: row vanished mid-run`)
+            continue
+          }
+          // Epoch comparison — DB timestamps use '+00:00' offsets, the
+          // watermark ends in 'Z'; lexicographic comparison would misorder.
+          if (new Date(freshRow.updated_at).getTime() > new Date(listStartIso).getTime()) {
+            skippedFresh.push(`${repair.organizationId}: row updated mid-run (webhook won)`)
+            continue
+          }
+        }
         const result = await upsertSubscriptionFromStripe(serviceClient, repair.input)
         if (!result.ok) {
           repairFailures.push(`${repair.organizationId} (${repair.reason}): ${result.code}`)
+        } else {
+          appliedCount++
         }
       }
 
@@ -125,8 +182,11 @@ export const stripeReconcile = inngest.createFunction(
       if (repairs.length > 0 || anomalies.length > 0 || repairFailures.length > 0) {
         const summaryLines = [
           `Stripe reconciliation ${new Date().toISOString()}`,
-          `Repairs applied: ${repairs.length}`,
+          `Repairs applied: ${appliedCount} (of ${repairs.length} planned)`,
           ...repairs.map((r) => `  - [${r.reason}] ${r.detail}`),
+          ...(skippedFresh.length > 0
+            ? [`Skipped (row changed mid-run): ${skippedFresh.length}`, ...skippedFresh.map((f) => `  - ${f}`)]
+            : []),
           `Anomalies (need a human): ${anomalies.length}`,
           ...anomalies.map((a) => `  - [${a.kind}] ${a.detail}`),
           ...(repairFailures.length > 0
@@ -163,14 +223,16 @@ export const stripeReconcile = inngest.createFunction(
 
       Sentry.addBreadcrumb({
         category: 'inngest',
-        message: `stripe-reconcile: ${snapshots.length} Stripe subs, ${localRows?.length ?? 0} local rows, ${repairs.length} repairs, ${anomalies.length} anomalies`,
+        message: `stripe-reconcile: ${snapshots.length} Stripe subs, ${localRows.length} local rows, ${appliedCount}/${repairs.length} repairs applied, ${anomalies.length} anomalies`,
         level: 'info',
       })
 
       return {
         stripeSubs: snapshots.length,
-        localRows: localRows?.length ?? 0,
-        repairs: repairs.length,
+        localRows: localRows.length,
+        repairsPlanned: repairs.length,
+        repairsApplied: appliedCount,
+        skippedFresh: skippedFresh.length,
         anomalies: anomalies.length,
         repairFailures: repairFailures.length,
         stripeListComplete,
