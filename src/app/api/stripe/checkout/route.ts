@@ -25,6 +25,7 @@ import {
   isLiveSubscriptionStatus,
   isTrialBackstopExpired,
 } from '@/lib/db/subscriptions'
+import { findLiveStripeSubscription } from '@/lib/stripe/live-check'
 import { createClient } from '@/lib/supabase/server'
 import { createServiceClient } from '@/lib/supabase/service'
 import { env } from '@/lib/env'
@@ -86,21 +87,47 @@ export async function POST(request: Request): Promise<NextResponse> {
   // shows the checkout buttons when status is 'none', but a direct POST must
   // also be rejected — otherwise an owner can create duplicate Stripe
   // subscriptions, which are painful to reconcile against the webhook ledger.
-  // A backstop-expired trial (status still 'trialing' locally but trial_end is
-  // well past — the trial-end webhook never landed) is NOT a live subscription:
-  // getEntitlement gates such an org as not-entitled and the paywall offers
-  // re-subscribe, so this guard must let that checkout through rather than 409
-  // the owner into a lockout (review batch3 final finding 1).
   const existing = await getSubscriptionForOrg(createServiceClient(), organizationId)
-  if (
-    existing.ok &&
-    isLiveSubscriptionStatus(existing.data.status) &&
-    !isTrialBackstopExpired(existing.data.status, existing.data.trial_end)
-  ) {
-    return NextResponse.json(
-      { error: 'You already have an active subscription. Use "Manage billing" to make changes.' },
-      { status: 409 },
-    )
+  if (existing.ok && isLiveSubscriptionStatus(existing.data.status)) {
+    if (isTrialBackstopExpired(existing.data.status, existing.data.trial_end)) {
+      // AMBIGUOUS: the local row still reads 'trialing' but trial_end is well
+      // past — the trial-end webhook never landed, so we DON'T know from local
+      // state whether the trial converted to a paid sub or died. Local drift
+      // can't answer it, so consult STRIPE directly (review batch3 round5
+      // finding 0). Without this, letting the re-subscribe through would create
+      // a SECOND live sub if the trial had actually converted (double-billing).
+      const liveStripe = await findLiveStripeSubscription([existing.data.stripe_customer_id])
+      if (liveStripe.status === 'live') {
+        // The trial DID convert — a live sub already exists. Send them to
+        // manage billing, never mint a second subscription.
+        return NextResponse.json(
+          {
+            error: 'You already have an active subscription. Use "Manage billing" to make changes.',
+          },
+          { status: 409 },
+        )
+      }
+      if (liveStripe.status !== 'none') {
+        // 'error' / 'unconfigured' — cannot rule out a live sub. Fail CLOSED
+        // (block, ask to retry) rather than risk a double subscription. stripe
+        // is asserted above so 'unconfigured' should not occur here.
+        return NextResponse.json(
+          { error: "Couldn't verify your billing status. Please try again in a moment." },
+          { status: 503 },
+        )
+      }
+      // 'none' — Stripe has no live sub; the trial genuinely lapsed. Fall
+      // through and let the owner start a fresh subscription.
+    } else {
+      // A normal live status (active/trialing-not-expired/past_due) — never
+      // start a second subscription.
+      return NextResponse.json(
+        {
+          error: 'You already have an active subscription. Use "Manage billing" to make changes.',
+        },
+        { status: 409 },
+      )
+    }
   }
 
   const orgDetails = await getOrganization(supabase, organizationId)
@@ -243,16 +270,12 @@ export async function POST(request: Request): Promise<NextResponse> {
       })
     }
 
-    if (liveStatus === 'complete') {
-      // The replayed session was ALREADY completed (a concurrent tab / double
-      // POST finished checkout in this same minute bucket). Minting a fresh
-      // session here would let the owner pay AGAIN → two live Stripe
-      // subscriptions (review batch3 final finding 0). Send them to the return
-      // page, which resolves the now-active subscription instead.
-      return NextResponse.json({
-        url: `${siteUrl}/stripe/return?session_id=${session.id}`,
-      })
-    }
+    // The replayed session was ALREADY completed (a concurrent tab / double
+    // POST finished checkout in this same minute bucket). We must NOT mint a
+    // fresh session (that would let the owner pay AGAIN → two live subs, review
+    // batch3 final finding 0), and we DO still run the expire pass below so any
+    // lingering open session for this customer is cleaned up (round5 finding 4).
+    const isCompletedReplay = liveStatus === 'complete'
 
     if (liveStatus === 'expired') {
       // The replayed session was expired by a concurrent request's expire pass
@@ -264,13 +287,14 @@ export async function POST(request: Request): Promise<NextResponse> {
       })
     }
 
-    // Expire STRICTLY OLDER open checkout sessions for this customer
-    // (best-effort — a failure here must not block the checkout we just
-    // created). Only-older matters: if two near-simultaneous creates each
-    // expired "every other" session, both tabs would end on dead URLs
-    // (review batch3 finding 5). With the older-only rule (id as the
-    // tiebreak on equal timestamps), exactly one session — the newest —
-    // always survives.
+    // Expire redundant open checkout sessions for this customer (best-effort —
+    // a failure here must not block the response). When the current session
+    // COMPLETED, every other open session is now redundant → expire them all so
+    // a lingering stale tab can't later create a second subscription (round5
+    // finding 4). Otherwise expire only STRICTLY OLDER sessions: if two
+    // near-simultaneous creates each expired "every other" session, both tabs
+    // would end on dead URLs (review batch3 finding 5) — the older-only rule
+    // (id as the tiebreak on equal timestamps) leaves exactly the newest alive.
     try {
       const openSessions = await s.checkout.sessions.list({
         customer: stripeCustomerId,
@@ -279,15 +303,25 @@ export async function POST(request: Request): Promise<NextResponse> {
       })
       for (const stale of openSessions.data) {
         if (stale.id === session.id) continue
-        const isOlder =
-          stale.created < session.created ||
-          (stale.created === session.created && stale.id < session.id)
-        if (!isOlder) continue
+        if (!isCompletedReplay) {
+          const isOlder =
+            stale.created < session.created ||
+            (stale.created === session.created && stale.id < session.id)
+          if (!isOlder) continue
+        }
         await s.checkout.sessions.expire(stale.id)
       }
     } catch (expireErr) {
       Sentry.captureException(expireErr, {
         tags: { layer: 'stripe', handler: 'checkout', step: 'expire-stale-sessions' },
+      })
+    }
+
+    if (isCompletedReplay) {
+      // Send the owner to the return page, which resolves the now-active
+      // subscription — never back to a checkout URL.
+      return NextResponse.json({
+        url: `${siteUrl}/stripe/return?session_id=${session.id}`,
       })
     }
 

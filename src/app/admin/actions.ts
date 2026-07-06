@@ -352,14 +352,23 @@ export async function grantManualAccessAction(
   // consistent with the erase guard — verify against STRIPE before comping.
   // Comping an org Stripe is actively charging would double-bill them AND the
   // reconcile cron would silently revert the comp back to Stripe billing
-  // (review batch3 final finding 3). Fail CLOSED on anything but a clean 'none'.
-  const { data: orgRow } = await serviceClient
+  // (review batch3 final finding 3).
+  const { data: orgRow, error: orgReadErr } = await serviceClient
     .from('organizations')
     .select('stripe_customer_id')
     .eq('id', orgId)
     .maybeSingle()
+  if (orgReadErr) {
+    // Fail CLOSED: a discarded read error would leave customerIds empty →
+    // findLiveStripeSubscription returns 'none' → the guard is silently
+    // bypassed (review batch3 round5 finding 3).
+    Sentry.captureException(orgReadErr, {
+      tags: { layer: 'admin', action: 'grantManualAccessAction', step: 'org_read', org_id: orgId },
+    })
+    return { ok: false, error: 'Database read failed. Check Sentry for details.' }
+  }
   const liveStripe = await findLiveStripeSubscription([
-    (orgRow as { stripe_customer_id?: string | null } | null)?.stripe_customer_id,
+    orgRow?.stripe_customer_id,
     existing?.stripe_customer_id,
   ])
   if (liveStripe.status === 'live') {
@@ -368,19 +377,16 @@ export async function grantManualAccessAction(
       error: `Stripe still has a live subscription (${liveStripe.subscriptionId}) for this org — cancel it in Stripe before granting invoice access.`,
     }
   }
-  if (liveStripe.status === 'unconfigured') {
-    return {
-      ok: false,
-      error:
-        'This org has Stripe billing history but Stripe is not configured, so a live subscription cannot be ruled out. Configure STRIPE_SECRET_KEY and retry.',
-    }
-  }
   if (liveStripe.status === 'error') {
     return {
       ok: false,
       error: 'Could not verify the Stripe billing state. No access was granted — try again.',
     }
   }
+  // 'unconfigured' is NOT a block for a comp grant: if STRIPE_SECRET_KEY is
+  // unset there is no active Stripe billing to double up with, and running
+  // entirely without Stripe (invoice-billed customers) is a supported workflow
+  // (review batch3 round5 finding 5). 'none' and 'unconfigured' both proceed.
 
   const { error } = await serviceClient.from('subscriptions').upsert(
     {

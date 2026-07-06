@@ -95,7 +95,9 @@ describe('diffStripeAgainstLocal — in-sync states produce no work', () => {
   it('pure comp org (no Stripe presence at all) is out of scope', () => {
     const { repairs, anomalies } = diffStripeAgainstLocal({
       stripeSubs: [],
-      localRows: [local({ stripe_subscription_id: null, stripe_customer_id: null, status: 'active' })],
+      localRows: [
+        local({ stripe_subscription_id: null, stripe_customer_id: null, status: 'active' }),
+      ],
       stripeListComplete: true,
     })
     expect(repairs).toEqual([])
@@ -208,8 +210,40 @@ describe('diffStripeAgainstLocal — direction (b): dead in Stripe, still entitl
       localRows: [local({ status: 'none' })],
       stripeListComplete: false,
     })
-    expect(repairs).toHaveLength(1)
-    expect(repairs[0]).toMatchObject({ reason: 'drift', input: { status: 'active' } })
+    expect(repairs.filter((r) => r.reason === 'drift')).toHaveLength(1)
+    expect(repairs.find((r) => r.reason === 'drift')).toMatchObject({ input: { status: 'active' } })
+  })
+
+  it('an active→past_due downgrade is SKIPPED under an incomplete listing (round5 finding 2)', () => {
+    // past_due is "live" but NOT entitled — the earlier live-status guard let
+    // this through and paywalled a paying org. The entitlement-based guard
+    // catches it.
+    const { repairs } = diffStripeAgainstLocal({
+      stripeSubs: [snap({ mappedStatus: 'past_due' })],
+      localRows: [local({ status: 'active' })],
+      stripeListComplete: false,
+    })
+    expect(repairs).toEqual([])
+  })
+
+  it('an incomplete listing ALWAYS raises an incomplete_listing anomaly (round5 finding 1)', () => {
+    // Even a fully in-sync org must surface the incompleteness so the daily
+    // alert fires and the founder knows reconciliation was partial.
+    const { anomalies } = diffStripeAgainstLocal({
+      stripeSubs: [snap({})],
+      localRows: [local({})],
+      stripeListComplete: false,
+    })
+    expect(anomalies.some((a) => a.kind === 'incomplete_listing')).toBe(true)
+  })
+
+  it('a complete listing raises no incomplete_listing anomaly', () => {
+    const { anomalies } = diffStripeAgainstLocal({
+      stripeSubs: [snap({})],
+      localRows: [local({})],
+      stripeListComplete: true,
+    })
+    expect(anomalies.some((a) => a.kind === 'incomplete_listing')).toBe(false)
   })
 
   it('stale_local_sub is SKIPPED when the sub id exists in Stripe under lost metadata', () => {
@@ -250,10 +284,7 @@ describe('diffStripeAgainstLocal — conservatism / anomalies', () => {
 
   it('two LIVE subs for one org → anomaly (double-subscribe), NO auto-repair', () => {
     const { repairs, anomalies } = diffStripeAgainstLocal({
-      stripeSubs: [
-        snap({ subscriptionId: 'sub_a' }),
-        snap({ subscriptionId: 'sub_b' }),
-      ],
+      stripeSubs: [snap({ subscriptionId: 'sub_a' }), snap({ subscriptionId: 'sub_b' })],
       localRows: [local({ stripe_subscription_id: 'sub_a' })],
       stripeListComplete: true,
     })
@@ -279,7 +310,14 @@ describe('diffStripeAgainstLocal — conservatism / anomalies', () => {
   it('comp row + genuine active Stripe sub → drift repair (Stripe truth wins, MAJOR-5 carve-out)', () => {
     const { repairs } = diffStripeAgainstLocal({
       stripeSubs: [snap({ subscriptionId: 'sub_paid' })],
-      localRows: [local({ stripe_subscription_id: null, status: 'active', plan_key: 'starter', plan_seats: 3 })],
+      localRows: [
+        local({
+          stripe_subscription_id: null,
+          status: 'active',
+          plan_key: 'starter',
+          plan_seats: 3,
+        }),
+      ],
       stripeListComplete: true,
     })
     expect(repairs).toHaveLength(1)

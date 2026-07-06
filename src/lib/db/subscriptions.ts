@@ -26,6 +26,17 @@ export function isLiveSubscriptionStatus(status: string): boolean {
   return (LIVE_SUBSCRIPTION_STATUSES as readonly string[]).includes(status)
 }
 
+// The statuses that grant app access. MUST mirror require-entitlement's
+// ENTITLED_STATUSES (kept here too so pure modules like reconcile can import it
+// without pulling in the request-scoped entitlement stack). past_due is LIVE
+// but NOT entitled — a downgrade from active/trialing to past_due still
+// paywalls the org.
+export const ENTITLED_SUBSCRIPTION_STATUSES = ['active', 'trialing'] as const
+
+export function isEntitledSubscriptionStatus(status: string): boolean {
+  return (ENTITLED_SUBSCRIPTION_STATUSES as readonly string[]).includes(status)
+}
+
 // TRIAL-EXPIRY BACKSTOP (audit MAJOR-6). A `trialing` row whose trial_end is
 // more than this grace window in the past means the trial-end webhook never
 // arrived (rotated secret / changed URL / Stripe outage). Stripe retries

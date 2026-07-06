@@ -32,7 +32,7 @@ import 'server-only'
 import type Stripe from 'stripe'
 
 import type { SubscriptionRow, UpsertSubscriptionInput } from '@/lib/db/subscriptions'
-import { isLiveSubscriptionStatus } from '@/lib/db/subscriptions'
+import { isEntitledSubscriptionStatus, isLiveSubscriptionStatus } from '@/lib/db/subscriptions'
 import type { PlanKey } from '@/lib/stripe/plans'
 import {
   derivePlanKey,
@@ -92,6 +92,7 @@ export type ReconcileAnomaly = {
     | 'multiple_live_subscriptions'
     | 'unknown_price'
     | 'comp_row_conflict'
+    | 'incomplete_listing'
   detail: string
 }
 
@@ -273,18 +274,22 @@ export function diffStripeAgainstLocal(args: {
       timestampsDiffer(local.current_period_end, desired.currentPeriodEnd)
 
     if (differs) {
-      // With an INCOMPLETE Stripe listing, `canonical` may be a dead sub while
-      // the org's live sub sits on an unfetched page — a drift repair would
-      // then DOWNGRADE a live paying org to cancelled and paywall them (review
-      // batch3 final finding 2). Only the missing/upgrade direction (desired is
-      // live) is safe under incompleteness; skip a live→non-live downgrade and
-      // let a future complete run handle it. A missed downgrade is the safe
-      // direction (mild, self-heals); a wrong downgrade is not.
-      const wouldDowngradeLiveOrg =
+      // With an INCOMPLETE Stripe listing, `canonical` may be a dead/past_due
+      // sub while the org's live sub sits on an unfetched page — a drift repair
+      // would then paywall a currently-ENTITLED org (review batch3 final
+      // finding 2 + round5 finding 2: past_due counts as "live" so the earlier
+      // isLiveSubscriptionStatus test let an active→past_due downgrade through).
+      // Gate on ENTITLEMENT: skip any repair that moves an entitled org
+      // (active/trialing) to a non-entitled status while the listing is
+      // incomplete; let a future complete run handle it. A missed downgrade is
+      // the safe direction (mild, self-heals) — a wrong one paywalls a payer.
+      // The incomplete listing itself is surfaced as an anomaly below so this
+      // skip is never silent.
+      const wouldPaywallEntitledOrg =
         !args.stripeListComplete &&
-        isLiveSubscriptionStatus(local.status) &&
-        !isLiveSubscriptionStatus(desired.status)
-      if (!wouldDowngradeLiveOrg) {
+        isEntitledSubscriptionStatus(local.status) &&
+        !isEntitledSubscriptionStatus(desired.status)
+      if (!wouldPaywallEntitledOrg) {
         repairs.push({
           organizationId: orgId,
           reason: 'drift',
@@ -341,6 +346,20 @@ export function diffStripeAgainstLocal(args: {
         },
       })
     }
+  }
+
+  // An INCOMPLETE Stripe listing is itself an operational anomaly (review
+  // batch3 round5 finding 1). It disables the absence-based stale_local_sub
+  // repair AND the entitled-org downgrade repair above, so without this the
+  // founder would get NO signal that reconciliation was partial and real
+  // divergences went unhandled — the anomaly guarantees the daily alert fires
+  // and tells them to raise the page cap.
+  if (!args.stripeListComplete) {
+    anomalies.push({
+      kind: 'incomplete_listing',
+      detail:
+        'Stripe subscription listing exceeded the page cap — reconciliation was PARTIAL. Downgrade repairs were skipped to avoid paywalling a live org on incomplete data; raise MAX_PAGES in stripe-reconcile and re-run.',
+    })
   }
 
   return { repairs, anomalies }
