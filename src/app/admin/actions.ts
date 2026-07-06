@@ -383,10 +383,21 @@ export async function grantManualAccessAction(
       error: 'Could not verify the Stripe billing state. No access was granted — try again.',
     }
   }
-  // 'unconfigured' is NOT a block for a comp grant: if STRIPE_SECRET_KEY is
-  // unset there is no active Stripe billing to double up with, and running
-  // entirely without Stripe (invoice-billed customers) is a supported workflow
-  // (review batch3 round5 finding 5). 'none' and 'unconfigured' both proceed.
+  if (liveStripe.status === 'unconfigured') {
+    // Fail CLOSED (review batch3 round6 finding 1). 'unconfigured' is only
+    // returned when the org HAS a Stripe customer id but the key is unset — i.e.
+    // Stripe WAS used and is now unreachable (a rotation window), where a live
+    // sub cannot be ruled out. Comping here would double-bill an org Stripe is
+    // still charging, and the cron would revert the comp once the key returns.
+    // A pure no-Stripe org has no customer id → findLiveStripeSubscription
+    // returns 'none' above → grant proceeds, so this does not block the
+    // invoice-only workflow.
+    return {
+      ok: false,
+      error:
+        'This org has Stripe billing history but Stripe is not configured, so a live subscription cannot be ruled out. Configure STRIPE_SECRET_KEY and retry.',
+    }
+  }
 
   const { error } = await serviceClient.from('subscriptions').upsert(
     {

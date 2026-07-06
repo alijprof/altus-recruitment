@@ -21,20 +21,27 @@ import 'server-only'
 
 import * as Sentry from '@sentry/nextjs'
 
+import {
+  ENTITLED_SUBSCRIPTION_STATUSES,
+  isEntitledSubscriptionStatus,
+} from '@/lib/db/subscriptions'
 import { getProfile } from '@/lib/db/profiles'
 import { getEntitlement } from '@/lib/stripe/entitlement'
 import { createClient } from '@/lib/supabase/server'
 import type { EntitlementStatus } from '@/types/billing'
 
-// The only statuses that count as entitled. Mirrors the layout's check.
-export const ENTITLED_STATUSES = ['trialing', 'active'] as const
+// The only statuses that count as entitled. SINGLE source of truth lives in
+// @/lib/db/subscriptions so the reconcile cron and this request-time gate can
+// never drift (review batch3 round6 finding 3); re-exported here under the
+// name existing callers already use.
+export const ENTITLED_STATUSES = ENTITLED_SUBSCRIPTION_STATUSES
 
 export type EntitledStatus = (typeof ENTITLED_STATUSES)[number]
 
 // True iff the given subscription status grants full access. Pure + sync so it
 // can be reused by checkCap (cap-enforcement) without re-resolving the org.
 export function isEntitledStatus(status: EntitlementStatus['status']): boolean {
-  return (ENTITLED_STATUSES as readonly string[]).includes(status)
+  return isEntitledSubscriptionStatus(status)
 }
 
 // User-facing message returned by gated actions when an org is not entitled.
@@ -57,7 +64,12 @@ export async function isOrgEntitled(orgId: string): Promise<boolean> {
     return isEntitledStatus(entitlement.status)
   } catch (err) {
     Sentry.captureException(err, {
-      tags: { layer: 'billing', helper: 'isOrgEntitled', step: 'getEntitlement', organization_id: orgId },
+      tags: {
+        layer: 'billing',
+        helper: 'isOrgEntitled',
+        step: 'getEntitlement',
+        organization_id: orgId,
+      },
     })
     // Fail CLOSED — see the doc block above.
     return false

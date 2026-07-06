@@ -275,21 +275,24 @@ export function diffStripeAgainstLocal(args: {
 
     if (differs) {
       // With an INCOMPLETE Stripe listing, `canonical` may be a dead/past_due
-      // sub while the org's live sub sits on an unfetched page — a drift repair
-      // would then paywall a currently-ENTITLED org (review batch3 final
-      // finding 2 + round5 finding 2: past_due counts as "live" so the earlier
-      // isLiveSubscriptionStatus test let an active→past_due downgrade through).
-      // Gate on ENTITLEMENT: skip any repair that moves an entitled org
-      // (active/trialing) to a non-entitled status while the listing is
-      // incomplete; let a future complete run handle it. A missed downgrade is
-      // the safe direction (mild, self-heals) — a wrong one paywalls a payer.
-      // The incomplete listing itself is surfaced as an anomaly below so this
-      // skip is never silent.
-      const wouldPaywallEntitledOrg =
+      // sub while the org's real live sub sits on an unfetched page — a drift
+      // repair computed from it could wrongly downgrade the org. Skip any
+      // repair that moves a LIVE local row (active/trialing/past_due — anything
+      // Stripe might still be backing) DOWN to a non-entitled status while the
+      // listing is incomplete:
+      //   - active/trialing → past_due/cancelled/none  (paywalls a payer;
+      //     review batch3 final finding 2 + round5 finding 2), and
+      //   - past_due → cancelled  (masks a possible active-on-unfetched-page
+      //     recovery; review batch3 round6 finding 2).
+      // Upgrades (desired entitled) always apply — a fetched live sub is real.
+      // A missed downgrade is the safe direction (self-heals on a later
+      // complete run); a wrong one corrupts a live org's state. The incomplete
+      // listing is surfaced as an anomaly below so this skip is never silent.
+      const wouldDowngradeLiveOrgOnPartialData =
         !args.stripeListComplete &&
-        isEntitledSubscriptionStatus(local.status) &&
+        isLiveSubscriptionStatus(local.status) &&
         !isEntitledSubscriptionStatus(desired.status)
-      if (!wouldPaywallEntitledOrg) {
+      if (!wouldDowngradeLiveOrgOnPartialData) {
         repairs.push({
           organizationId: orgId,
           reason: 'drift',

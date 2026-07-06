@@ -215,15 +215,37 @@ describe('diffStripeAgainstLocal — direction (b): dead in Stripe, still entitl
   })
 
   it('an active→past_due downgrade is SKIPPED under an incomplete listing (round5 finding 2)', () => {
-    // past_due is "live" but NOT entitled — the earlier live-status guard let
-    // this through and paywalled a paying org. The entitlement-based guard
-    // catches it.
+    // past_due is "live" but NOT entitled — an active→past_due move paywalls a
+    // paying org, so it must be skipped when the listing is partial.
     const { repairs } = diffStripeAgainstLocal({
       stripeSubs: [snap({ mappedStatus: 'past_due' })],
       localRows: [local({ status: 'active' })],
       stripeListComplete: false,
     })
     expect(repairs).toEqual([])
+  })
+
+  it('a past_due→cancelled downgrade is SKIPPED under an incomplete listing (round6 finding 2)', () => {
+    // A local past_due row may actually be active on an unfetched page —
+    // overwriting it to cancelled masks that recovery. Live local rows are
+    // protected from any downgrade-to-unentitled while the listing is partial.
+    const { repairs } = diffStripeAgainstLocal({
+      stripeSubs: [snap({ mappedStatus: 'cancelled' })],
+      localRows: [local({ status: 'past_due' })],
+      stripeListComplete: false,
+    })
+    expect(repairs).toEqual([])
+  })
+
+  it('a past_due→active UPGRADE still applies under an incomplete listing', () => {
+    // Recovering a live sub is always safe to apply — desired is entitled.
+    const { repairs } = diffStripeAgainstLocal({
+      stripeSubs: [snap({ mappedStatus: 'active' })],
+      localRows: [local({ status: 'past_due' })],
+      stripeListComplete: false,
+    })
+    expect(repairs.filter((r) => r.reason === 'drift')).toHaveLength(1)
+    expect(repairs.find((r) => r.reason === 'drift')).toMatchObject({ input: { status: 'active' } })
   })
 
   it('an incomplete listing ALWAYS raises an incomplete_listing anomaly (round5 finding 1)', () => {

@@ -83,6 +83,16 @@ export async function POST(request: Request): Promise<NextResponse> {
   }
   const organizationId = orgResult.data.organization_id
 
+  // Loaded up-front so the ambiguous-trial Stripe check below can pass the
+  // org's authoritative customer id (the one actually reused to create the
+  // session) alongside the subscription row's — the grant/erase guards pass
+  // both to avoid missing a live sub on a diverged id (review batch3 round6
+  // finding 0).
+  const orgDetails = await getOrganization(supabase, organizationId)
+  if (!orgDetails.ok) {
+    return NextResponse.json({ error: 'Could not load your organisation' }, { status: 400 })
+  }
+
   // Defence-in-depth: never start a SECOND subscription. The billing UI only
   // shows the checkout buttons when status is 'none', but a direct POST must
   // also be rejected — otherwise an owner can create duplicate Stripe
@@ -96,7 +106,10 @@ export async function POST(request: Request): Promise<NextResponse> {
       // can't answer it, so consult STRIPE directly (review batch3 round5
       // finding 0). Without this, letting the re-subscribe through would create
       // a SECOND live sub if the trial had actually converted (double-billing).
-      const liveStripe = await findLiveStripeSubscription([existing.data.stripe_customer_id])
+      const liveStripe = await findLiveStripeSubscription([
+        orgDetails.data.stripe_customer_id,
+        existing.data.stripe_customer_id,
+      ])
       if (liveStripe.status === 'live') {
         // The trial DID convert — a live sub already exists. Send them to
         // manage billing, never mint a second subscription.
@@ -128,11 +141,6 @@ export async function POST(request: Request): Promise<NextResponse> {
         { status: 409 },
       )
     }
-  }
-
-  const orgDetails = await getOrganization(supabase, organizationId)
-  if (!orgDetails.ok) {
-    return NextResponse.json({ error: 'Could not load your organisation' }, { status: 400 })
   }
 
   // Validate the price ID is configured.

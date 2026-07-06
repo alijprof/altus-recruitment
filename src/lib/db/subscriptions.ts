@@ -26,11 +26,11 @@ export function isLiveSubscriptionStatus(status: string): boolean {
   return (LIVE_SUBSCRIPTION_STATUSES as readonly string[]).includes(status)
 }
 
-// The statuses that grant app access. MUST mirror require-entitlement's
-// ENTITLED_STATUSES (kept here too so pure modules like reconcile can import it
-// without pulling in the request-scoped entitlement stack). past_due is LIVE
-// but NOT entitled — a downgrade from active/trialing to past_due still
-// paywalls the org.
+// The statuses that grant app access — the SINGLE source of truth, re-exported
+// by require-entitlement as ENTITLED_STATUSES (this module is lightweight and
+// pure, so both the request-scoped entitlement gate AND the pure reconcile cron
+// import it here — review batch3 round6 finding 3). past_due is LIVE but NOT
+// entitled — a downgrade from active/trialing to past_due still paywalls.
 export const ENTITLED_SUBSCRIPTION_STATUSES = ['active', 'trialing'] as const
 
 export function isEntitledSubscriptionStatus(status: string): boolean {
