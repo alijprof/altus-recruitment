@@ -41,9 +41,12 @@ vi.mock('@/lib/env', () => ({
 // without a real DB. The mocks must be declared at the top level before any
 // imports of the module under test.
 
-vi.mock('@/lib/db/subscriptions', () => ({
-  getSubscriptionForOrg: vi.fn(),
-}))
+// Mock only getSubscriptionForOrg; keep the real pure helpers
+// (isTrialBackstopExpired etc.) so the backstop logic runs as shipped.
+vi.mock('@/lib/db/subscriptions', async (importActual) => {
+  const actual = await importActual<typeof import('@/lib/db/subscriptions')>()
+  return { ...actual, getSubscriptionForOrg: vi.fn() }
+})
 
 vi.mock('@/lib/stripe/usage', () => ({
   getAiUsageThisMonth: vi.fn(),
@@ -301,13 +304,15 @@ describe('getEntitlement — trial-expiry backstop (MAJOR-6)', () => {
     mockGetUsage.mockResolvedValue(ZERO_USAGE)
   })
 
-  it('trialing with trial_end 4 days past → past_due (not entitled)', async () => {
+  it('trialing with trial_end 4 days past → cancelled (not entitled, routes to checkout)', async () => {
+    // cancelled (not past_due): the paywall then offers re-subscribe instead of
+    // a dead-end "update card" portal (review batch3 final finding 1).
     mockGetSubscription.mockResolvedValue(
       trialingSub(new Date(Date.now() - 4 * DAY_MS).toISOString()),
     )
 
     const result = await getEntitlement('org-1')
-    expect(result.status).toBe('past_due')
+    expect(result.status).toBe('cancelled')
   })
 
   it('trialing with trial_end 1 day past (inside 3-day grace) → still trialing', async () => {

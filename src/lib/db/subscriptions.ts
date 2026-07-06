@@ -26,6 +26,26 @@ export function isLiveSubscriptionStatus(status: string): boolean {
   return (LIVE_SUBSCRIPTION_STATUSES as readonly string[]).includes(status)
 }
 
+// TRIAL-EXPIRY BACKSTOP (audit MAJOR-6). A `trialing` row whose trial_end is
+// more than this grace window in the past means the trial-end webhook never
+// arrived (rotated secret / changed URL / Stripe outage). Stripe retries
+// webhooks for up to 3 days, so a 3-day grace lets a recovered outage self-heal
+// via the retried event before the backstop bites. Shared by getEntitlement
+// (which gates such a row as not-entitled) and the checkout 409 guard (which
+// must NOT treat a backstop-expired trial as a live subscription — otherwise a
+// locked-out org can't self-serve re-subscribe; review batch3 final finding 1).
+export const TRIAL_EXPIRY_GRACE_MS = 3 * 24 * 60 * 60 * 1000
+
+export function isTrialBackstopExpired(
+  status: string,
+  trialEnd: string | null,
+  nowMs: number = Date.now(),
+): boolean {
+  if (status !== 'trialing' || !trialEnd) return false
+  const trialEndMs = new Date(trialEnd).getTime()
+  return Number.isFinite(trialEndMs) && nowMs - trialEndMs > TRIAL_EXPIRY_GRACE_MS
+}
+
 // True iff the row represents a LIVE Stripe-billed subscription (real Stripe
 // subscription id AND a live status). Comp/invoice-billed rows (null sub id)
 // and churned Stripe rows (cancelled/none) both return false.

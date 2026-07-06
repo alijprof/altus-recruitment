@@ -273,12 +273,25 @@ export function diffStripeAgainstLocal(args: {
       timestampsDiffer(local.current_period_end, desired.currentPeriodEnd)
 
     if (differs) {
-      repairs.push({
-        organizationId: orgId,
-        reason: 'drift',
-        detail: `Local row (status ${local.status}, plan ${local.plan_key}) diverges from Stripe subscription ${canonical.subscriptionId} (status ${desired.status}, plan ${desired.planKey}).`,
-        input: desired,
-      })
+      // With an INCOMPLETE Stripe listing, `canonical` may be a dead sub while
+      // the org's live sub sits on an unfetched page — a drift repair would
+      // then DOWNGRADE a live paying org to cancelled and paywall them (review
+      // batch3 final finding 2). Only the missing/upgrade direction (desired is
+      // live) is safe under incompleteness; skip a live→non-live downgrade and
+      // let a future complete run handle it. A missed downgrade is the safe
+      // direction (mild, self-heals); a wrong downgrade is not.
+      const wouldDowngradeLiveOrg =
+        !args.stripeListComplete &&
+        isLiveSubscriptionStatus(local.status) &&
+        !isLiveSubscriptionStatus(desired.status)
+      if (!wouldDowngradeLiveOrg) {
+        repairs.push({
+          organizationId: orgId,
+          reason: 'drift',
+          detail: `Local row (status ${local.status}, plan ${local.plan_key}) diverges from Stripe subscription ${canonical.subscriptionId} (status ${desired.status}, plan ${desired.planKey}).`,
+          input: desired,
+        })
+      }
     }
   }
 

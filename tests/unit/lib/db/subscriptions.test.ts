@@ -17,7 +17,44 @@ vi.mock('@sentry/nextjs', () => ({
   captureMessage: vi.fn(),
 }))
 
-import { upsertSubscriptionFromStripe } from '@/lib/db/subscriptions'
+import {
+  upsertSubscriptionFromStripe,
+  isTrialBackstopExpired,
+  TRIAL_EXPIRY_GRACE_MS,
+} from '@/lib/db/subscriptions'
+
+describe('isTrialBackstopExpired', () => {
+  const now = Date.UTC(2026, 6, 6, 12, 0, 0) // fixed clock for determinism
+  const iso = (ms: number) => new Date(ms).toISOString()
+
+  it('is true only for a trialing row whose trial_end is beyond the grace window', () => {
+    expect(isTrialBackstopExpired('trialing', iso(now - TRIAL_EXPIRY_GRACE_MS - 1000), now)).toBe(
+      true,
+    )
+  })
+
+  it('is false inside the grace window', () => {
+    expect(isTrialBackstopExpired('trialing', iso(now - TRIAL_EXPIRY_GRACE_MS + 1000), now)).toBe(
+      false,
+    )
+  })
+
+  it('is false for a future trial_end', () => {
+    expect(isTrialBackstopExpired('trialing', iso(now + 1000), now)).toBe(false)
+  })
+
+  it('is false for non-trialing statuses regardless of date', () => {
+    expect(isTrialBackstopExpired('active', iso(now - 10 * TRIAL_EXPIRY_GRACE_MS), now)).toBe(false)
+    expect(isTrialBackstopExpired('past_due', iso(now - 10 * TRIAL_EXPIRY_GRACE_MS), now)).toBe(
+      false,
+    )
+  })
+
+  it('is false when trial_end is null or unparsable', () => {
+    expect(isTrialBackstopExpired('trialing', null, now)).toBe(false)
+    expect(isTrialBackstopExpired('trialing', 'not-a-date', now)).toBe(false)
+  })
+})
 
 type Row = Record<string, unknown> | null
 

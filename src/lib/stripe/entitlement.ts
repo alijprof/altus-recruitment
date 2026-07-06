@@ -8,7 +8,7 @@ import 'server-only'
 
 import type { SupabaseClient } from '@supabase/supabase-js'
 
-import { getSubscriptionForOrg } from '@/lib/db/subscriptions'
+import { getSubscriptionForOrg, isTrialBackstopExpired } from '@/lib/db/subscriptions'
 import { getAiUsageThisMonth } from '@/lib/stripe/usage'
 import { PLANS } from '@/lib/stripe/plans'
 import type { PlanKey } from '@/lib/stripe/plans'
@@ -98,14 +98,6 @@ async function getPlanOverride(
 
 const SOFT_CAP_THRESHOLD = 0.8 // 80%
 const HARD_CAP_THRESHOLD = 1.0 // 100%
-
-// Trial-expiry backstop grace window (audit MAJOR-6). Stripe normally flips
-// trialing → active/past_due via webhook at trial end; if webhook delivery is
-// broken (rotated secret, changed URL, outage) that flip never lands and the
-// org would stay entitled forever. Stripe retries webhooks for up to 3 days,
-// so a grace window of the same length lets a recovered outage self-heal via
-// the retried event before the backstop ever bites.
-export const TRIAL_EXPIRY_GRACE_MS = 3 * 24 * 60 * 60 * 1000
 
 // Compute flags given caps and usage
 function computeCapFlags(
@@ -254,19 +246,19 @@ export async function getEntitlement(
   }
 
   // TRIAL-EXPIRY BACKSTOP (audit MAJOR-6). A `trialing` row whose trial_end is
-  // more than TRIAL_EXPIRY_GRACE_MS in the past means the trial-end webhook
-  // never arrived — without this check the org stays fully entitled forever on
-  // a dead trial. Treat it as past_due: the paywall then shows the "update
-  // payment / manage billing" path (the trial collected a card), and the daily
-  // Stripe reconciliation cron will write the true status back once it runs.
-  // Runs AFTER the override branch so an admin trial extension still applies;
-  // comp/invoice-billed orgs are status 'active' and are never touched.
-  // trial_end === null leaves the row as-is (no date to backstop on).
-  if (effectiveStatus === 'trialing' && trialEnd) {
-    const trialEndMs = new Date(trialEnd).getTime()
-    if (Number.isFinite(trialEndMs) && Date.now() - trialEndMs > TRIAL_EXPIRY_GRACE_MS) {
-      effectiveStatus = 'past_due'
-    }
+  // well past means the trial-end webhook never arrived — without this the org
+  // stays fully entitled forever on a dead trial. Treat it as `cancelled`:
+  // NOT `past_due`, because past_due routes the paywall to a "update your card"
+  // portal button that dead-ends (Stripe has no live sub to update) AND hides
+  // the checkout buttons — locking a paying-intent owner out with no self-serve
+  // recovery (review batch3 final finding 1). `cancelled` routes the paywall to
+  // the "start a plan again" checkout flow. The checkout 409 guard is made
+  // expiry-aware (see /api/stripe/checkout) so it does not block that
+  // re-subscribe. The daily reconcile cron writes the true status back once it
+  // runs. Runs AFTER the override branch so an admin trial extension still
+  // applies; comp/invoice-billed orgs are `active` and never touched.
+  if (isTrialBackstopExpired(effectiveStatus, trialEnd)) {
+    effectiveStatus = 'cancelled'
   }
 
   const caps = applyCapMultiplier(effectiveCaps(planKey, planSeats))

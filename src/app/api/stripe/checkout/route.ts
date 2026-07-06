@@ -20,7 +20,11 @@ import { assertStripe, stripe } from '@/lib/stripe/client'
 import { PLAN_PRICE_IDS } from '@/lib/stripe/plans'
 import type { PlanKey } from '@/lib/stripe/plans'
 import { getOrganization } from '@/lib/db/organizations'
-import { getSubscriptionForOrg, isLiveSubscriptionStatus } from '@/lib/db/subscriptions'
+import {
+  getSubscriptionForOrg,
+  isLiveSubscriptionStatus,
+  isTrialBackstopExpired,
+} from '@/lib/db/subscriptions'
 import { createClient } from '@/lib/supabase/server'
 import { createServiceClient } from '@/lib/supabase/service'
 import { env } from '@/lib/env'
@@ -82,8 +86,17 @@ export async function POST(request: Request): Promise<NextResponse> {
   // shows the checkout buttons when status is 'none', but a direct POST must
   // also be rejected — otherwise an owner can create duplicate Stripe
   // subscriptions, which are painful to reconcile against the webhook ledger.
+  // A backstop-expired trial (status still 'trialing' locally but trial_end is
+  // well past — the trial-end webhook never landed) is NOT a live subscription:
+  // getEntitlement gates such an org as not-entitled and the paywall offers
+  // re-subscribe, so this guard must let that checkout through rather than 409
+  // the owner into a lockout (review batch3 final finding 1).
   const existing = await getSubscriptionForOrg(createServiceClient(), organizationId)
-  if (existing.ok && isLiveSubscriptionStatus(existing.data.status)) {
+  if (
+    existing.ok &&
+    isLiveSubscriptionStatus(existing.data.status) &&
+    !isTrialBackstopExpired(existing.data.status, existing.data.trial_end)
+  ) {
     return NextResponse.json(
       { error: 'You already have an active subscription. Use "Manage billing" to make changes.' },
       { status: 409 },
@@ -215,13 +228,11 @@ export async function POST(request: Request): Promise<NextResponse> {
     let session = await s.checkout.sessions.create(sessionParams, { idempotencyKey })
 
     // A create RESPONSE — including an idempotent replay — returns the STORED
-    // create-time body, whose status always reads 'open' even if a concurrent
-    // request's expire pass has since closed it. A fresh retrieve reveals the
-    // real status (review batch3 round2 finding 5). GUARD it: a transient
-    // retrieve error must NOT 500 a checkout whose session was already created
-    // — fall back to the created session (correct in the common case; the
-    // re-mint below only matters for the rare replay-of-expired tail) (review
-    // batch3 round3).
+    // create-time body, whose status always reads 'open' even if the real
+    // session has since changed. A fresh retrieve reveals the real status
+    // (review batch3 round2 finding 5). GUARD it: a transient retrieve error
+    // must NOT 500 a checkout whose session was already created — fall back to
+    // the created session (correct in the common case) (review batch3 round3).
     let liveStatus: string | null = session.status
     try {
       const liveCheck = await s.checkout.sessions.retrieve(session.id)
@@ -231,7 +242,23 @@ export async function POST(request: Request): Promise<NextResponse> {
         tags: { layer: 'stripe', handler: 'checkout', step: 'verify-session-live' },
       })
     }
-    if (liveStatus !== 'open') {
+
+    if (liveStatus === 'complete') {
+      // The replayed session was ALREADY completed (a concurrent tab / double
+      // POST finished checkout in this same minute bucket). Minting a fresh
+      // session here would let the owner pay AGAIN → two live Stripe
+      // subscriptions (review batch3 final finding 0). Send them to the return
+      // page, which resolves the now-active subscription instead.
+      return NextResponse.json({
+        url: `${siteUrl}/stripe/return?session_id=${session.id}`,
+      })
+    }
+
+    if (liveStatus === 'expired') {
+      // The replayed session was expired by a concurrent request's expire pass
+      // — mint a fresh one under a unique key so the user gets a live URL. Only
+      // 'expired' re-mints; 'complete' is handled above and any other status
+      // falls through to use the session we hold.
       session = await s.checkout.sessions.create(sessionParams, {
         idempotencyKey: `${idempotencyKey}:retry:${Date.now()}`,
       })

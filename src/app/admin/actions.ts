@@ -26,11 +26,10 @@ import { z } from 'zod'
 
 import { requireSuperAdmin } from '@/lib/admin/guard'
 import { deleteAllOrgStorage, deleteOrgAuthUsers } from '@/lib/admin/org-erasure'
-import { hasLiveStripeSubscription, isLiveSubscriptionStatus } from '@/lib/db/subscriptions'
+import { hasLiveStripeSubscription } from '@/lib/db/subscriptions'
 import { sendResendEmail } from '@/lib/email/resend'
 import { env } from '@/lib/env'
-import { assertStripe, stripe } from '@/lib/stripe/client'
-import { mapStripeStatus } from '@/lib/stripe/subscription-sync'
+import { findLiveStripeSubscription } from '@/lib/stripe/live-check'
 import { createServiceClient } from '@/lib/supabase/service'
 
 // ---------------------------------------------------------------------------
@@ -332,7 +331,7 @@ export async function grantManualAccessAction(
   // (cancelled row with a leftover sub id) CAN be comped from here.
   const { data: existing, error: readError } = await serviceClient
     .from('subscriptions')
-    .select('stripe_subscription_id, status')
+    .select('stripe_subscription_id, stripe_customer_id, status')
     .eq('organization_id', orgId)
     .maybeSingle()
 
@@ -346,6 +345,40 @@ export async function grantManualAccessAction(
     return {
       ok: false,
       error: 'This org has a live Stripe subscription — manage it in Stripe, not here.',
+    }
+  }
+
+  // The local status can drift 'cancelled' while Stripe is still billing, so —
+  // consistent with the erase guard — verify against STRIPE before comping.
+  // Comping an org Stripe is actively charging would double-bill them AND the
+  // reconcile cron would silently revert the comp back to Stripe billing
+  // (review batch3 final finding 3). Fail CLOSED on anything but a clean 'none'.
+  const { data: orgRow } = await serviceClient
+    .from('organizations')
+    .select('stripe_customer_id')
+    .eq('id', orgId)
+    .maybeSingle()
+  const liveStripe = await findLiveStripeSubscription([
+    (orgRow as { stripe_customer_id?: string | null } | null)?.stripe_customer_id,
+    existing?.stripe_customer_id,
+  ])
+  if (liveStripe.status === 'live') {
+    return {
+      ok: false,
+      error: `Stripe still has a live subscription (${liveStripe.subscriptionId}) for this org — cancel it in Stripe before granting invoice access.`,
+    }
+  }
+  if (liveStripe.status === 'unconfigured') {
+    return {
+      ok: false,
+      error:
+        'This org has Stripe billing history but Stripe is not configured, so a live subscription cannot be ruled out. Configure STRIPE_SECRET_KEY and retry.',
+    }
+  }
+  if (liveStripe.status === 'error') {
+    return {
+      ok: false,
+      error: 'Could not verify the Stripe billing state. No access was granted — try again.',
     }
   }
 
@@ -794,62 +827,31 @@ export async function eraseOrganizationAction(
   }
 
   // The local status column is exactly what the reconciliation audit says can
-  // drift, so for an IRREVERSIBLE erase we also verify against Stripe itself:
+  // drift, so for an IRREVERSIBLE erase we ALSO verify against Stripe itself:
   // if any live subscription exists for the org's Stripe customer(s), refuse
   // (review batch3 finding 1: local row drifted to {old sub, cancelled} while
-  // Stripe bills a newer live sub). Fail CLOSED on Stripe errors.
-  const customerIds = [
-    ...new Set(
-      [org.stripe_customer_id, sub?.stripe_customer_id].filter(
-        (id): id is string => typeof id === 'string' && id.length > 0,
-      ),
-    ),
-  ]
-  if (customerIds.length > 0) {
-    // Fail CLOSED when the org demonstrably has Stripe history but the check
-    // can't run — a missing/rotated STRIPE_SECRET_KEY must not silently
-    // disable the guard on an irreversible op (review batch3 round2 finding 8).
-    if (!stripe) {
-      return {
-        ok: false,
-        error:
-          'This org has Stripe billing history but Stripe is not configured, so a live subscription cannot be ruled out. Configure STRIPE_SECRET_KEY and retry.',
-      }
+  // Stripe bills a newer live sub). Fail CLOSED on anything but a clean 'none'.
+  const liveStripe = await findLiveStripeSubscription([
+    org.stripe_customer_id,
+    sub?.stripe_customer_id,
+  ])
+  if (liveStripe.status === 'live') {
+    return {
+      ok: false,
+      error: `Stripe still has a live subscription (${liveStripe.subscriptionId}) for this org — cancel it in Stripe before erasing.`,
     }
-    try {
-      const s = assertStripe()
-      for (const customerId of customerIds) {
-        // Auto-paginate — a live sub beyond the first page must still block
-        // (review batch3 round2 finding 4). Stripe lists newest-first; the
-        // scan cap is a runaway guard, not an expected bound.
-        let scanned = 0
-        for await (const stripeSub of s.subscriptions.list({
-          customer: customerId,
-          status: 'all',
-          limit: 100,
-        })) {
-          if (isLiveSubscriptionStatus(mapStripeStatus(stripeSub.status))) {
-            return {
-              ok: false,
-              error: `Stripe still has a live subscription (${stripeSub.id}) for this org — cancel it in Stripe before erasing.`,
-            }
-          }
-          if (++scanned >= 1000) break
-        }
-      }
-    } catch (err) {
-      Sentry.captureException(err, {
-        tags: {
-          layer: 'admin',
-          action: 'eraseOrganizationAction',
-          step: 'stripe_verify',
-          org_id: orgId,
-        },
-      })
-      return {
-        ok: false,
-        error: 'Could not verify the Stripe billing state. Nothing was erased — try again.',
-      }
+  }
+  if (liveStripe.status === 'unconfigured') {
+    return {
+      ok: false,
+      error:
+        'This org has Stripe billing history but Stripe is not configured, so a live subscription cannot be ruled out. Configure STRIPE_SECRET_KEY and retry.',
+    }
+  }
+  if (liveStripe.status === 'error') {
+    return {
+      ok: false,
+      error: 'Could not verify the Stripe billing state. Nothing was erased — try again.',
     }
   }
 

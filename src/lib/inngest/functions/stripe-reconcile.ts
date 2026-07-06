@@ -188,9 +188,13 @@ export const stripeReconcile = inngest.createFunction(
         }
       }
 
-      // 5. Alert on ANY divergence. Sentry is the always-on channel; email is
-      // best-effort so a Resend outage can't fail the reconciliation itself.
-      if (repairs.length > 0 || anomalies.length > 0 || repairFailures.length > 0) {
+      // 5. Alert on a REAL divergence — a repair actually applied, an anomaly
+      // needing a human, or a repair failure. A run whose only planned repairs
+      // were all skipped by the freshness check is benign (a webhook won
+      // mid-run and already wrote the truth) and must NOT alarm, or the
+      // divergence email trains the founder to ignore it (review batch3 final
+      // finding 4).
+      if (appliedCount > 0 || anomalies.length > 0 || repairFailures.length > 0) {
         const summaryLines = [
           `Stripe reconciliation ${new Date().toISOString()}`,
           `Repairs applied: ${appliedCount} (of ${repairs.length} planned)`,

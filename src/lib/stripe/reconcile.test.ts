@@ -190,6 +190,28 @@ describe('diffStripeAgainstLocal — direction (b): dead in Stripe, still entitl
     expect(repairs).toEqual([])
   })
 
+  it('a per-org DOWNGRADE drift is SKIPPED when the Stripe listing was incomplete (final finding 2)', () => {
+    // canonical is a dead sub, but the org's live sub may sit on an unfetched
+    // page — downgrading the live local row here would paywall a paying org.
+    const { repairs } = diffStripeAgainstLocal({
+      stripeSubs: [snap({ mappedStatus: 'cancelled' })],
+      localRows: [local({ status: 'active' })],
+      stripeListComplete: false,
+    })
+    expect(repairs).toEqual([])
+  })
+
+  it('an UPGRADE drift still applies under an incomplete listing (only downgrades are unsafe)', () => {
+    // A fetched live sub is real; moving a non-live local row up to it is safe.
+    const { repairs } = diffStripeAgainstLocal({
+      stripeSubs: [snap({ mappedStatus: 'active' })],
+      localRows: [local({ status: 'none' })],
+      stripeListComplete: false,
+    })
+    expect(repairs).toHaveLength(1)
+    expect(repairs[0]).toMatchObject({ reason: 'drift', input: { status: 'active' } })
+  })
+
   it('stale_local_sub is SKIPPED when the sub id exists in Stripe under lost metadata', () => {
     const { repairs, anomalies } = diffStripeAgainstLocal({
       stripeSubs: [snap({ organizationId: null })], // same sub_1, metadata lost
