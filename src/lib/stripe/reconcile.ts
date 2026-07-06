@@ -290,8 +290,7 @@ export function diffStripeAgainstLocal(args: {
   for (const sub of deadMetadataless) {
     const stuckRow = args.localRows.find(
       (row) =>
-        row.stripe_subscription_id === sub.subscriptionId &&
-        isLiveSubscriptionStatus(row.status),
+        row.stripe_subscription_id === sub.subscriptionId && isLiveSubscriptionStatus(row.status),
     )
     if (stuckRow) {
       anomalies.push({

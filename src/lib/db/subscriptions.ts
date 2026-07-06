@@ -116,35 +116,63 @@ export async function upsertSubscriptionFromStripe(
   // metadata_organization_id — e.g. a stale event from a subscription that was
   // cancelled in Stripe AFTER the org moved to invoice billing, or an
   // out-of-order delete — must NEVER flip that comp row to cancelled/past_due
-  // and lock the paying customer out. The upsert is last-write-wins, so we guard
-  // here: unless the caller explicitly allows it (checkout-originated), a write
-  // that would clobber a live comp row is skipped (no-op) and the comp row is
-  // preserved and returned as success.
-  if (!options?.allowOverrideComp) {
-    const existing = await getSubscriptionForOrg(serviceClient, input.organizationId)
+  // and lock the paying customer out. The upsert is last-write-wins, so we
+  // guard here.
+  //
+  // We read the existing row ONCE and evaluate two protections. The first
+  // (staleness) applies to EVERY caller including checkout-originated ones; the
+  // second (comp-vs-downgrade) applies only when the caller has not opted into
+  // overriding a comp.
+  const existing = await getSubscriptionForOrg(serviceClient, input.organizationId)
 
-    // Fail CLOSED on a transient read error (review finding 2). If we can't read
-    // the current row we can't rule out that it's a comp/invoice-billed row, so
-    // we must not risk the last-write-wins upsert clobbering it. Returning
-    // internal makes the webhook 500 → Stripe re-delivers → the retry re-reads
-    // cleanly. 'not_found' is a definite "no row yet" and is safe to proceed on.
-    if (!existing.ok && existing.code !== 'not_found') {
-      return { ok: false, code: 'internal' }
+  // Fail CLOSED on a transient read error (review finding 2). If we can't read
+  // the current row we can't rule out that it's a comp/invoice-billed row, so
+  // we must not risk the last-write-wins upsert clobbering it. Returning
+  // internal makes the webhook 500 → Stripe re-delivers → the retry re-reads
+  // cleanly. 'not_found' is a definite "no row yet" and is safe to proceed on.
+  if (!existing.ok && existing.code !== 'not_found') {
+    return { ok: false, code: 'internal' }
+  }
+
+  const isLiveComp =
+    existing.ok &&
+    existing.data.stripe_subscription_id === null &&
+    existing.data.status !== 'cancelled' &&
+    existing.data.status !== 'none'
+
+  // STALENESS-vs-COMP guard (review batch3 finding 8 + round2/round3 finding 1).
+  // A Stripe event minted BEFORE the comp row was written carries pre-comp state
+  // — e.g. the org's original checkout that started a trial, whose delivery was
+  // delayed and retried days later AFTER the founder comped the org. Such an
+  // event must NEVER overwrite the comp, and this holds even for a
+  // checkout-originated event (allowOverrideComp): a delayed retry of an OLD
+  // checkout is exactly a stale event. A GENUINE new conversion (the org clicks
+  // "start subscription" while already comped) has event.created AFTER the comp
+  // row's updated_at and is NOT refused here. The subscriptions updated_at
+  // trigger bumps on every write, so comparing against it is sound;
+  // unparsable/missing timestamps fall back to allowing (checkout always passes
+  // a timestamp, so the only omitting caller is the reconcile cron, whose input
+  // already reflects current Stripe truth).
+  if (isLiveComp && existing.ok && options?.eventCreatedAtIso) {
+    const eventMs = new Date(options.eventCreatedAtIso).getTime()
+    const compWrittenMs = new Date(existing.data.updated_at).getTime()
+    if (Number.isFinite(eventMs) && Number.isFinite(compWrittenMs) && eventMs < compWrittenMs) {
+      Sentry.captureMessage('stripe_webhook: refused stale event over comp/invoice-billed row', {
+        level: 'warning',
+        tags: {
+          layer: 'db',
+          helper: 'upsertSubscriptionFromStripe',
+          org_id: input.organizationId,
+          incoming_status: input.status,
+        },
+      })
+      // Preserve the comp row. Return it as success so the webhook records the
+      // event as processed and does not retry.
+      return { ok: true, data: existing.data }
     }
+  }
 
-    const isLiveComp =
-      existing.ok &&
-      existing.data.stripe_subscription_id === null &&
-      existing.data.status !== 'cancelled' &&
-      existing.data.status !== 'none'
-
-    // A GENUINE new paid subscription — a real Stripe subscription id with an
-    // entitled status — is allowed to replace a comp even outside Checkout
-    // (review finding 3: an org comped via /admin can later be moved onto a real
-    // Stripe subscription through the Dashboard/API, whose created/updated
-    // events carry a real sub id and an active/trialing status). Only a stale
-    // DOWNGRADE (cancelled/past_due, or a null sub id) targeting a comp row is
-    // refused — that is the MAJOR-5 lock-out we are guarding against.
+  if (!options?.allowOverrideComp) {
     // STALE-SUB DOWNGRADE GUARD (review batch3 round2 finding 2). A downgrade
     // event (cancelled/past_due/none) must be about the subscription the row
     // currently tracks: a delayed deleted/payment_failed event for OLD sub_A
@@ -159,39 +187,31 @@ export async function upsertSubscriptionFromStripe(
       input.stripeSubscriptionId !== null &&
       existing.data.stripe_subscription_id !== input.stripeSubscriptionId
     ) {
-      Sentry.captureMessage('stripe_webhook: refused downgrade from a different (stale) subscription', {
-        level: 'warning',
-        tags: {
-          layer: 'db',
-          helper: 'upsertSubscriptionFromStripe',
-          org_id: input.organizationId,
-          incoming_status: input.status,
+      Sentry.captureMessage(
+        'stripe_webhook: refused downgrade from a different (stale) subscription',
+        {
+          level: 'warning',
+          tags: {
+            layer: 'db',
+            helper: 'upsertSubscriptionFromStripe',
+            org_id: input.organizationId,
+            incoming_status: input.status,
+          },
         },
-      })
+      )
       return { ok: true, data: existing.data }
     }
 
-    // 'active' ONLY — a trialing sub is not evidence of payment, and letting
-    // it through would auto-convert a permanent comp into a 14-day trial that
-    // lapses into the paywall (review batch3 round2 finding 0). A genuine
-    // checkout-originated trial converts via allowOverrideComp instead.
-    let incomingIsGenuinePaid =
-      input.stripeSubscriptionId !== null && input.status === 'active'
-
-    // Staleness check (review batch3 finding 8): an event minted BEFORE the
-    // comp row was written carries pre-comp state — e.g. sub A's final
-    // 'active' updated event arriving days late (Stripe retries up to 3 days)
-    // after the org churned and was comped. The subscriptions updated_at
-    // trigger bumps on every write, so comparing event.created against it is
-    // sound. Unparsable/missing timestamps fall back to allowing (the
-    // pre-existing carve-out behaviour).
-    if (incomingIsGenuinePaid && isLiveComp && options?.eventCreatedAtIso && existing.ok) {
-      const eventMs = new Date(options.eventCreatedAtIso).getTime()
-      const compWrittenMs = new Date(existing.data.updated_at).getTime()
-      if (Number.isFinite(eventMs) && Number.isFinite(compWrittenMs) && eventMs < compWrittenMs) {
-        incomingIsGenuinePaid = false
-      }
-    }
+    // A GENUINE new paid subscription — a real Stripe subscription id with an
+    // 'active' status — is allowed to replace a comp even outside Checkout
+    // (review finding 3: an org comped via /admin can later be moved onto a real
+    // Stripe subscription through the Dashboard/API). 'active' ONLY: a trialing
+    // sub is not evidence of payment, and letting it through would auto-convert
+    // a permanent comp into a 14-day trial that lapses into the paywall (review
+    // batch3 round2 finding 0). A genuine checkout-originated trial converts via
+    // allowOverrideComp instead. Only a DOWNGRADE (cancelled/past_due, or a null
+    // sub id) or a trial targeting a comp row is refused here.
+    const incomingIsGenuinePaid = input.stripeSubscriptionId !== null && input.status === 'active'
 
     if (isLiveComp && !incomingIsGenuinePaid) {
       Sentry.captureMessage('stripe_webhook: refused to overwrite comp/invoice-billed row', {

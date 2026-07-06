@@ -39,7 +39,10 @@ type PlanOverrideRow = {
 type PlanOverridesClient = {
   from: (table: 'plan_overrides') => {
     select: (cols: string) => {
-      eq: (col: string, val: string) => Promise<{
+      eq: (
+        col: string,
+        val: string,
+      ) => Promise<{
         data: PlanOverrideRow[] | null
         error: unknown
       }>
@@ -144,7 +147,10 @@ function effectiveCaps(planKey: PlanKey, planSeats: number): AiCaps {
 // Active seat count — number of users in the org from the public.users table.
 // Uses the service-role client because this is called from both authenticated
 // and background contexts (claude.ts cap checks run in Inngest).
-async function countActiveSeats(serviceClient: SupabaseClient<Database>, orgId: string): Promise<number> {
+async function countActiveSeats(
+  serviceClient: SupabaseClient<Database>,
+  orgId: string,
+): Promise<number> {
   const { count, error } = await serviceClient
     .from('users')
     .select('id', { count: 'exact', head: true })
@@ -224,9 +230,7 @@ export async function getEntitlement(
   // Validate plan_key is a known plan; fall back to 'pro' if the DB has an
   // unexpected value (defensive — the schema CHECK constraint normally prevents
   // this, but DB enum changes can lag code deploys).
-  const planKey: PlanKey = (sub.plan_key as PlanKey) in PLANS
-    ? (sub.plan_key as PlanKey)
-    : 'pro'
+  const planKey: PlanKey = (sub.plan_key as PlanKey) in PLANS ? (sub.plan_key as PlanKey) : 'pro'
 
   const planSeats = sub.plan_seats > 0 ? sub.plan_seats : PLANS[planKey].seats
 

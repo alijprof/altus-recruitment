@@ -94,6 +94,43 @@ describe('upsertSubscriptionFromStripe — comp-row protection', () => {
     expect(state.upsertCalls).toBe(1)
   })
 
+  it('allowOverrideComp does NOT override a comp when the event predates it (round3 finding 1)', async () => {
+    // A delayed retry of the ORIGINAL checkout (event created before the org
+    // was comped) must not clobber the comp even though it is
+    // checkout-originated — the staleness guard applies to every caller.
+    const { client, state } = makeClient({
+      organization_id: 'org-1',
+      stripe_subscription_id: null,
+      status: 'active',
+      updated_at: '2026-07-04T12:00:00+00:00', // comp granted here
+    })
+    const result = await upsertSubscriptionFromStripe(
+      client as unknown as ClientArg,
+      { ...INPUT, stripeSubscriptionId: 'sub_trial', status: 'trialing' },
+      { allowOverrideComp: true, eventCreatedAtIso: '2026-07-02T09:00:00.000Z' },
+    )
+    expect(state.upsertCalls).toBe(0)
+    expect(result.ok).toBe(true)
+    if (result.ok) expect(result.data.status).toBe('active') // comp preserved
+  })
+
+  it('allowOverrideComp DOES override a comp for a genuine fresh conversion (event postdates comp)', async () => {
+    // The org clicks "start subscription" while already comped — the checkout
+    // event is newer than the comp row, so the conversion is legitimate.
+    const { client, state } = makeClient({
+      organization_id: 'org-1',
+      stripe_subscription_id: null,
+      status: 'active',
+      updated_at: '2026-07-04T12:00:00+00:00',
+    })
+    await upsertSubscriptionFromStripe(
+      client as unknown as ClientArg,
+      { ...INPUT, stripeSubscriptionId: 'sub_new', status: 'trialing' },
+      { allowOverrideComp: true, eventCreatedAtIso: '2026-07-05T09:00:00.000Z' },
+    )
+    expect(state.upsertCalls).toBe(1)
+  })
+
   it('DOES overwrite a real paid row when the downgrade is about the SAME subscription', async () => {
     // INPUT is a 'cancelled' downgrade for sub_stale — allowed only because
     // the row tracks that same sub id (the normal churn path).

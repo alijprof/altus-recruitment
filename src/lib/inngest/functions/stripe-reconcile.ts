@@ -6,10 +6,7 @@ import { sendResendEmail } from '@/lib/email/resend'
 import { env } from '@/lib/env'
 import { inngest } from '@/lib/inngest/client'
 import { formatErrorForSentry } from '@/lib/observability/inngest'
-import {
-  diffStripeAgainstLocal,
-  snapshotFromStripeSubscription,
-} from '@/lib/stripe/reconcile'
+import { diffStripeAgainstLocal, snapshotFromStripeSubscription } from '@/lib/stripe/reconcile'
 import type { LocalSubscriptionRow, StripeSubSnapshot } from '@/lib/stripe/reconcile'
 import { assertStripe, stripe } from '@/lib/stripe/client'
 import { createServiceClient } from '@/lib/supabase/service'
@@ -189,12 +186,18 @@ export const stripeReconcile = inngest.createFunction(
           `Repairs applied: ${appliedCount} (of ${repairs.length} planned)`,
           ...repairs.map((r) => `  - [${r.reason}] ${r.detail}`),
           ...(skippedFresh.length > 0
-            ? [`Skipped (row changed mid-run): ${skippedFresh.length}`, ...skippedFresh.map((f) => `  - ${f}`)]
+            ? [
+                `Skipped (row changed mid-run): ${skippedFresh.length}`,
+                ...skippedFresh.map((f) => `  - ${f}`),
+              ]
             : []),
           `Anomalies (need a human): ${anomalies.length}`,
           ...anomalies.map((a) => `  - [${a.kind}] ${a.detail}`),
           ...(repairFailures.length > 0
-            ? [`Repair FAILURES: ${repairFailures.length}`, ...repairFailures.map((f) => `  - ${f}`)]
+            ? [
+                `Repair FAILURES: ${repairFailures.length}`,
+                ...repairFailures.map((f) => `  - ${f}`),
+              ]
             : []),
           ...(stripeListComplete ? [] : ['WARNING: Stripe listing was incomplete (page cap).']),
         ]

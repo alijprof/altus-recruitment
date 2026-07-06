@@ -42,7 +42,11 @@ import { sendTrialEndingEmail, sendPaymentFailedEmail } from '@/lib/email/billin
 import { env } from '@/lib/env'
 
 // Surface an unknown-price anomaly without leaking PII.
-function reportUnknownPrice(subscription: Stripe.Subscription, orgId: string, eventType: string): void {
+function reportUnknownPrice(
+  subscription: Stripe.Subscription,
+  orgId: string,
+  eventType: string,
+): void {
   Sentry.captureMessage('stripe_webhook_unknown_price', {
     level: 'error',
     tags: { layer: 'stripe', handler: 'webhook', event_type: eventType, org_id: orgId },
@@ -164,9 +168,7 @@ async function handleStripeEvent(
       if (session.subscription) {
         const s = assertStripe()
         const subscription = await s.subscriptions.retrieve(
-          typeof session.subscription === 'string'
-            ? session.subscription
-            : session.subscription.id,
+          typeof session.subscription === 'string' ? session.subscription : session.subscription.id,
         )
         // Checkout-originated: a genuine self-serve subscription may replace a
         // comp/invoice-billed row (the org is converting to paid) — but ONLY
@@ -268,10 +270,13 @@ async function handleStripeEvent(
       // made this entire handler dead — past_due flip + dunning never fired.
       const orgId = extractOrgId(subscription)
       if (!orgId) {
-        Sentry.captureMessage('stripe_webhook: invoice.payment_failed missing org_id on subscription', {
-          level: 'warning',
-          tags: { layer: 'stripe', handler: 'webhook', event_type: event.type },
-        })
+        Sentry.captureMessage(
+          'stripe_webhook: invoice.payment_failed missing org_id on subscription',
+          {
+            level: 'warning',
+            tags: { layer: 'stripe', handler: 'webhook', event_type: event.type },
+          },
+        )
         break
       }
 

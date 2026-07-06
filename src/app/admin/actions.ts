@@ -36,9 +36,7 @@ import { createServiceClient } from '@/lib/supabase/service'
 // ---------------------------------------------------------------------------
 // Shared action result type.
 // ---------------------------------------------------------------------------
-export type AdminActionResult =
-  | { ok: true; message: string }
-  | { ok: false; error: string }
+export type AdminActionResult = { ok: true; message: string } | { ok: false; error: string }
 
 // ---------------------------------------------------------------------------
 // PlanOverrideRow cast boundary (pre-push plan_overrides table).
@@ -150,7 +148,10 @@ export async function extendTrialAction(
   revalidatePath('/admin')
   revalidatePath(`/admin/${orgId}`)
 
-  return { ok: true, message: `Trial extended to ${new Date(newTrialEnd).toLocaleDateString('en-GB')}` }
+  return {
+    ok: true,
+    message: `Trial extended to ${new Date(newTrialEnd).toLocaleDateString('en-GB')}`,
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -483,13 +484,14 @@ async function resolveSiteUrl(): Promise<string> {
   return `${proto}://${host}`
 }
 
-function provisionWelcomeHtml(args: { orgName: string; loginUrl: string; siteUrl: string }): string {
+function provisionWelcomeHtml(args: {
+  orgName: string
+  loginUrl: string
+  siteUrl: string
+}): string {
   // Minimal branded welcome email. The orgName is operator-entered (trusted),
   // but escape it anyway for defence in depth in email clients.
-  const safeOrg = args.orgName
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
+  const safeOrg = args.orgName.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
   return `<!DOCTYPE html>
 <html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
 <body style="font-family:sans-serif;max-width:600px;margin:0 auto;padding:24px;color:#1a1a1a">
@@ -561,7 +563,8 @@ export async function provisionExternalOrgAction(input: {
     })
     return {
       ok: false,
-      error: 'User created, but their organisation could not be resolved. Check /admin and Supabase.',
+      error:
+        'User created, but their organisation could not be resolved. Check /admin and Supabase.',
     }
   }
   const orgId = userRow.organization_id
@@ -581,7 +584,12 @@ export async function provisionExternalOrgAction(input: {
   )
   if (subErr) {
     Sentry.captureException(subErr, {
-      tags: { layer: 'admin', action: 'provisionExternalOrgAction', step: 'subscription', org_id: orgId },
+      tags: {
+        layer: 'admin',
+        action: 'provisionExternalOrgAction',
+        step: 'subscription',
+        org_id: orgId,
+      },
     })
     return {
       ok: false,
@@ -618,7 +626,12 @@ export async function provisionExternalOrgAction(input: {
     )
     if (capErr) {
       Sentry.captureException(capErr, {
-        tags: { layer: 'admin', action: 'provisionExternalOrgAction', step: 'spendCap', org_id: orgId },
+        tags: {
+          layer: 'admin',
+          action: 'provisionExternalOrgAction',
+          step: 'spendCap',
+          org_id: orgId,
+        },
       })
     }
   }
@@ -649,7 +662,12 @@ export async function provisionExternalOrgAction(input: {
     }
   } else if (linkErr) {
     Sentry.captureException(linkErr, {
-      tags: { layer: 'admin', action: 'provisionExternalOrgAction', step: 'generateLink', org_id: orgId },
+      tags: {
+        layer: 'admin',
+        action: 'provisionExternalOrgAction',
+        step: 'generateLink',
+        org_id: orgId,
+      },
     })
   }
 
@@ -742,7 +760,10 @@ export async function eraseOrganizationAction(
     Sentry.captureException(adminRowErr ?? new Error('erase: admin users row missing'), {
       tags: { layer: 'admin', action: 'eraseOrganizationAction', step: 'admin_org', org_id: orgId },
     })
-    return { ok: false, error: 'Could not verify your own organisation. Sign out and back in, then retry.' }
+    return {
+      ok: false,
+      error: 'Could not verify your own organisation. Sign out and back in, then retry.',
+    }
   }
   if (adminRow.organization_id === orgId) {
     return { ok: false, error: 'You cannot erase your own organisation.' }
@@ -778,9 +799,11 @@ export async function eraseOrganizationAction(
   // (review batch3 finding 1: local row drifted to {old sub, cancelled} while
   // Stripe bills a newer live sub). Fail CLOSED on Stripe errors.
   const customerIds = [
-    ...new Set([org.stripe_customer_id, sub?.stripe_customer_id].filter(
-      (id): id is string => typeof id === 'string' && id.length > 0,
-    )),
+    ...new Set(
+      [org.stripe_customer_id, sub?.stripe_customer_id].filter(
+        (id): id is string => typeof id === 'string' && id.length > 0,
+      ),
+    ),
   ]
   if (customerIds.length > 0) {
     // Fail CLOSED when the org demonstrably has Stripe history but the check
@@ -816,7 +839,12 @@ export async function eraseOrganizationAction(
       }
     } catch (err) {
       Sentry.captureException(err, {
-        tags: { layer: 'admin', action: 'eraseOrganizationAction', step: 'stripe_verify', org_id: orgId },
+        tags: {
+          layer: 'admin',
+          action: 'eraseOrganizationAction',
+          step: 'stripe_verify',
+          org_id: orgId,
+        },
       })
       return {
         ok: false,
@@ -864,7 +892,12 @@ export async function eraseOrganizationAction(
   const { error: delErr } = await serviceClient.from('organizations').delete().eq('id', orgId)
   if (delErr) {
     Sentry.captureException(delErr, {
-      tags: { layer: 'admin', action: 'eraseOrganizationAction', step: 'delete_org', org_id: orgId },
+      tags: {
+        layer: 'admin',
+        action: 'eraseOrganizationAction',
+        step: 'delete_org',
+        org_id: orgId,
+      },
     })
     return {
       ok: false,

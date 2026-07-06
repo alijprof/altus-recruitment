@@ -169,7 +169,9 @@ export async function POST(request: Request): Promise<NextResponse> {
       // keeping the actual payload correct.
       const { error: updateErr } = await serviceClient
         .from('organizations')
-        .update({ stripe_customer_id: stripeCustomerId } as unknown as TablesUpdate<'organizations'>)
+        .update({
+          stripe_customer_id: stripeCustomerId,
+        } as unknown as TablesUpdate<'organizations'>)
         .eq('id', organizationId)
 
       if (updateErr) {
