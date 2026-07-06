@@ -158,7 +158,62 @@ describe('upsertSubscriptionFromStripe — comp-row protection', () => {
     })
     expect(state.upsertCalls).toBe(0)
     expect(result.ok).toBe(true)
-    if (result.ok) expect(result.data.status).toBe('active') // live row preserved
+    if (result.ok) {
+      expect(result.data.status).toBe('active') // live row preserved
+      expect(result.noop).toBe(true) // round3: refusal is flagged, not counted as a write
+    }
+  })
+
+  it('does NOT refuse a downgrade when the existing row is not LIVE (round3 finding B)', async () => {
+    // A cancelled event about a different sub, when the row is already dead,
+    // has nothing to protect — the write must land (no false refusal).
+    const { client, state } = makeClient({
+      organization_id: 'org-1',
+      stripe_subscription_id: 'sub_B',
+      status: 'cancelled',
+    })
+    await upsertSubscriptionFromStripe(client as unknown as ClientArg, {
+      ...INPUT,
+      stripeSubscriptionId: 'sub_A',
+      status: 'past_due',
+    })
+    expect(state.upsertCalls).toBe(1)
+  })
+
+  it('trustCurrentState bypasses the stale-sub downgrade guard (reconcile cron)', async () => {
+    // The cron's input is authoritative current Stripe state, so a downgrade
+    // to a different (canonical) sub id must be applied, not refused.
+    const { client, state } = makeClient({
+      organization_id: 'org-1',
+      stripe_subscription_id: 'sub_B',
+      status: 'active',
+    })
+    const result = await upsertSubscriptionFromStripe(
+      client as unknown as ClientArg,
+      { ...INPUT, stripeSubscriptionId: 'sub_A', status: 'cancelled' },
+      { trustCurrentState: true },
+    )
+    expect(state.upsertCalls).toBe(1)
+    expect(result.ok).toBe(true)
+    if (result.ok) expect(result.noop).toBeFalsy()
+  })
+
+  it('trustCurrentState still preserves comp-row protection (never downgrades a comp)', async () => {
+    // The cron bypass covers only the stale-sub heuristic — a comp row is
+    // still protected from a non-genuine-paid write.
+    const { client, state } = makeClient({
+      organization_id: 'org-1',
+      stripe_subscription_id: null,
+      status: 'active',
+    })
+    const result = await upsertSubscriptionFromStripe(
+      client as unknown as ClientArg,
+      { ...INPUT, stripeSubscriptionId: 'sub_x', status: 'cancelled' },
+      { trustCurrentState: true },
+    )
+    expect(state.upsertCalls).toBe(0)
+    expect(result.ok).toBe(true)
+    if (result.ok) expect(result.noop).toBe(true)
   })
 
   it('a merely-TRIALING out-of-band sub does NOT replace a comp row (round2 finding 0)', async () => {

@@ -128,58 +128,59 @@ export async function POST(request: Request): Promise<NextResponse> {
   try {
     const s = assertStripe()
 
-    // Shared idempotency window for the customer + session creates below:
-    // requests in the same minute (a double-click burst) collapse onto the
-    // same Stripe objects; a new minute mints fresh keys so a stored error
-    // or a params change can't wedge checkout beyond ~60s.
+    // Minute bucket for the SESSION idempotency key below (bounds its replay
+    // window so a stale/expired session can't be replayed hours later).
     const minuteBucket = Math.floor(Date.now() / 60_000)
 
     if (!stripeCustomerId) {
-      const customer = await s.customers.create(
-        {
-          email: user.email,
-          name: orgDetails.data.name,
-          metadata: { organization_id: organizationId },
-        },
-        // Per-org, per-minute idempotency: two concurrent first-checkout
-        // requests (a double-click) must resolve to the SAME Stripe customer —
-        // otherwise they'd hit sessions.create below with identical
-        // idempotency keys but different `customer` params, which Stripe
-        // rejects as an idempotency_error (review batch3 finding 4). The
-        // minute bucket bounds the key's life: Stripe replays a stored
-        // response — INCLUDING errors — for the key's full 24h, so an
-        // unbucketed key would make one transient 5xx (or a same-key
-        // params-drift after an org rename) wedge first checkout for a day
-        // (review batch3 round2 finding 6).
-        { idempotencyKey: `cust:${organizationId}:${minuteBucket}` },
-      )
-      stripeCustomerId = customer.id
+      // No Stripe idempotency key on the customer create. A stable key wedges
+      // first checkout for 24h if the first response was a 4xx or the org name
+      // later changes (Stripe replays the stored response for the key's full
+      // life); a minute-bucketed key re-opens a double-CUSTOMER race across the
+      // minute boundary. Instead the DB is the one-customer-per-org authority:
+      // persist CONDITIONALLY (only while still null) and re-read. A concurrent
+      // request that already claimed a customer wins; our just-created customer
+      // is orphaned (harmless — no subscription attaches) and we adopt the
+      // winner, so the session create + expire-older pass below both operate on
+      // a single customer (review batch3 round3: double-customer race + wedge).
+      const customer = await s.customers.create({
+        email: user.email,
+        name: orgDetails.data.name,
+        metadata: { organization_id: organizationId },
+      })
 
-      // Persist immediately — webhook may race here (Pitfall 1).
       const serviceClient = createServiceClient()
-      // reason: TablesUpdate<'organizations'> from the generated database.ts
-      // includes stripe_customer_id (added by Phase-5 migration 20260604120000
-      // and picked up in Task 0.4 type regeneration). The unknown cast is
-      // belt-and-braces for if the TS inference on the chain narrows too
-      // aggressively. The write is correct — the column exists server-side.
-      // reason: The TablesUpdate<'organizations'> type does include
-      // stripe_customer_id from migration 20260604120000 (Task 0.4 regenerated
-      // types). We cast through unknown to handle the strict
-      // RejectExcessProperties constraint on the .update() overload while
-      // keeping the actual payload correct.
-      const { error: updateErr } = await serviceClient
+      // reason: TablesUpdate<'organizations'> includes stripe_customer_id
+      // (migration 20260604120000, Task 0.4 regenerated types). The unknown
+      // cast handles the strict RejectExcessProperties constraint on .update().
+      const { data: claimed, error: claimErr } = await serviceClient
         .from('organizations')
-        .update({
-          stripe_customer_id: stripeCustomerId,
-        } as unknown as TablesUpdate<'organizations'>)
+        .update({ stripe_customer_id: customer.id } as unknown as TablesUpdate<'organizations'>)
         .eq('id', organizationId)
+        .is('stripe_customer_id', null)
+        .select('stripe_customer_id')
+        .maybeSingle()
 
-      if (updateErr) {
-        // Log but continue — the checkout session will still work; the customer
-        // ID can be reconciled from the webhook's customer field.
-        Sentry.captureException(updateErr, {
+      if (claimErr) {
+        // Log but continue — the webhook can reconcile via its customer field.
+        Sentry.captureException(claimErr, {
           tags: { layer: 'stripe', handler: 'checkout', step: 'persist-customer-id' },
         })
+      }
+
+      if (claimed?.stripe_customer_id) {
+        // We won the claim — use the customer we just created + persisted.
+        stripeCustomerId = claimed.stripe_customer_id
+      } else {
+        // Either a concurrent request already claimed one, or the conditional
+        // update matched no row — read the authoritative value; fall back to
+        // our own new customer if the re-read is unavailable.
+        const { data: fresh } = await serviceClient
+          .from('organizations')
+          .select('stripe_customer_id')
+          .eq('id', organizationId)
+          .maybeSingle()
+        stripeCustomerId = fresh?.stripe_customer_id ?? customer.id
       }
     }
 
@@ -192,7 +193,7 @@ export async function POST(request: Request): Promise<NextResponse> {
     //   1. A Stripe idempotency key on (org, plan, minute-bucket) collapses
     //      simultaneous same-plan creates into ONE session — both tabs get the
     //      same URL, and a Checkout Session can only be completed once.
-    //   2. After create, every OTHER still-open session for this customer is
+    //   2. After create, every OLDER still-open session for this customer is
     //      expired, so an older abandoned tab's session can't be completed
     //      later after this one converts.
     // The minute bucket bounds the key's replay window: without it, a replay
@@ -213,14 +214,24 @@ export async function POST(request: Request): Promise<NextResponse> {
     }
     let session = await s.checkout.sessions.create(sessionParams, { idempotencyKey })
 
-    // An idempotent replay can return a session another request has since
-    // expired (same key, but a concurrent create's expire pass beat us).
-    // The replay body is the STORED create-time response — its status always
-    // reads 'open' — so a fresh retrieve is required to see the real state
-    // (review batch3 round2 finding 5). If the session is no longer open,
-    // mint a fresh one under a unique key so the user gets a live URL.
-    const liveCheck = await s.checkout.sessions.retrieve(session.id)
-    if (liveCheck.status !== 'open') {
+    // A create RESPONSE — including an idempotent replay — returns the STORED
+    // create-time body, whose status always reads 'open' even if a concurrent
+    // request's expire pass has since closed it. A fresh retrieve reveals the
+    // real status (review batch3 round2 finding 5). GUARD it: a transient
+    // retrieve error must NOT 500 a checkout whose session was already created
+    // — fall back to the created session (correct in the common case; the
+    // re-mint below only matters for the rare replay-of-expired tail) (review
+    // batch3 round3).
+    let liveStatus: string | null = session.status
+    try {
+      const liveCheck = await s.checkout.sessions.retrieve(session.id)
+      liveStatus = liveCheck.status
+    } catch (retrieveErr) {
+      Sentry.captureException(retrieveErr, {
+        tags: { layer: 'stripe', handler: 'checkout', step: 'verify-session-live' },
+      })
+    }
+    if (liveStatus !== 'open') {
       session = await s.checkout.sessions.create(sessionParams, {
         idempotencyKey: `${idempotencyKey}:retry:${Date.now()}`,
       })

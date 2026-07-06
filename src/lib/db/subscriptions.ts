@@ -102,6 +102,13 @@ export type UpsertSubscriptionOptions = {
   // already dead (review batch3 finding 8). Callers whose input reflects
   // CURRENT Stripe truth (the reconciliation cron's live listing) omit it.
   eventCreatedAtIso?: string
+  // Set by the reconciliation cron only. Its input is authoritative CURRENT
+  // Stripe state (it just listed Stripe), so the stale-sub DOWNGRADE heuristic
+  // — which refuses a downgrade whose sub id differs from the live row's, on
+  // the assumption it is a delayed webhook about an old sub — must NOT apply
+  // to it (review batch3 round3: that heuristic silently blocks + mis-counts
+  // legitimate cron drift repairs). The comp-row protection still applies.
+  trustCurrentState?: boolean
 }
 
 export async function upsertSubscriptionFromStripe(
@@ -167,8 +174,9 @@ export async function upsertSubscriptionFromStripe(
         },
       })
       // Preserve the comp row. Return it as success so the webhook records the
-      // event as processed and does not retry.
-      return { ok: true, data: existing.data }
+      // event as processed and does not retry. noop:true so a caller that
+      // counts writes (the reconcile cron) does not treat this as applied.
+      return { ok: true, data: existing.data, noop: true }
     }
   }
 
@@ -176,13 +184,18 @@ export async function upsertSubscriptionFromStripe(
     // STALE-SUB DOWNGRADE GUARD (review batch3 round2 finding 2). A downgrade
     // event (cancelled/past_due/none) must be about the subscription the row
     // currently tracks: a delayed deleted/payment_failed event for OLD sub_A
-    // must not clobber a row that has since moved to live sub_B (the org
-    // re-subscribed). Upgrades with a new sub id are legitimate re-subscribes
-    // and pass through.
+    // must not clobber a row that is currently LIVE on sub_B (the org
+    // re-subscribed). Only fires when the existing row is live (nothing to
+    // protect otherwise — round3) and NOT for the reconcile cron, whose input
+    // is authoritative current Stripe state (round3: the heuristic wrongly
+    // blocks + mis-counts legitimate cron drift repairs). Upgrades with a new
+    // sub id are legitimate re-subscribes and pass through.
     const incomingIsDowngrade = input.status !== 'active' && input.status !== 'trialing'
     if (
+      !options?.trustCurrentState &&
       incomingIsDowngrade &&
       existing.ok &&
+      isLiveSubscriptionStatus(existing.data.status) &&
       existing.data.stripe_subscription_id !== null &&
       input.stripeSubscriptionId !== null &&
       existing.data.stripe_subscription_id !== input.stripeSubscriptionId
@@ -199,7 +212,7 @@ export async function upsertSubscriptionFromStripe(
           },
         },
       )
-      return { ok: true, data: existing.data }
+      return { ok: true, data: existing.data, noop: true }
     }
 
     // A GENUINE new paid subscription — a real Stripe subscription id with an
@@ -224,8 +237,9 @@ export async function upsertSubscriptionFromStripe(
         },
       })
       // Preserve the comp row. Return it as success so the webhook records the
-      // event as processed and does not retry.
-      return { ok: true, data: existing.data }
+      // event as processed and does not retry. noop:true so a write-counting
+      // caller (the reconcile cron) does not treat this as applied.
+      return { ok: true, data: existing.data, noop: true }
     }
   }
 

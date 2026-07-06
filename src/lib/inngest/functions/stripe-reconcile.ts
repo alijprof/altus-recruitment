@@ -170,9 +170,19 @@ export const stripeReconcile = inngest.createFunction(
             continue
           }
         }
-        const result = await upsertSubscriptionFromStripe(serviceClient, repair.input)
+        // trustCurrentState: the cron's input IS current Stripe truth, so the
+        // upsert's stale-sub downgrade heuristic must not refuse a legitimate
+        // drift repair to a different sub id (round3). The comp-row protection
+        // still applies. A guard no-op returns noop:true → NOT counted as
+        // applied, so the divergence email can't falsely report a repair that
+        // didn't land (round3 silent-fail).
+        const result = await upsertSubscriptionFromStripe(serviceClient, repair.input, {
+          trustCurrentState: true,
+        })
         if (!result.ok) {
           repairFailures.push(`${repair.organizationId} (${repair.reason}): ${result.code}`)
+        } else if (result.noop) {
+          repairFailures.push(`${repair.organizationId} (${repair.reason}): refused by comp guard`)
         } else {
           appliedCount++
         }
