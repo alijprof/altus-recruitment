@@ -25,6 +25,12 @@
 -- semantics — multiple floats for a candidate still coexist, unchanged. Do NOT
 -- add NULLS NOT DISTINCT.
 
+-- The pre-flight MUST mirror the index's NULL-distinct semantics: rows with a
+-- NULL job_id (speculative floats) are DISTINCT under the index, so multiple
+-- floats for the same candidate are legitimate and must NOT be flagged. Verified
+-- against live prod data (2026-07-08): the only "duplicate" was exactly such a
+-- float pair. Restrict the check to job_id IS NOT NULL so it counts only groups
+-- the index would actually reject.
 do $$
 declare
   dup_count integer;
@@ -34,12 +40,13 @@ begin
     select 1
     from public.applications
     where stage not in ('rejected', 'withdrawn')
+      and job_id is not null
     group by candidate_id, job_id, application_type
     having count(*) > 1
   ) d;
 
   if dup_count > 0 then
-    raise exception 'min-25 pre-flight: % active (candidate,job,type) group(s) already duplicated — resolve before scoping the index', dup_count;
+    raise exception 'min-25 pre-flight: % active (candidate,job,type) group(s) with a non-null job_id already duplicated — resolve before scoping the index', dup_count;
   end if;
 end $$;
 
