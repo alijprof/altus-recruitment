@@ -5,11 +5,7 @@ import { revalidatePath } from 'next/cache'
 import { redirect } from 'next/navigation'
 import { z } from 'zod'
 
-import {
-  createApplication,
-  deleteApplication,
-  moveApplication,
-} from '@/lib/db/applications'
+import { createApplication, deleteApplication, moveApplication } from '@/lib/db/applications'
 import { ENTITLEMENT_BLOCKED_MESSAGE, requireEntitledOrg } from '@/lib/stripe/require-entitlement'
 import { createClient as createSupabaseClient } from '@/lib/supabase/server'
 import type { Enums } from '@/types/database'
@@ -29,9 +25,7 @@ export type AddCandidateResult =
   | { ok: true; applicationId: string }
   | { ok: false; formError: string }
 
-export async function addCandidateToJobAction(
-  rawInput: unknown,
-): Promise<AddCandidateResult> {
+export async function addCandidateToJobAction(rawInput: unknown): Promise<AddCandidateResult> {
   const parsed = addCandidateSchema.safeParse(rawInput)
   if (!parsed.success) {
     return { ok: false, formError: 'Invalid candidate or job id.' }
@@ -50,11 +44,18 @@ export async function addCandidateToJobAction(
   })
 
   if (!result.ok) {
-    // Could be a unique-violation (candidate already on this job) or a
-    // cross-tenant FK guard fire. The db helper logs to Sentry already; we
-    // surface a generic message so we don't leak which org a candidate
-    // lives in.
-    return { ok: false, formError: 'Could not add candidate. They may already be on this job.' }
+    // 'duplicate' means the candidate already has a LIVE application to this
+    // job (a rejected/withdrawn one no longer blocks re-application after
+    // min-25) — give an honest, specific message. Any other failure (e.g. a
+    // cross-tenant FK guard fire) stays generic so we don't leak which org a
+    // candidate lives in.
+    if (result.code === 'duplicate') {
+      return {
+        ok: false,
+        formError: 'This candidate already has an active application on this job.',
+      }
+    }
+    return { ok: false, formError: 'Could not add candidate. Please try again.' }
   }
 
   revalidatePath(`/jobs/${parsed.data.jobId}`)
@@ -84,9 +85,7 @@ export type SearchCandidatesResult =
   | { ok: true; data: CandidateSearchOption[] }
   | { ok: false; formError: string }
 
-export async function searchCandidatesAction(
-  q: string,
-): Promise<SearchCandidatesResult> {
+export async function searchCandidatesAction(q: string): Promise<SearchCandidatesResult> {
   const parsed = searchSchema.safeParse({ q })
   if (!parsed.success) {
     return { ok: true, data: [] } // too short = no results, not an error
@@ -185,23 +184,16 @@ const moveSchema = z.object({
   placementFeePence: z.number().int().min(0).max(100_000_000).optional().nullable(),
   // ISO 8601 datetime with offset, e.g. "2026-05-23T00:00:00Z"
   placementDate: z.string().datetime({ offset: true }).optional().nullable(),
-  placementType: z
-    .enum(['perm', 'contract', 'temp', 'fixed_term'])
-    .optional()
-    .nullable(),
+  placementType: z.enum(['perm', 'contract', 'temp', 'fixed_term']).optional().nullable(),
   // ISO 4217 currency code, e.g. "GBP"
   placementCurrency: z.string().length(3).optional().nullable(),
   // Audit min-66: optional free-text placement notes.
   placementNotes: z.string().trim().max(5_000, 'Too long').optional().nullable(),
 })
 
-export type MoveApplicationResult =
-  | { ok: true }
-  | { ok: false; error: string }
+export type MoveApplicationResult = { ok: true } | { ok: false; error: string }
 
-export async function moveApplicationAction(
-  rawInput: unknown,
-): Promise<MoveApplicationResult> {
+export async function moveApplicationAction(rawInput: unknown): Promise<MoveApplicationResult> {
   const parsed = moveSchema.safeParse(rawInput)
   if (!parsed.success) {
     return { ok: false, error: 'Invalid move payload.' }
@@ -292,13 +284,9 @@ const removeSchema = z.object({
   jobId: idSchema.optional().nullable(),
 })
 
-export type RemoveApplicationResult =
-  | { ok: true }
-  | { ok: false; error: string }
+export type RemoveApplicationResult = { ok: true } | { ok: false; error: string }
 
-export async function removeApplicationAction(
-  rawInput: unknown,
-): Promise<RemoveApplicationResult> {
+export async function removeApplicationAction(rawInput: unknown): Promise<RemoveApplicationResult> {
   const parsed = removeSchema.safeParse(rawInput)
   if (!parsed.success) {
     return { ok: false, error: 'Invalid remove payload.' }
@@ -327,10 +315,7 @@ export async function removeApplicationAction(
   // delete. record_audit is security definer + reads org from session,
   // so no org needs to be passed.
   const supabaseUntyped = supabase as unknown as {
-    rpc: (
-      fn: string,
-      args: Record<string, unknown>,
-    ) => Promise<{ data: unknown; error: unknown }>
+    rpc: (fn: string, args: Record<string, unknown>) => Promise<{ data: unknown; error: unknown }>
   }
   const { error: auditErr } = await supabaseUntyped.rpc('record_audit', {
     p_action: 'delete',

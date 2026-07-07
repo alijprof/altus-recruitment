@@ -28,10 +28,7 @@ import {
   type PipelineStage,
 } from '@/lib/db/pipeline-stages'
 
-import {
-  moveApplicationAction,
-  removeApplicationAction,
-} from '@/app/(app)/jobs/[id]/actions'
+import { moveApplicationAction, removeApplicationAction } from '@/app/(app)/jobs/[id]/actions'
 
 const TERMINAL_STAGES = new Set(['rejected', 'withdrawn'])
 
@@ -66,10 +63,7 @@ export type CandidateApplicationsProps = {
   applications: PipelineCardData[]
 }
 
-export function CandidateApplications({
-  candidateId,
-  applications,
-}: CandidateApplicationsProps) {
+export function CandidateApplications({ candidateId, applications }: CandidateApplicationsProps) {
   const router = useRouter()
   const [declineTarget, setDeclineTarget] = useState<PipelineCardData | null>(null)
   // UAT-260523-PLACEMENT-CAPTURE: intercept placed-stage moves before action call.
@@ -78,6 +72,19 @@ export function CandidateApplications({
   const [, startTransition] = useTransition()
 
   function performMove(application: PipelineCardData, toStage: PipelineStage) {
+    // min-24: confirm before un-placing — leaving 'placed' drops the placement
+    // + fee from every revenue report (they key on stage='placed'). No
+    // fee-clear (see pipeline-board.tsx for the rationale).
+    if (application.stage === 'placed' && toStage !== 'placed') {
+      if (
+        !window.confirm(
+          `Move ${application.candidate_name} out of Placed? This removes the placement and its fee from your revenue and dashboard reports. The placement stays in the activity history.`,
+        )
+      ) {
+        return
+      }
+    }
+
     // UAT-260523-PLACEMENT-CAPTURE: intercept placed stage — open modal instead
     // of calling action directly. jobId is per-row so the modal can pass it
     // for accurate revalidatePath on the job's pipeline page.
@@ -175,10 +182,7 @@ export function CandidateApplications({
                     )}
                     <Badge
                       variant="outline"
-                      className={cn(
-                        'text-xs font-normal',
-                        stageBadgeClass(app.stage),
-                      )}
+                      className={cn('text-xs font-normal', stageBadgeClass(app.stage))}
                     >
                       {stageLabel(app.stage)}
                     </Badge>
@@ -214,10 +218,7 @@ export function CandidateApplications({
                         <DropdownMenuSubContent>
                           <DropdownMenuLabel>Stages</DropdownMenuLabel>
                           {moveTargets.map((s) => (
-                            <DropdownMenuItem
-                              key={s}
-                              onSelect={() => performMove(app, s)}
-                            >
+                            <DropdownMenuItem key={s} onSelect={() => performMove(app, s)}>
                               {stageLabel(s)}
                             </DropdownMenuItem>
                           ))}

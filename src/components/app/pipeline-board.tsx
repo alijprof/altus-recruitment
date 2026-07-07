@@ -28,16 +28,11 @@ import {
   type PipelineStage,
 } from '@/lib/db/pipeline-stages'
 
-import {
-  moveApplicationAction,
-  removeApplicationAction,
-} from '@/app/(app)/jobs/[id]/actions'
+import { moveApplicationAction, removeApplicationAction } from '@/app/(app)/jobs/[id]/actions'
 
 // UI-SPEC §4: stage column titles.
 function stageLabel(stage: PipelineStage): string {
-  return stage
-    .replace(/_/g, ' ')
-    .replace(/\b\w/g, (c) => c.toUpperCase())
+  return stage.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())
 }
 
 export type PipelineBoardProps = {
@@ -102,12 +97,24 @@ export function PipelineBoard({ initial, jobId }: PipelineBoardProps) {
     }
   }
 
-  function performMove(
-    card: PipelineCardData,
-    fromStage: PipelineStage,
-    toStage: PipelineStage,
-  ) {
+  function performMove(card: PipelineCardData, fromStage: PipelineStage, toStage: PipelineStage) {
     if (fromStage === toStage) return
+
+    // min-24: leaving 'placed' silently drops the placement + its fee from the
+    // dashboard KPI and every acquirer-facing revenue report (they all key on
+    // stage='placed'). Confirm before an accidental drag/dropdown un-places.
+    // We do NOT clear the persisted fee — reports gate on stage, so a non-placed
+    // row's fee is invisible and clearing it would be more destructive on the
+    // common accidental-drag case (re-placing re-opens PlacementModal anyway).
+    if (fromStage === 'placed' && toStage !== 'placed') {
+      if (
+        !window.confirm(
+          `Move ${card.candidate_name} out of Placed? This removes the placement and its fee from your revenue and dashboard reports. The placement stays in the activity history.`,
+        )
+      ) {
+        return
+      }
+    }
 
     // Optimistic local move + mark pending. The card stays in the target
     // column with opacity-60 + "Saving…" indicator until the server
@@ -302,14 +309,7 @@ type ColumnProps = {
   onRemove: (card: PipelineCardData) => void
 }
 
-function Column({
-  stage,
-  cards,
-  pendingIds,
-  onMoveTo,
-  onReject,
-  onRemove,
-}: ColumnProps) {
+function Column({ stage, cards, pendingIds, onMoveTo, onReject, onRemove }: ColumnProps) {
   const { setNodeRef, isOver } = useDroppable({ id: stage })
 
   return (

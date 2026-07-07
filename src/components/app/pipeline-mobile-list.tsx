@@ -12,13 +12,7 @@ import {
   AccordionTrigger,
 } from '@/components/ui/accordion'
 import { Button } from '@/components/ui/button'
-import {
-  Sheet,
-  SheetContent,
-  SheetHeader,
-  SheetTitle,
-  SheetTrigger,
-} from '@/components/ui/sheet'
+import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from '@/components/ui/sheet'
 import {
   PIPELINE_STAGES,
   type GroupedByStage,
@@ -26,10 +20,7 @@ import {
   type PipelineStage,
 } from '@/lib/db/pipeline-stages'
 
-import {
-  moveApplicationAction,
-  removeApplicationAction,
-} from '@/app/(app)/jobs/[id]/actions'
+import { moveApplicationAction, removeApplicationAction } from '@/app/(app)/jobs/[id]/actions'
 
 // UI-SPEC §4 D-11: below md breakpoint, kanban becomes a stacked Accordion.
 // Tapping a card opens a bottom Sheet with "Move to..." buttons + Reject.
@@ -38,9 +29,7 @@ import {
 // No drag-and-drop on mobile by design.
 
 function stageLabel(stage: PipelineStage): string {
-  return stage
-    .replace(/_/g, ' ')
-    .replace(/\b\w/g, (c) => c.toUpperCase())
+  return stage.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())
 }
 
 export type PipelineMobileListProps = {
@@ -65,6 +54,19 @@ export function PipelineMobileList({ initial, jobId }: PipelineMobileListProps) 
   function performMove(card: PipelineCardData, toStage: PipelineStage) {
     const fromStage = findStageOf(card.id)
     if (!fromStage || fromStage === toStage) return
+
+    // min-24: confirm before un-placing — leaving 'placed' drops the placement
+    // + fee from every revenue report (they key on stage='placed'). No
+    // fee-clear (see pipeline-board.tsx for the rationale).
+    if (fromStage === 'placed' && toStage !== 'placed') {
+      if (
+        !window.confirm(
+          `Move ${card.candidate_name} out of Placed? This removes the placement and its fee from your revenue and dashboard reports. The placement stays in the activity history.`,
+        )
+      ) {
+        return
+      }
+    }
 
     // UAT-260523-PLACEMENT-CAPTURE: intercept placed-stage moves. Do NOT
     // optimistically move the card; PlacementModal.onPlaced fires after the
@@ -162,13 +164,9 @@ export function PipelineMobileList({ initial, jobId }: PipelineMobileListProps) 
 
   return (
     <>
-      <Accordion
-        type="multiple"
-        defaultValue={[...PIPELINE_STAGES]}
-        className="space-y-2"
-      >
+      <Accordion type="multiple" defaultValue={[...PIPELINE_STAGES]} className="space-y-2">
         {PIPELINE_STAGES.map((stage) => (
-          <AccordionItem key={stage} value={stage} className="rounded-md border bg-card">
+          <AccordionItem key={stage} value={stage} className="bg-card rounded-md border">
             <AccordionTrigger className="px-3 py-3 hover:no-underline">
               <span className="flex items-center gap-2">
                 <span className="text-sm font-semibold">{stageLabel(stage)}</span>

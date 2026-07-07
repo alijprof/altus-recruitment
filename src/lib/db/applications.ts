@@ -111,9 +111,7 @@ export async function listApplicationsForCandidate(
   }
 
   const now = Date.now()
-  const rows = ((data ?? []) as unknown as JoinedApplicationRow[]).map((r) =>
-    shapeCard(r, now),
-  )
+  const rows = ((data ?? []) as unknown as JoinedApplicationRow[]).map((r) => shapeCard(r, now))
   return { ok: true, data: rows }
 }
 
@@ -145,9 +143,7 @@ export async function listApplicationsForJob(
   }
 
   const now = Date.now()
-  const rows = ((data ?? []) as unknown as JoinedApplicationRow[]).map((r) =>
-    shapeCard(r, now),
-  )
+  const rows = ((data ?? []) as unknown as JoinedApplicationRow[]).map((r) => shapeCard(r, now))
   return { ok: true, data: rows }
 }
 
@@ -246,9 +242,7 @@ export async function listAllApplicationsByStage(
   }
 
   const now = Date.now()
-  const cards = ((data ?? []) as unknown as JoinedApplicationRow[]).map((r) =>
-    shapeCard(r, now),
-  )
+  const cards = ((data ?? []) as unknown as JoinedApplicationRow[]).map((r) => shapeCard(r, now))
   return { ok: true, data: groupByStage(cards) }
 }
 
@@ -279,25 +273,24 @@ export async function createApplication(
   const payload = {
     job_id: input.jobId,
     candidate_id: input.candidateId,
-    application_type:
-      input.applicationType ?? ('standard' as Enums<'application_type'>),
+    application_type: input.applicationType ?? ('standard' as Enums<'application_type'>),
   } as unknown as TablesInsert<'applications'>
 
-  const { data, error } = await supabase
-    .from('applications')
-    .insert(payload)
-    .select('*')
-    .single()
+  const { data, error } = await supabase.from('applications').insert(payload).select('*').single()
 
   if (error) {
+    // 23505 = unique violation. After min-25 the uniqueness index is scoped to
+    // ACTIVE stages, so this now fires only when the candidate has a LIVE
+    // application to the same job+type (a rejected/withdrawn one no longer
+    // blocks re-application). It's an expected user condition, not an error —
+    // surface a 'duplicate' code and do NOT log it to Sentry as an exception.
+    const pgErr = error as { code?: string }
+    if (pgErr.code === '23505') {
+      return { ok: false, code: 'duplicate' }
+    }
     Sentry.captureException(error, {
       tags: { layer: 'db', helper: 'createApplication' },
     })
-    // 23505 = unique violation (duplicate application).
-    const pgErr = error as { code?: string }
-    if (pgErr.code === '23505') {
-      return { ok: false, code: 'internal' }
-    }
     return { ok: false, code: 'internal' }
   }
   return { ok: true, data }
@@ -376,23 +369,20 @@ export async function moveApplication(
   // generated Database['public']['Functions'] map. Cast through unknown to
   // avoid hand-rolling the entire RPC schema.
   const supabaseUntyped = supabase as unknown as {
-    rpc: (
-      fn: string,
-      args: Record<string, unknown>,
-    ) => Promise<{ data: unknown; error: unknown }>
+    rpc: (fn: string, args: Record<string, unknown>) => Promise<{ data: unknown; error: unknown }>
   }
 
   const { error } = await supabaseUntyped.rpc('move_application', {
-    p_application_id:      args.applicationId,
-    p_to_stage:            args.toStage,
-    p_decline_reason:      args.declineReason ?? null,
-    p_decline_notes:       args.declineNotes ?? null,
-    p_actor_user_id:       args.actorUserId ?? null,
+    p_application_id: args.applicationId,
+    p_to_stage: args.toStage,
+    p_decline_reason: args.declineReason ?? null,
+    p_decline_notes: args.declineNotes ?? null,
+    p_actor_user_id: args.actorUserId ?? null,
     p_placement_fee_pence: args.placementFeePence ?? null,
-    p_placement_date:      args.placementDate ?? null,
-    p_placement_type:      args.placementType ?? null,
-    p_placement_currency:  args.placementCurrency ?? null,
-    p_placement_notes:     args.placementNotes ?? null,
+    p_placement_date: args.placementDate ?? null,
+    p_placement_type: args.placementType ?? null,
+    p_placement_currency: args.placementCurrency ?? null,
+    p_placement_notes: args.placementNotes ?? null,
   })
 
   if (error) {
