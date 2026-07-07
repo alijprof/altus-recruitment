@@ -19,6 +19,7 @@ import {
   type PipelineCardData,
   type PipelineStage,
 } from '@/lib/db/pipeline-stages'
+import { confirmLeavePlaced, confirmRemoveApplication } from '@/lib/pipeline-confirms'
 
 import { moveApplicationAction, removeApplicationAction } from '@/app/(app)/jobs/[id]/actions'
 
@@ -56,17 +57,8 @@ export function PipelineMobileList({ initial, jobId }: PipelineMobileListProps) 
     if (!fromStage || fromStage === toStage) return
 
     // min-24: confirm before un-placing — leaving 'placed' drops the placement
-    // + fee from every revenue report (they key on stage='placed'). No
-    // fee-clear (see pipeline-board.tsx for the rationale).
-    if (fromStage === 'placed' && toStage !== 'placed') {
-      if (
-        !window.confirm(
-          `Move ${card.candidate_name} out of Placed? This removes the placement and its fee from your revenue and dashboard reports. The placement stays in the activity history.`,
-        )
-      ) {
-        return
-      }
-    }
+    // + fee from every revenue report (they key on stage='placed').
+    if (!confirmLeavePlaced(fromStage, toStage, card.candidate_name)) return
 
     // UAT-260523-PLACEMENT-CAPTURE: intercept placed-stage moves. Do NOT
     // optimistically move the card; PlacementModal.onPlaced fires after the
@@ -130,15 +122,11 @@ export function PipelineMobileList({ initial, jobId }: PipelineMobileListProps) 
   }
 
   function handleRemove(card: PipelineCardData) {
-    if (
-      !window.confirm(
-        `Remove ${card.candidate_name} from this job? Their candidate record will remain — only the application is deleted.`,
-      )
-    ) {
-      return
-    }
     const fromStage = findStageOf(card.id)
     if (!fromStage) return
+    // Warn explicitly when hard-deleting a PLACED application (destroys the
+    // placement + fee, unrecoverable).
+    if (!confirmRemoveApplication(fromStage, card.candidate_name)) return
 
     setColumns((prev) => ({
       ...prev,

@@ -50,9 +50,15 @@ export async function addCandidateToJobAction(rawInput: unknown): Promise<AddCan
     // cross-tenant FK guard fire) stays generic so we don't leak which org a
     // candidate lives in.
     if (result.code === 'duplicate') {
+      // Phrasing must be true BOTH before and after migration 20260708120000:
+      // pre-migration the old total constraint 23505s even a rejected duplicate,
+      // so we must not claim the existing one is "active" (review finding 4).
+      // Post-migration the index only rejects a live duplicate, so this is still
+      // accurate. (We also apply the migration BEFORE deploying this code, so
+      // the window is near-zero — this is belt-and-braces.)
       return {
         ok: false,
-        formError: 'This candidate already has an active application on this job.',
+        formError: 'This candidate is already on this job.',
       }
     }
     return { ok: false, formError: 'Could not add candidate. Please try again.' }
@@ -250,6 +256,16 @@ export async function moveApplicationAction(rawInput: unknown): Promise<MoveAppl
   })
 
   if (!res.ok) {
+    // 'duplicate' = reactivating a rejected/withdrawn row when a live
+    // application already exists for this candidate+job+type (min-25). Explain
+    // it — a generic "try again" would loop forever.
+    if (res.code === 'duplicate') {
+      return {
+        ok: false,
+        error:
+          'This candidate already has an active application on this job — close it before reactivating this one.',
+      }
+    }
     return { ok: false, error: 'Move failed. Please try again.' }
   }
 

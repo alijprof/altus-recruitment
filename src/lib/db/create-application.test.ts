@@ -19,7 +19,7 @@ vi.mock('@sentry/nextjs', () => ({
   addBreadcrumb: vi.fn(),
 }))
 
-import { createApplication } from '@/lib/db/applications'
+import { createApplication, moveApplication } from '@/lib/db/applications'
 
 // Minimal client whose insert().select().single() resolves to a given result.
 function clientReturning(result: { data: unknown; error: unknown }) {
@@ -63,5 +63,39 @@ describe('createApplication error mapping', () => {
     expect(result.ok).toBe(true)
     if (result.ok) expect(result.data).toEqual(row)
     expect(captureException).not.toHaveBeenCalled()
+  })
+})
+
+// move_application RPC wrapper: reactivating a rejected row when a live one
+// exists collides with the min-25 partial index → 23505 → 'duplicate'.
+function rpcClientReturning(result: { data: unknown; error: unknown }) {
+  return { rpc: async () => result }
+}
+type MoveClientArg = Parameters<typeof moveApplication>[0]
+const MOVE_ARGS = { applicationId: 'app-1', toStage: 'first_interview' as const }
+
+describe('moveApplication error mapping', () => {
+  beforeEach(() => vi.clearAllMocks())
+
+  it('maps a 23505 (reactivation collision) to "duplicate" and does NOT log to Sentry', async () => {
+    const client = rpcClientReturning({ data: null, error: { code: '23505', message: 'dup' } })
+    const result = await moveApplication(client as unknown as MoveClientArg, MOVE_ARGS)
+    expect(result.ok).toBe(false)
+    if (!result.ok) expect(result.code).toBe('duplicate')
+    expect(captureException).not.toHaveBeenCalled()
+  })
+
+  it('maps other RPC errors to "internal" and logs to Sentry', async () => {
+    const client = rpcClientReturning({ data: null, error: { code: 'P0001', message: 'boom' } })
+    const result = await moveApplication(client as unknown as MoveClientArg, MOVE_ARGS)
+    expect(result.ok).toBe(false)
+    if (!result.ok) expect(result.code).toBe('internal')
+    expect(captureException).toHaveBeenCalledTimes(1)
+  })
+
+  it('returns ok on a successful move', async () => {
+    const client = rpcClientReturning({ data: null, error: null })
+    const result = await moveApplication(client as unknown as MoveClientArg, MOVE_ARGS)
+    expect(result.ok).toBe(true)
   })
 })

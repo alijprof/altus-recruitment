@@ -104,10 +104,14 @@ begin
   end;
 
   -- (5) regression: same-org standard insert with both candidate + job — succeeds.
+  -- The ON CONFLICT arbiter must carry the same WHERE predicate as the partial
+  -- unique index (min-25, 20260708120000) — Postgres will not infer a PARTIAL
+  -- index as an arbiter without a matching predicate (else 42P10).
   begin
     insert into public.applications (organization_id, candidate_id, job_id, application_type)
       values (v_org_a, v_cand_a, v_job_a, 'standard')
-      on conflict (candidate_id, job_id, application_type) do nothing;
+      on conflict (candidate_id, job_id, application_type)
+        where stage not in ('rejected', 'withdrawn') do nothing;
     v_normal_ok := true;
   exception when others then
     get stacked diagnostics v_sql_state = returned_sqlstate, v_sql_msg = message_text;

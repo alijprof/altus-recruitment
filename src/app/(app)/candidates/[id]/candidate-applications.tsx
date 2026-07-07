@@ -22,6 +22,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { cn } from '@/lib/utils'
+import { confirmLeavePlaced, confirmRemoveApplication } from '@/lib/pipeline-confirms'
 import {
   PIPELINE_STAGES,
   type PipelineCardData,
@@ -73,17 +74,8 @@ export function CandidateApplications({ candidateId, applications }: CandidateAp
 
   function performMove(application: PipelineCardData, toStage: PipelineStage) {
     // min-24: confirm before un-placing — leaving 'placed' drops the placement
-    // + fee from every revenue report (they key on stage='placed'). No
-    // fee-clear (see pipeline-board.tsx for the rationale).
-    if (application.stage === 'placed' && toStage !== 'placed') {
-      if (
-        !window.confirm(
-          `Move ${application.candidate_name} out of Placed? This removes the placement and its fee from your revenue and dashboard reports. The placement stays in the activity history.`,
-        )
-      ) {
-        return
-      }
-    }
+    // + fee from every revenue report (they key on stage='placed').
+    if (!confirmLeavePlaced(application.stage, toStage, application.candidate_name)) return
 
     // UAT-260523-PLACEMENT-CAPTURE: intercept placed stage — open modal instead
     // of calling action directly. jobId is per-row so the modal can pass it
@@ -112,13 +104,9 @@ export function CandidateApplications({ candidateId, applications }: CandidateAp
 
   function performRemove(application: PipelineCardData) {
     const label = application.job_title ?? 'this job'
-    if (
-      !window.confirm(
-        `Remove this candidate from ${label}? The candidate record stays — only the application is deleted.`,
-      )
-    ) {
-      return
-    }
+    // Warn explicitly when hard-deleting a PLACED application (destroys the
+    // placement + fee, unrecoverable).
+    if (!confirmRemoveApplication(application.stage, application.candidate_name, label)) return
     setPendingId(application.id)
     startTransition(async () => {
       const res = await removeApplicationAction({

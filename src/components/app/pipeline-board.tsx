@@ -20,6 +20,7 @@ import { toast } from 'sonner'
 import { DeclineModal } from '@/components/app/decline-modal'
 import { PlacementModal } from '@/components/app/placement-modal'
 import { PipelineCard } from '@/components/app/pipeline-card'
+import { confirmLeavePlaced, confirmRemoveApplication } from '@/lib/pipeline-confirms'
 import { cn } from '@/lib/utils'
 import {
   PIPELINE_STAGES,
@@ -106,15 +107,7 @@ export function PipelineBoard({ initial, jobId }: PipelineBoardProps) {
     // We do NOT clear the persisted fee — reports gate on stage, so a non-placed
     // row's fee is invisible and clearing it would be more destructive on the
     // common accidental-drag case (re-placing re-opens PlacementModal anyway).
-    if (fromStage === 'placed' && toStage !== 'placed') {
-      if (
-        !window.confirm(
-          `Move ${card.candidate_name} out of Placed? This removes the placement and its fee from your revenue and dashboard reports. The placement stays in the activity history.`,
-        )
-      ) {
-        return
-      }
-    }
+    if (!confirmLeavePlaced(fromStage, toStage, card.candidate_name)) return
 
     // Optimistic local move + mark pending. The card stays in the target
     // column with opacity-60 + "Saving…" indicator until the server
@@ -199,15 +192,12 @@ export function PipelineBoard({ initial, jobId }: PipelineBoardProps) {
   }
 
   function handleRemove(card: PipelineCardData) {
-    if (
-      !window.confirm(
-        `Remove ${card.candidate_name} from this job? Their candidate record will remain — only the application is deleted.`,
-      )
-    ) {
-      return
-    }
     const fromStage = findStageOf(card.id)
     if (!fromStage) return
+    // min-24 / review: a hard-delete of a PLACED application permanently
+    // destroys the placement + fee (unrecoverable, worse than a stage change) —
+    // warn explicitly for placed cards.
+    if (!confirmRemoveApplication(fromStage, card.candidate_name)) return
 
     // Optimistic: drop the card immediately. Restore on failure.
     setColumns(removeCardLocal(card.id, fromStage))

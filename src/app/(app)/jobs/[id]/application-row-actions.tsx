@@ -20,6 +20,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { PIPELINE_STAGES, type PipelineStage } from '@/lib/db/pipeline-stages'
+import { confirmLeavePlaced, confirmRemoveApplication } from '@/lib/pipeline-confirms'
 
 import { moveApplicationAction, removeApplicationAction } from './actions'
 
@@ -32,9 +33,7 @@ import { moveApplicationAction, removeApplicationAction } from './actions'
 // after success we just router.refresh() to re-fetch the table.
 
 function stageLabel(stage: PipelineStage): string {
-  return stage
-    .replace(/_/g, ' ')
-    .replace(/\b\w/g, (c) => c.toUpperCase())
+  return stage.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())
 }
 
 type Props = {
@@ -57,6 +56,10 @@ export function ApplicationRowActions({
   const [isPending, startTransition] = useTransition()
 
   const handleMove = (toStage: PipelineStage) => {
+    // min-24 / review: this table row menu is a move surface too — guard
+    // leaving 'placed' (drops the placement + fee from every revenue report).
+    if (!confirmLeavePlaced(currentStage, toStage, candidateName)) return
+
     // UAT-260523-PLACEMENT-CAPTURE: intercept placed stage — open modal instead
     // of calling action directly. Modal calls moveApplicationAction on confirm.
     if (toStage === 'placed') {
@@ -80,13 +83,9 @@ export function ApplicationRowActions({
   }
 
   const handleRemove = () => {
-    if (
-      !window.confirm(
-        `Remove ${candidateName} from this job? Their candidate record will remain — only the application is deleted.`,
-      )
-    ) {
-      return
-    }
+    // Warn explicitly when hard-deleting a PLACED application (destroys the
+    // placement + fee, unrecoverable).
+    if (!confirmRemoveApplication(currentStage, candidateName)) return
     startTransition(async () => {
       const res = await removeApplicationAction({ applicationId, jobId })
       if (!res.ok) {
@@ -125,9 +124,7 @@ export function ApplicationRowActions({
             </DropdownMenuSubContent>
           </DropdownMenuSub>
           <DropdownMenuSeparator />
-          <DropdownMenuItem onSelect={handleRemove}>
-            Remove from job
-          </DropdownMenuItem>
+          <DropdownMenuItem onSelect={handleRemove}>Remove from job</DropdownMenuItem>
           <DropdownMenuItem
             onSelect={() => setDeclineOpen(true)}
             className="text-destructive focus:text-destructive"

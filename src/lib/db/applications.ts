@@ -386,6 +386,14 @@ export async function moveApplication(
   })
 
   if (error) {
+    // 23505: reactivating a rejected/withdrawn row would collide with a LIVE
+    // application for the same (candidate, job, type) under the min-25 partial
+    // unique index. Expected user condition — surface 'duplicate' and do NOT
+    // log it to Sentry as an exception.
+    const pgErr = error as { code?: string }
+    if (pgErr.code === '23505') {
+      return { ok: false, code: 'duplicate' }
+    }
     Sentry.captureException(error, {
       tags: { layer: 'db', helper: 'moveApplication' },
     })
