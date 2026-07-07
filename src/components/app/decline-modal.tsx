@@ -22,6 +22,7 @@ import {
 } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
 import { DECLINE_REASONS, type DeclineReason } from '@/lib/legal/decline-reasons'
+import { confirmLeavePlaced } from '@/lib/pipeline-confirms'
 
 import { moveApplicationAction } from '@/app/(app)/jobs/[id]/actions'
 
@@ -43,6 +44,10 @@ export type DeclineModalProps = {
   /** Set when opened from the candidate detail page — drives a revalidate
    *  on /candidates/[id] so the row re-renders post-decline. */
   candidateId?: string | null
+  /** The application's CURRENT stage. When 'placed', declining moves it out of
+   *  'placed' and drops the placement + fee from every revenue report — this is
+   *  the 5th leave-placed surface (batch4 review r2), so we warn + confirm. */
+  currentStage?: string | null
   open: boolean
   onOpenChange: (open: boolean) => void
   onDeclined?: (applicationId: string) => void
@@ -54,11 +59,13 @@ export function DeclineModal({
   candidateName,
   jobId,
   candidateId,
+  currentStage,
   open,
   onOpenChange,
   onDeclined,
   onError,
 }: DeclineModalProps) {
+  const isPlaced = currentStage === 'placed'
   const [reason, setReason] = useState<DeclineReason | ''>('')
   const [notes, setNotes] = useState('')
   const [isPending, startTransition] = useTransition()
@@ -70,6 +77,10 @@ export function DeclineModal({
 
   function handleConfirm() {
     if (!reason) return
+    // Declining a PLACED application un-places it (placed→rejected), removing
+    // the placement + fee from every revenue report. Force the same explicit
+    // acknowledgement every other leave-placed surface uses (batch4 review r2).
+    if (!confirmLeavePlaced(currentStage ?? '', 'rejected', candidateName)) return
     startTransition(async () => {
       const res = await moveApplicationAction({
         applicationId,
@@ -103,18 +114,24 @@ export function DeclineModal({
         <DialogHeader>
           <DialogTitle>Decline {candidateName}</DialogTitle>
           <DialogDescription>
-            This moves the application to the rejected stage and writes a stage_change
-            activity. The candidate record is unaffected.
+            This moves the application to the rejected stage and writes a stage_change activity. The
+            candidate record is unaffected.
           </DialogDescription>
         </DialogHeader>
 
         <div className="space-y-4">
+          {isPlaced && (
+            <p
+              role="alert"
+              className="border-destructive/40 bg-destructive/10 text-destructive rounded-md border p-3 text-sm"
+            >
+              This candidate is currently <strong>Placed</strong>. Declining removes the placement
+              and its fee from your dashboard and revenue reports.
+            </p>
+          )}
           <div className="space-y-2">
             <Label htmlFor="decline-reason">Reason</Label>
-            <Select
-              value={reason}
-              onValueChange={(v) => setReason(v as DeclineReason)}
-            >
+            <Select value={reason} onValueChange={(v) => setReason(v as DeclineReason)}>
               <SelectTrigger id="decline-reason">
                 <SelectValue placeholder="Select a reason…" />
               </SelectTrigger>

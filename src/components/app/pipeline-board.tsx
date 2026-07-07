@@ -247,6 +247,7 @@ export function PipelineBoard({ initial, jobId }: PipelineBoardProps) {
         <DeclineModal
           applicationId={declineTarget.id}
           candidateName={declineTarget.candidate_name}
+          currentStage={findStageOf(declineTarget.id) ?? declineTarget.stage}
           jobId={jobId ?? null}
           open={true}
           onOpenChange={(open) => {

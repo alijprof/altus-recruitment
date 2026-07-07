@@ -37,6 +37,13 @@ describe('confirmLeavePlaced', () => {
     confirmSpy.mockReturnValue(true)
     expect(confirmLeavePlaced('placed', 'offer', 'Jane')).toBe(true)
   })
+
+  it('prompts when declining/rejecting a placed application (the 5th surface)', () => {
+    confirmSpy.mockReturnValue(false)
+    expect(confirmLeavePlaced('placed', 'rejected', 'Jane')).toBe(false)
+    expect(confirmLeavePlaced('placed', 'withdrawn', 'Jane')).toBe(false)
+    expect(confirmSpy).toHaveBeenCalledTimes(2)
+  })
 })
 
 describe('confirmRemoveApplication', () => {

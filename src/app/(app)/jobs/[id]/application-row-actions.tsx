@@ -137,6 +137,7 @@ export function ApplicationRowActions({
       <DeclineModal
         applicationId={applicationId}
         candidateName={candidateName}
+        currentStage={currentStage}
         jobId={jobId}
         open={declineOpen}
         onOpenChange={setDeclineOpen}

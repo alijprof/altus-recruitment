@@ -235,6 +235,7 @@ export function CandidateApplications({ candidateId, applications }: CandidateAp
         <DeclineModal
           applicationId={declineTarget.id}
           candidateName={declineTarget.candidate_name}
+          currentStage={declineTarget.stage}
           jobId={declineTarget.job_id ?? null}
           candidateId={candidateId}
           open={true}
