@@ -58,3 +58,8 @@ chrome-extension/node_modules/
 # Internal security/audit reports — attack narratives + remediation
 # roadmaps. NEVER publish to the (public) repo.
 .planning/audits/
+
+# local-only files containing live secrets — transfer by hand, never commit (2026-07-27)
+tests/smoke/authed/mint-paywall-sessions.mjs
+tests/smoke/authed/mint-session.mjs
+claude-setup-inventory.md
