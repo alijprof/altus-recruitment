@@ -74,6 +74,24 @@ export const PROFILE_COMPLETENESS_COLUMNS = [
 
 export type ProfileCompletenessColumn = (typeof PROFILE_COMPLETENESS_COLUMNS)[number]
 
+/**
+ * PostgREST `or=(…)` filter body selecting candidates that are NOT
+ * effectively empty — i.e. the SQL complement of `isProfileEffectivelyEmpty`.
+ *
+ * Used by the embed-batch candidate sweep (review 2026-08-04 H1) so
+ * contaminated rows never enter the 256-row window in the first place. Lives
+ * here, next to the predicate it mirrors, so both change together.
+ *
+ * `col <> '{}'` is the array equivalent of `col IS NOT NULL`: both array
+ * columns are `text[] not null default '{}'`, so "non-empty" is the real
+ * test. `{}` contains no PostgREST-reserved character, so it needs no
+ * quoting inside the or-list.
+ */
+export const NON_EMPTY_PROFILE_OR_FILTER = [
+  ...PROFILE_COMPLETENESS_SCALAR_COLUMNS.map((c) => `${c}.not.is.null`),
+  ...PROFILE_COMPLETENESS_ARRAY_COLUMNS.map((c) => `${c}.neq.{}`),
+].join(',')
+
 function isEmptyString(v: string | null | undefined): boolean {
   return v == null || v.trim().length === 0
 }

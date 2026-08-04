@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest'
 
 import {
   isProfileEffectivelyEmpty,
+  NON_EMPTY_PROFILE_OR_FILTER,
   PROFILE_COMPLETENESS_ARRAY_COLUMNS,
   PROFILE_COMPLETENESS_COLUMNS,
   PROFILE_COMPLETENESS_SCALAR_COLUMNS,
@@ -78,6 +79,38 @@ describe('PROFILE_COMPLETENESS_COLUMNS (SQL/TS drift guard)', () => {
     }
     for (const column of PROFILE_COMPLETENESS_COLUMNS) {
       expect(isProfileEffectivelyEmpty({ ...base, [column]: nonEmptyValue[column] })).toBe(false)
+    }
+  })
+})
+
+// The embed-batch sweep passes this straight to PostgREST's `or=(…)`. It has
+// to stay the exact complement of isProfileEffectivelyEmpty, and it has to
+// stay syntactically valid — a malformed clause 400s the sweep, which is the
+// same silent outage H1 describes wearing a different hat.
+describe('NON_EMPTY_PROFILE_OR_FILTER', () => {
+  const clauses = NON_EMPTY_PROFILE_OR_FILTER.split(',')
+
+  it('has exactly one clause per completeness column', () => {
+    expect(clauses).toHaveLength(PROFILE_COMPLETENESS_COLUMNS.length)
+    for (const column of PROFILE_COMPLETENESS_COLUMNS) {
+      expect(clauses.filter((c) => c.startsWith(`${column}.`))).toHaveLength(1)
+    }
+  })
+
+  it('uses a NOT NULL test for scalars and a non-empty-array test for arrays', () => {
+    for (const column of PROFILE_COMPLETENESS_SCALAR_COLUMNS) {
+      expect(clauses).toContain(`${column}.not.is.null`)
+    }
+    for (const column of PROFILE_COMPLETENESS_ARRAY_COLUMNS) {
+      expect(clauses).toContain(`${column}.neq.{}`)
+    }
+  })
+
+  it('contains no PostgREST-reserved character that would need quoting', () => {
+    // `,` separates clauses and `.` separates column/operator/value — both are
+    // structural here. `:` `(` `)` inside a value would break the parse.
+    for (const clause of clauses) {
+      expect(clause).not.toMatch(/[:()]/)
     }
   })
 })

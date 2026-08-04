@@ -1,7 +1,10 @@
 import * as Sentry from '@sentry/nextjs'
 
 import { candidateEmbeddingText, jobEmbeddingText } from '@/lib/ai/embed-text'
-import { isProfileEffectivelyEmpty } from '@/lib/ai/profile-completeness'
+import {
+  isProfileEffectivelyEmpty,
+  NON_EMPTY_PROFILE_OR_FILTER,
+} from '@/lib/ai/profile-completeness'
 import { embed } from '@/lib/ai/voyage'
 import { CapExceededError } from '@/lib/stripe/cap-enforcement'
 import { bumpCandidateEmbedding, type CandidateForEmbedding } from '@/lib/db/candidates'
@@ -29,6 +32,23 @@ import { createServiceClient } from '@/lib/supabase/service'
 
 const PER_RUN_ROW_CAP = 256
 const VOYAGE_BATCH_CAP = 128
+
+// ---------------------------------------------------------------------------
+// Review 2026-08-04 H1 — the SF-1 contamination guard used to be applied ONLY
+// after selection. A row it dropped kept `candidate_embedding IS NULL`, so it
+// stayed in the selector and was re-selected on every 10-minute run. With no
+// ORDER BY, PostgREST returns heap order (effectively stable), so once the
+// effectively-empty population reached PER_RUN_ROW_CAP the sweep's entire
+// window was consumed by rows it would always discard and NO candidate was
+// ever embedded again — a silent, total outage of the product's core feature.
+// 256 is easy to reach: a name-only CSV import, or a run of abandoned
+// apply-form submissions.
+//
+// NON_EMPTY_PROFILE_OR_FILTER (src/lib/ai/profile-completeness.ts) is the SQL
+// complement of isProfileEffectivelyEmpty, so those rows never enter the
+// window at all. It lives beside the predicate it mirrors so the two cannot
+// be edited apart.
+// ---------------------------------------------------------------------------
 
 type CandidateRowFromDB = CandidateForEmbedding
 
@@ -106,6 +126,13 @@ export const embedBatch = inngest.createFunction(
           'id, organization_id, full_name, current_role_title, current_company, location, skills, seniority_level, years_experience, sector_tags, embedding_version',
         )
         .is('candidate_embedding', null)
+        // H1: keep effectively-empty profiles OUT of the window entirely.
+        .or(NON_EMPTY_PROFILE_OR_FILTER)
+        // Defence in depth: a deterministic oldest-first order means that even
+        // if some row does become permanently unembeddable, it can only ever
+        // block newer rows behind it — never the whole sweep, and never
+        // silently (see the drift counter below).
+        .order('created_at', { ascending: true })
         .limit(PER_RUN_ROW_CAP)
       if (scopeOrgId) {
         query = query.eq('organization_id', scopeOrgId)
@@ -121,6 +148,13 @@ export const embedBatch = inngest.createFunction(
       const rows = (rawRows ?? []) as unknown as CandidateRowFromDB[]
       if (rows.length === 0) return
 
+      // Drift counter for the post-fetch guard. Every row here was selected
+      // BECAUSE SQL judged it non-empty, so a drop means the SQL and TS
+      // predicates disagree (a new ProfileCompletenessFields key one side
+      // doesn't know about, or a whitespace-only string SQL counts as
+      // present). Reported once per sweep — never per row.
+      let postFetchDrops = 0
+
       const byOrg = groupByOrg(rows)
       for (const [orgId, orgRows] of byOrg) {
         // Per-org batching keeps ai_usage.organization_id truthful — never
@@ -129,17 +163,17 @@ export const embedBatch = inngest.createFunction(
           for (const batch of chunk(orgRows, VOYAGE_BATCH_CAP)) {
             const inputs = batch.map((r) => candidateEmbeddingText(r, null))
             // Defensive: drop rows that produced an empty input string
-            // (shouldn't happen — at minimum the row has a full_name). ALSO
-            // drop rows that are SF-1 contaminated: a bare `Name: X.` string
-            // passes the non-empty-text check above but is still an
-            // effectively-empty profile (this is exactly how the SF-1
-            // production candidate got embedded from nothing). Skipped rows
-            // keep a NULL embedding and are re-evaluated on later sweeps —
-            // correct, a name-only candidate isn't searchable anyway.
-            const usable = batch
+            // (shouldn't happen — at minimum the row has a full_name). The
+            // SF-1 contamination guard (a bare `Name: X.` string passes the
+            // non-empty-text check but is still an effectively-empty profile)
+            // now runs in SQL above; keeping it here as well is defence in
+            // depth against the two predicates drifting apart — hence the
+            // counter rather than a silent filter (review H1).
+            const withText = batch
               .map((r, idx) => ({ row: r, text: inputs[idx] ?? '' }))
               .filter((p) => p.text.trim().length > 0)
-              .filter((p) => !isProfileEffectivelyEmpty(p.row))
+            const usable = withText.filter((p) => !isProfileEffectivelyEmpty(p.row))
+            postFetchDrops += withText.length - usable.length
             if (usable.length === 0) continue
 
             const { vectors } = await embed({
@@ -181,6 +215,19 @@ export const embedBatch = inngest.createFunction(
           // Continue to next org — one bad org shouldn't block the rest.
         }
       }
+
+      // Ids and counts only — no PII (CLAUDE.md).
+      if (postFetchDrops > 0) {
+        Sentry.captureMessage('embed-batch: candidate selector/guard mismatch', {
+          level: 'warning',
+          tags: {
+            layer: 'inngest',
+            function: 'embed-batch',
+            subop: 'sweep-candidates-drift',
+          },
+          extra: { selected: rows.length, post_fetch_drops: postFetchDrops },
+        })
+      }
     })
 
     // ------------------------------------------------------------------
@@ -195,6 +242,11 @@ export const embedBatch = inngest.createFunction(
           'id, organization_id, title, location, job_type, hiring_context, salary_min, salary_max, currency, description, embedding_version',
         )
         .is('job_embedding', null)
+        // No emptiness guard exists on the jobs side, so there is no
+        // starvation today — the deterministic order is here so that if one is
+        // ever added, it must go in the SELECTOR (H1's lesson) rather than
+        // post-fetch, and a stuck row can only block newer rows behind it.
+        .order('created_at', { ascending: true })
         .limit(PER_RUN_ROW_CAP)
       if (scopeOrgId) {
         query = query.eq('organization_id', scopeOrgId)
