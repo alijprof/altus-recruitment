@@ -25,7 +25,11 @@ export const CV_NO_TEXT_MESSAGE =
   'This PDF has no extractable text — it looks like a scan or photo. Retrying the same file won’t work; upload a text-based PDF or Word version instead.'
 
 // SF-4/SF-5 fix: shown when a candidate_cvs row never received a Storage
-// object (client PUT never completed) — reconciler `fail-no-file` outcome.
+// object (client PUT never completed) — reconciler `fail-no-file` outcome,
+// and parse-cv's download step when the object is missing at parse time.
+// The substring 'never finished uploading' is LOAD-BEARING —
+// isUploadIncomplete below keys off it, and the UI uses it to withhold a
+// doomed "Try again" button (there is no stored file to re-parse).
 export const CV_UPLOAD_INCOMPLETE_MESSAGE =
   'The CV file never finished uploading. Please upload it again.'
 
@@ -33,6 +37,13 @@ export const CV_UPLOAD_INCOMPLETE_MESSAGE =
 // requeue budget (reconciler `fail-stuck` outcome), and when confirmApplyAction
 // fails to enqueue the parse (SF-4).
 export const CV_STUCK_MESSAGE = 'Parsing didn’t start. You can retry now, or upload the CV again.'
+
+// The PostgREST `ilike` pattern the reconciler's resume-budget-capped step
+// uses to find rows parked by the AI budget. It and isBudgetCapped MUST key
+// off the same substring — a copy edit that drops 'AI budget' would silently
+// disable the auto-resume the UI promises (review 2026-08-04 L1). Asserted
+// by tests/unit/lib/cv/parse-messages.test.ts.
+export const CV_BUDGET_CAPPED_ILIKE_PATTERN = '%AI budget%'
 
 /** Matches the budget-capped message. Load-bearing substring: 'AI budget'. */
 export function isBudgetCapped(parseError: string | null | undefined): boolean {
@@ -45,4 +56,18 @@ export function isBudgetCapped(parseError: string | null | undefined): boolean {
  */
 export function isUnparseableSource(parseError: string | null | undefined): boolean {
   return (parseError ?? '').includes('no extractable text')
+}
+
+/**
+ * Matches the upload-incomplete message. Load-bearing substring:
+ * 'never finished uploading'.
+ *
+ * Review 2026-08-04 C2: this state has NO storage object behind it, so a
+ * "Try again" button is a doomed affordance — the re-parse re-runs the same
+ * download and fails identically, and (before this fix) overwrote the honest
+ * reason with the generic one. The UI branch keyed on this predicate offers
+ * re-upload guidance instead of a retry.
+ */
+export function isUploadIncomplete(parseError: string | null | undefined): boolean {
+  return (parseError ?? '').includes('never finished uploading')
 }

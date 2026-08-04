@@ -15,6 +15,7 @@ import {
   CV_BUDGET_CAPPED_MESSAGE,
   CV_NO_TEXT_MESSAGE,
   CV_PARSE_FAILED_MESSAGE,
+  CV_UPLOAD_INCOMPLETE_MESSAGE,
 } from '@/lib/cv/parse-messages'
 import {
   getCandidateCV,
@@ -95,6 +96,7 @@ async function markCvFailed(args: {
   try {
     const supabase = createServiceClient()
     let userMessage = args.userMessage
+    let parseErrorDetail = args.parseErrorDetail
     if (args.preserveExistingMessage) {
       const existing = await getCandidateCV(supabase, args.candidateCvId)
       if (
@@ -104,13 +106,20 @@ async function markCvFailed(args: {
         existing.data.parse_error.length > 0
       ) {
         userMessage = existing.data.parse_error
+        // Review 2026-08-04 L5: preserve BOTH or NEITHER. Overwriting the
+        // detail while keeping the message destroyed the more useful stored
+        // root cause ('extract-text yielded 0 chars for mime …',
+        // 'download-cv: storage object not found') and replaced it with a
+        // bare `${error.name}: ${status}`. `undefined` leaves the column
+        // untouched (see updateCandidateCVParse).
+        parseErrorDetail = undefined
       }
     }
     await updateCandidateCVParse(supabase, {
       id: args.candidateCvId,
       status: 'failed',
       parseError: userMessage,
-      parseErrorDetail: args.parseErrorDetail,
+      parseErrorDetail,
     })
   } catch (err) {
     Sentry.captureException(
@@ -226,15 +235,44 @@ export const parseCVOnUpload = inngest.createFunction(
       // We serialize the bytes as a base64 string because Inngest's step
       // output must be JSON-serializable, and ArrayBuffer/Uint8Array are
       // not. Base64 round-trip is the standard pattern.
-      const base64Buffer = await step.run('download-cv', async () => {
+      //
+      // Review 2026-08-04 C2: this step used to THROW on a missing object, so
+      // the in-body catch below wrote the GENERIC failure copy — destroying
+      // the honest `fail-no-file` reason the reconciler had stored, on the
+      // very first retry. It now returns a discriminated result so the caller
+      // can record the accurate message BEFORE the NonRetriableError fires.
+      const downloaded = await step.run('download-cv', async () => {
         const supabase = createServiceClient()
         const { data: blob, error } = await supabase.storage.from('cvs').download(storage_path)
         if (error || !blob) {
-          throw new NonRetriableError(`download failed: ${error?.message ?? 'no data'}`)
+          // Distinguish "the object isn't there" (an abandoned upload — no
+          // retry can ever succeed) from a transient Storage fault. Storage
+          // errors carry no PII; we keep only the status/name either way.
+          const statusCode = (error as { statusCode?: string | number } | null)?.statusCode
+          const missing =
+            String(statusCode ?? '') === '404' || /not\s*found/i.test(error?.message ?? '')
+          return {
+            ok: false as const,
+            missing,
+            reason: missing ? 'object-not-found' : (error?.name ?? 'no-data'),
+          }
         }
         const ab = await blob.arrayBuffer()
-        return Buffer.from(ab).toString('base64')
+        return { ok: true as const, base64: Buffer.from(ab).toString('base64') }
       })
+      if (!downloaded.ok) {
+        if (downloaded.missing) {
+          await markCvFailed({
+            candidateCvId: candidate_cv_id,
+            userMessage: CV_UPLOAD_INCOMPLETE_MESSAGE,
+            parseErrorDetail: 'download-cv: storage object not found',
+          })
+        }
+        // A transient fault falls through to the in-body catch, which writes
+        // the generic message — correct, because a retry there CAN succeed.
+        throw new NonRetriableError(`download failed: ${downloaded.reason}`)
+      }
+      const base64Buffer = downloaded.base64
 
       // Step 2: extract plain text. Capped at MAX_CV_TEXT_CHARS so a
       // novel-length resume doesn't blow Haiku's context window.
@@ -434,6 +472,14 @@ export const parseCVOnUpload = inngest.createFunction(
         candidateCvId: candidate_cv_id,
         userMessage: FAILED_USER_MESSAGE,
         parseErrorDetail: `${name}: ${status}`,
+        // Review 2026-08-04 C2: the in-body branches above (no-extractable-
+        // text, storage-object-missing) already wrote an honest, specific
+        // message for this same invocation. Without this flag the generic
+        // copy overwrote it here — the exact SF-1 clobber onFailure was
+        // fixed for. Safe: retryParseAction resets the row to 'pending' with
+        // a NULL parse_error before re-dispatching, so a stale message from
+        // a PREVIOUS attempt can never be resurrected.
+        preserveExistingMessage: true,
       })
       throw err
     }

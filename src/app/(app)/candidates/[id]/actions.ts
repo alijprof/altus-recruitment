@@ -5,6 +5,7 @@ import { redirect } from 'next/navigation'
 import * as Sentry from '@sentry/nextjs'
 import { z } from 'zod'
 
+import { isUploadIncomplete } from '@/lib/cv/parse-messages'
 import { createActivity } from '@/lib/db/activities'
 import {
   createCandidateCV,
@@ -289,12 +290,27 @@ export async function retryParseAction(rawInput: unknown): Promise<ActionResult>
   }
   const cv = cvResult.data
 
-  // Reset parsing state. Clearing parse_error explicitly so the UI flips
-  // from the amber alert to the in-progress indicator immediately.
+  // Review 2026-08-04 C2: a row whose upload never completed has NO storage
+  // object. Re-parsing it re-runs the identical download, fails identically,
+  // and used to replace the honest stored reason with generic copy. The UI
+  // withholds the retry button for this state (isUploadIncomplete branch in
+  // cv-review-panel.tsx); this is the server-side half of the same guard, so
+  // a direct action call can't destroy the message either.
+  if (isUploadIncomplete(cv.parse_error)) {
+    return {
+      ok: false,
+      error: 'That upload never finished — please upload the CV file again.',
+    }
+  }
+
+  // Reset parsing state. Clearing parse_error (and the technical detail behind
+  // it) explicitly so the UI flips from the amber alert to the in-progress
+  // indicator immediately and no stale root cause survives onto a pending row.
   const updateResult = await updateCandidateCVParse(supabase, {
     id: cv.id,
     status: 'pending',
     parseError: null,
+    parseErrorDetail: null,
   })
   if (!updateResult.ok) {
     return { ok: false, error: 'Couldn’t reset parsing state. Please try again.' }

@@ -20,7 +20,12 @@ import {
   SheetTitle,
   SheetTrigger,
 } from '@/components/ui/sheet'
-import { CV_NO_TEXT_MESSAGE, isBudgetCapped, isUnparseableSource } from '@/lib/cv/parse-messages'
+import {
+  CV_PARSE_FAILED_MESSAGE,
+  isBudgetCapped,
+  isUnparseableSource,
+  isUploadIncomplete,
+} from '@/lib/cv/parse-messages'
 import type { CandidateCvRow } from '@/lib/db/candidate-cvs'
 
 import { acceptCVFieldsAction, retryParseAction } from './actions'
@@ -200,11 +205,25 @@ function FailedState({
 }) {
   const { isPending, onRetry } = useRetryParse(candidateCvId)
 
-  // Batch A item 1 / SF-1 fix: both predicates now come from the shared
-  // src/lib/cv/parse-messages.ts module so the server (parse-cv.ts) and
-  // this client component can never drift on the sentinel substrings.
+  // Batch A item 1 / SF-1 fix: the predicates all come from the shared
+  // src/lib/cv/parse-messages.ts module so the server (parse-cv.ts,
+  // reconcile-cv-parses.ts) and this client component can never drift on the
+  // sentinel substrings.
   const budgetCapped = isBudgetCapped(parseError)
   const unparseable = isUnparseableSource(parseError)
+  const uploadIncomplete = isUploadIncomplete(parseError)
+
+  // Review 2026-08-04 C2: render what the server actually stored. The generic
+  // branch used to hardcode its body copy and never read `parseError` at all,
+  // so every message this codebase writes that isn't budget-capped or
+  // unparseable (CV_UPLOAD_INCOMPLETE_MESSAGE, CV_STUCK_MESSAGE) was
+  // write-only — the recruiter saw boilerplate instead of the real reason.
+  //
+  // PII-safe by construction: parse_error only ever holds one of the
+  // exported message constants in src/lib/cv/parse-messages.ts (or the
+  // retry-dispatch string in retryParseAction). The technical root cause
+  // lives in parse_error_detail, which NO UI reads.
+  const message = parseError ?? CV_PARSE_FAILED_MESSAGE
 
   if (budgetCapped) {
     return (
@@ -253,7 +272,31 @@ function FailedState({
         <AlertTriangle className="size-4" aria-hidden />
         <AlertTitle className="text-sm font-semibold">CV parsing failed.</AlertTitle>
         <AlertDescription className="space-y-3">
-          <p className="text-xs font-normal">{parseError ?? CV_NO_TEXT_MESSAGE}</p>
+          <p className="text-xs font-normal">{message}</p>
+        </AlertDescription>
+      </Alert>
+    )
+  }
+
+  if (uploadIncomplete) {
+    // Review 2026-08-04 C2: there is NO storage object for this row — the
+    // client PUT never completed. A retry re-runs the identical download,
+    // fails identically, and (before this fix) replaced the honest reason
+    // with the generic one. Same no-retry shape as the unparseable branch;
+    // the candidate page's existing upload control is the way out.
+    return (
+      <Alert
+        variant="default"
+        className="border-amber-200 bg-amber-50 text-amber-900 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-100"
+      >
+        <AlertTriangle className="size-4" aria-hidden />
+        <AlertTitle className="text-sm font-semibold">CV upload didn&apos;t finish.</AlertTitle>
+        <AlertDescription className="space-y-3">
+          <p className="text-xs font-normal">{message}</p>
+          <p className="text-xs font-normal">
+            Use the <span className="font-semibold">Upload CV</span> control on this page to add the
+            file again — there&apos;s nothing stored to retry.
+          </p>
         </AlertDescription>
       </Alert>
     )
@@ -267,7 +310,7 @@ function FailedState({
       <AlertTriangle className="size-4" aria-hidden />
       <AlertTitle className="text-sm font-semibold">CV parsing failed.</AlertTitle>
       <AlertDescription className="space-y-3">
-        <p className="text-xs font-normal">You can retry now or continue and parse later.</p>
+        <p className="text-xs font-normal">{message}</p>
         <Button
           size="sm"
           variant="outline"
