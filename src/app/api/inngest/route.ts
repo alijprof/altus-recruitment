@@ -14,6 +14,7 @@ import { precomputeMatchesForJob } from '@/lib/inngest/functions/precompute-matc
 import { probeFfmpeg } from '@/lib/inngest/functions/probe-ffmpeg'
 import { reconcileCvParses } from '@/lib/inngest/functions/reconcile-cv-parses'
 import { refreshOutlookSubscription } from '@/lib/inngest/functions/refresh-outlook-subscription'
+import { scoreApplicationMatch } from '@/lib/inngest/functions/score-application-match'
 import { specAudioRetentionSweep } from '@/lib/inngest/functions/spec-audio-retention-sweep'
 import { specDraftCleanupSweep } from '@/lib/inngest/functions/spec-draft-cleanup-sweep'
 import { stripeReconcile } from '@/lib/inngest/functions/stripe-reconcile'
@@ -59,5 +60,10 @@ export const { GET, POST, PUT } = serve({
     // 15-min CV-pipeline reconciler: stuck-pending sweep, budget-cap auto-
     // resume, and unmerged-profile self-heal.
     reconcileCvParses,
+    // Remediation 2026-07-31 (Steele Charles feature review, SF-3) — cached
+    // Sonnet match score for a single candidate x job pair, fired the
+    // moment a recruiter adds a candidate to a job (any of the four
+    // application-create paths).
+    scoreApplicationMatch,
   ],
 })

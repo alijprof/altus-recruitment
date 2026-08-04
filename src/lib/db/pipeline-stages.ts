@@ -49,6 +49,15 @@ export type PipelineCardData = {
   // a terminal stage badge. Always selected by listApplicationsForJob /
   // listAllApplicationsByStage so the chip renders consistently.
   decline_reason: Enums<'decline_reason'> | null
+  // SF-3 (Steele Charles feature review 2026-07-31): cached Sonnet match
+  // score for this candidate x job pair. Null until the async
+  // application/score-match Inngest function lands a score — a fresh
+  // application always renders with no score for the first few seconds.
+  // Populated by listApplicationsForJob / listAllApplicationsByStage via
+  // listLatestMatchScoresForPairs (src/lib/db/ai-summaries.ts); never
+  // populated for float rows (job_id is null, nothing to score against).
+  match_score: number | null
+  match_note: string | null
 }
 
 export type GroupedByStage = Record<PipelineStage, PipelineCardData[]>

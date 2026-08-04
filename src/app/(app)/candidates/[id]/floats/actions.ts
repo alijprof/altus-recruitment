@@ -4,6 +4,7 @@ import * as Sentry from '@sentry/nextjs'
 import { revalidatePath } from 'next/cache'
 import { z } from 'zod'
 
+import { enqueueApplicationMatchScore } from '@/lib/inngest/enqueue-match-score'
 import { ENTITLEMENT_BLOCKED_MESSAGE, requireEntitledOrg } from '@/lib/stripe/require-entitlement'
 import { createClient as createSupabaseClient } from '@/lib/supabase/server'
 import type { Enums, TablesInsert } from '@/types/database'
@@ -70,7 +71,7 @@ export async function addFloatAction(
   const { data, error } = await supabase
     .from('applications')
     .insert(payload)
-    .select('id')
+    .select('id, organization_id, candidate_id, job_id')
     .single()
 
   if (error) {
@@ -79,6 +80,18 @@ export async function addFloatAction(
     })
     return { ok: false, formError: 'Could not add float.' }
   }
+
+  // SF-3: floats always have job_id = null (no job to score against yet),
+  // so this is a permanent no-op today — enqueueApplicationMatchScore
+  // returns immediately on a null jobId. Wiring it means a future
+  // float-with-job path gets match scoring for free.
+  await enqueueApplicationMatchScore({
+    organizationId: data.organization_id,
+    applicationId: data.id,
+    candidateId: data.candidate_id,
+    jobId: data.job_id,
+    userId: userData.user.id,
+  })
 
   // Optional recruiter note — logged as an activity so it shows up in the
   // candidate's timeline. Non-fatal if it fails; Sentry-capture and
