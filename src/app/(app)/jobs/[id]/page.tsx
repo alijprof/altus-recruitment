@@ -34,8 +34,20 @@ export default async function JobDetailPage({
   const job = jobResult.data
 
   // Audit §4.11 — detail-view audit ONLY here (NOT inside getJob, which is
-  // also called from list/edit/server-action contexts that would pollute
-  // the log). Mirrors the candidates convention.
+  // also called from list/edit/server-action contexts that would pollute the
+  // log).
+  //
+  // L7: this deliberately does NOT mirror the candidates convention — that
+  // one audits inside getCandidate (src/lib/db/candidates.ts) because
+  // getCandidate is only ever called from the detail page. getJob is not, so
+  // the call site is the correct place here. The earlier comment claimed the
+  // opposite of the established pattern.
+  //
+  // M4: this render body re-runs on every revalidatePath for the route (add
+  // candidate, move stage, decline, place, add job ad) and on prefetch, which
+  // used to file a `view` row each time. Deduping happens in the record_audit
+  // function itself (migration 20260804140000) — per (actor, entity, hour) —
+  // so every write path gets it, not just this one.
   await recordViewAudit(supabase, 'job', id)
 
   const applicationsResult = await listApplicationsForJob(supabase, id)

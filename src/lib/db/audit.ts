@@ -38,6 +38,14 @@ type RecordAuditClient = {
  * resolves org + actor from the caller's session). NEVER throws and NEVER
  * returns a rejected promise — a failed audit write must not break page
  * rendering. Mirrors getCandidate's inline try/catch verbatim.
+ *
+ * Review 2026-08-04 M4: callers may fire this far more often than a human
+ * actually opened the record — the audit lives in RSC render bodies, which
+ * Next re-runs on every revalidatePath for the route and on prefetch.
+ * De-duplication is handled INSIDE record_audit (migration 20260804140000),
+ * per (actor, entity, hour), so it applies to every write path including
+ * getCandidate's inline call. Deliberately NOT applied to `entity_type =
+ * 'search'`: each search is a distinct event.
  */
 export async function recordViewAudit(
   supabase: SupabaseClient<Database>,

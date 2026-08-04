@@ -33,6 +33,11 @@ export default async function ClientDetailPage({
   // Audit §4.11 — detail-view audit ONLY here (NOT inside getClient, which
   // is also called from list/edit/server-action contexts). `company`
   // matches the table name, which is what the audit_log index is keyed on.
+  //
+  // M4: re-renders triggered by revalidatePath (and route prefetch) used to
+  // file a duplicate `view` row every time. record_audit now dedupes per
+  // (actor, entity, hour) — see migration 20260804140000 — so the compliance
+  // log records access rather than render count.
   await recordViewAudit(supabase, 'company', id)
 
   // Pre-fetch all four tabs' data so the client component receives them as
