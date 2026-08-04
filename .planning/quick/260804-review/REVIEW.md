@@ -12,7 +12,18 @@ findings:
   low: 10
   total: 25
 status: issues_found
-verdict: FIX-FIRST
+re_reviewed: 2026-08-04T18:25:00Z
+re_review_range: 7474f71..a34dd01
+re_review_findings:
+  fixed: 23
+  accepted_residual: 2
+  new_medium: 2
+  new_low: 6
+  new_info: 2
+re_review_verdict: SHIP-CONFIRMED
+v1_gate: closed (predicate corrected in a34dd01; prod returns 5 rows, both casualties in)
+v2_gate: open (observe first cron run — no heal-select exception)
+verdict: FIX-FIRST (superseded by re_review_verdict: SHIP)
 ---
 
 # Pre-UAT Code Review — `quick/sc-review-fixes-260804` vs `f7f7b50` (prod)
@@ -428,3 +439,502 @@ remediate — which is why the verdict is FIX-FIRST rather than SHIP.
 _Reviewed: 2026-08-04_
 _Reviewer: Claude (gsd-code-reviewer), depth=deep, adversarial_
 _Base: f7f7b50 (origin/main = prod) → HEAD 7474f71_
+
+---
+
+# Re-review — 15 fix commits (`7474f71..0b51618`)
+
+**Re-reviewed:** 2026-08-04T18:25:00Z
+**Scope:** delta only, adversarial. 34 files, +1849 / −190.
+**Verdict: SHIP** — conditional on two non-code verification gates (V1, V2 below).
+
+All five blockers (C1, C2, C3, H1, H2) and both decision items (H3, H4) are
+genuinely closed — I traced each failure scenario end to end rather than
+taking the fix report's word for it. Two new MEDIUM findings and five new LOWs
+came out of the delta; none blocks. The one-line M1 fix (RR-1) is worth taking
+before merge because it is in the same file the fixer already touched.
+
+## Gates re-run independently
+
+| Gate | Result |
+|------|--------|
+| `tsc --noEmit` | clean |
+| `eslint .` | 0 errors (24 warnings, all pre-existing, all `_`-prefixed test-double params) |
+| `vitest run` | 490 passed / 28 todo / **0 failed** (was 448 — +42) |
+| `next build` (dummy env) | completes; all routes emitted |
+
+The build also proves the new root-level `@/` imports resolve —
+`instrumentation-client.ts` and `sentry.server.config.ts` both now import
+`@/lib/observability/sentry-scrub`, which typecheck alone would not have
+caught if Turbopack's entry resolution differed. It does not.
+
+---
+
+## Blocking findings — verification
+
+### C1 — heal step reachability: **CLOSED (mechanism)**, 2 caveats
+
+Predicate moved from post-fetch into the selector. I checked it column-for-column
+against `isProfileEffectivelyEmpty` rather than trusting the claim:
+
+| Column | TS predicate | SQL filter | Agree? |
+|---|---|---|---|
+| `current_role_title` | null OR whitespace-only | `IS NULL` | SQL **stricter** |
+| `current_company` | null OR whitespace-only | `IS NULL` | SQL **stricter** |
+| `location` | null OR whitespace-only | `IS NULL` | SQL **stricter** |
+| `seniority_level` | null OR whitespace-only | `IS NULL` | SQL **stricter** |
+| `years_experience` | `!= null` | `IS NULL` | exact |
+| `skills` | null OR `length 0` | `<@ '{}'` | exact — column is `text[] not null default '{}'` (`20260513152244:219`), so there is no NULL hole |
+| `sector_tags` | null OR `length 0` | `<@ '{}'` | exact — same, `:218` |
+
+The only drift is whitespace-only strings, and it runs in the **safe
+direction**: SQL under-selects, so a drifted row never enters the window and
+cannot recreate the starvation. `postFetchDrops` catches it at runtime if it
+ever happens.
+
+Drain confirmed: a healed candidate stops satisfying the join and leaves the
+result set, and `ascending: true` drains oldest-first. `candidates!inner(id)`
+is unambiguous — `candidate_cvs` has exactly one FK to `candidates`
+(`candidate_id`, `20260513152244:246`).
+
+**V1 (must verify before claiming the casualties are healed).** The SQL
+requires **all five** scalar columns to be `IS NULL`. The brief describes the
+two casualties only as "skills empty, work/edu empty, extracted_data
+populated" — it does not establish the scalars. I cannot check: there is no
+local Supabase for this project. Run this read-only, PII-free query first:
+
+```sql
+select cv.id, cv.parsing_status, cv.created_at,
+       (cv.extracted_data is not null and cv.extracted_data <> '{}'::jsonb) as extracted_ok,
+       c.current_role_title is null as role_null,
+       c.current_company    is null as company_null,
+       c.location           is null as location_null,
+       c.seniority_level    is null as seniority_null,
+       c.years_experience   is null as years_null,
+       c.skills      <@ '{}'        as skills_empty,
+       c.sector_tags <@ '{}'        as sectors_empty
+from public.candidate_cvs cv
+join public.candidates c on c.id = cv.candidate_id
+where cv.candidate_id in ('62783324-4ec4-4d53-8405-cf913bfe7195',
+                          '3bf8ffe0-d54f-4649-aa1e-0949adb73b2c')
+order by cv.created_at;
+```
+
+All eight booleans must be true on at least one `parsing_status='complete'`
+row per candidate. If any is false, C1 is still open **for those rows** and
+they need a targeted fix, not a sweep.
+
+**V2 (must smoke).** The heal query's PostgREST syntax is exercised by **no
+test and no live execution**. `.neq('extracted_data', '{}')` on a `jsonb`
+column and `.containedBy('candidates.skills', [])` on an *embedded* column
+path are both forms with no precedent elsewhere in this codebase. If PostgREST
+rejects any of them the step Sentry-captures and `return`s — which is C1's
+exact outcome (heal never runs), just loudly. Confirm on the preview deploy
+that the first cron run logs no `heal-unmerged-profiles-select` exception.
+
+### C2 — write-only messages + doomed retry: **CLOSED**
+
+Traced the full chain, not just the render branch:
+
+1. `download-cv` now returns a discriminated result; a genuinely missing
+   object writes `CV_UPLOAD_INCOMPLETE_MESSAGE` **before** the
+   `NonRetriableError` fires (`parse-cv.ts:238-273`).
+2. The in-body catch gained `preserveExistingMessage: true`, so it no longer
+   clobbers that message.
+3. `onFailure` already preserved. The honest message survives all three write
+   points.
+4. `FailedState`'s generic branch renders `{parseError ?? CV_PARSE_FAILED_MESSAGE}`
+   — the hardcoded copy is gone.
+5. New `isUploadIncomplete` branch withholds the retry button and points at
+   the upload control; `retryParseAction` refuses the same state server-side,
+   so a direct action call cannot destroy the message either.
+
+Branch-order collision check (the thing that would silently break this): I
+tested all six stored messages against all three sentinel substrings —
+`'AI budget'`, `'no extractable text'`, `'never finished uploading'`. No
+message matches a sentinel it shouldn't, so no message lands in the wrong
+branch.
+
+PII check on the new raw render: grepped every `parseError:` writer. All write
+module constants or fixed literals; `parse-cv.ts:121` writes `markCvFailed`'s
+`userMessage`, which is only ever a constant or a preserved prior constant.
+The "PII-safe by construction" claim holds.
+
+`CV_STUCK_MESSAGE` correctly **keeps** its retry button — parsing never
+started there, so re-dispatch can genuinely succeed. That distinction is right.
+
+### C3 — timed-out retry dead end: **CLOSED, and the test proves it**
+
+`useRetryParse` takes `onSuccess`; `PendingState` clears `timedOut` and resets
+`startedAt`, which is a dependency of the poll effect — so the effect re-runs
+and installs a fresh interval with the budget restarted.
+
+I checked the test actually asserts the re-arm rather than rubber-stamping it
+(`tests/unit/app/candidates/cv-review-panel.test.tsx:135-166`). It:
+- proves polling is **provably dead** post-timeout — `expect(refresh).toHaveBeenCalledTimes(refreshesAtTimeout)` after five further ticks;
+- clicks retry, then asserts the timed-out alert is **gone**, the spinner is back, and the refresh count **increases**.
+
+A second test asserts a **failed** retry does not clear the latch.
+
+The reconciliation concern from the original finding is satisfied: the bug
+existed *because* React preserves the instance, and the test operates on a
+preserved instance. Re-arming within that instance is necessary and sufficient.
+(`startedAt` can never collide with its previous value here — the reset happens
+at least 5 minutes after mount.)
+
+### H1 — embed sweep starvation: **CLOSED**
+
+`NON_EMPTY_PROFILE_OR_FILTER` runs in the selector, ANDed with
+`candidate_embedding IS NULL` (supabase-js emits `or=(...)` as a separate,
+ANDed param — complement is correct). Empty profiles never enter the 256-row
+window. The TS guard is retained but now **counted**, so drift surfaces as a
+Sentry warning instead of silently re-creating the outage. Both sweeps gained
+`created_at ascending`. Drift tests pin the clause count, the per-type
+operators, and PostgREST-safe escaping.
+
+### H2 — un-clearable dashboard alarm: **CLOSED**
+
+14-day window **and** latest-`version`-only, with the count over distinct
+candidates so it agrees with the names rendered beneath it. The widget already
+unmounts at `total === 0`, which is now reachable: abandoned apply-form
+failures age out, superseded failures drop out. Version resolution fails open.
+
+### H3 — permanent daily false billing alert: **CLOSED**
+
+One retry on the `'processed'` stamp (skipped for missing-column errors, which
+are deterministic), 7-day upper bound so resolved-but-unstamped rows age out,
+and severity now `warning` unless a stuck row appeared in the last 24h.
+`.limit(500)` with a `truncated` flag. Two new tests cover the retry landing
+and both attempts failing.
+
+**SECURITY INVARIANT 4 unaffected** — the retry is on the *success* path only;
+failed processing still returns 500 and is never stamped `'processed'`.
+
+### H4 — shortlist spend: **CLOSED**
+
+Grepped every call site of `enqueueApplicationMatchScore`: `jobs/[id]/actions.ts`
+(add-to-job), `candidates/[id]/shortlist-actions.ts` (promote),
+`floats/actions.ts` (permanent no-op). `addToShortlistAction` no longer imports
+or calls it. **No shortlist-create path enqueues.**
+
+---
+
+## M-fixes — new-defect check
+
+### M4 (`record_audit` view dedupe) — mechanically correct; one policy point
+
+This was the highest-risk fix and it is well built:
+
+- **`entity_type = 'search'` is explicitly excluded** — the search telemetry
+  this whole batch exists to create is preserved. This was the specific risk
+  raised, and it is handled (`:83`).
+- Only `p_action = 'view'`; create / update / delete / **export** never reach
+  the guard, so no discrete business event is ever swallowed.
+- `actor_user_id is not distinct from auth.uid()` — correct NULL handling.
+- Signature, `security definer`, `set search_path = public` and the org-context
+  RAISE reproduced verbatim from `20260513152244:104-126`.
+- **Privileges survive.** `create or replace` preserves them, and the file
+  restates `revoke all from public` / `revoke execute from anon` /
+  `grant execute to authenticated` — so the `20260804120100` anon revoke is not
+  regressed despite this filename sorting after it. That is exactly the trap
+  to avoid here, and it was avoided.
+- Returns the existing row id rather than NULL, keeping `returns uuid` truthful.
+
+**RR-6 (INFO — founder sign-off, not a defect).** The dedupe also covers
+**candidate** detail views, because `getCandidate`'s inline audit goes through
+the same `record_audit`. CLAUDE.md states "Every access to candidate data is
+logged" as a foundational constraint. Assessed against it: hour-granularity
+access logging is defensible and industry-normal, and the collapsed rows are
+overwhelmingly `revalidatePath` re-renders and prefetches rather than human
+views — so the log becomes *more* truthful about who accessed what, not less.
+But this narrows a stated project constraint, and that belongs in a founder
+decision rather than a migration comment. Note it is **clock-hour bucketed,
+not a sliding window**: views at 10:59 and 11:01 both log, while 10:01 and
+10:59 collapse.
+
+M4 is FILE ONLY — until pushed, the phantom-view inflation continues. Correctly
+disclosed, and there is no pre/post-migration code skew either way.
+
+### M5 / M6 crash-window semantics — correct
+
+M5's send-before-clear inverts the risk into the harmless direction: if the
+UPDATE fails after a successful send, the row keeps its honest budget-capped
+message and parse-cv overwrites the state itself. The old order left a
+message-less `'pending'` spinner for ≥15 minutes. Per-**row** try/catch replaces
+per-org, so one bad row no longer skips the org's backlog, and `checkCap`'s own
+throw is caught separately.
+
+M6's hour-bucketed dedup ids bound concurrent re-parses without becoming a
+permanent lock, and `retryParseAction` deliberately sends **no** id so a
+recruiter's manual retry can never be swallowed. That reasoning is right.
+
+### New findings from the delta
+
+**RR-1 (MEDIUM) — M1's dedup key turns transient skips into a 24-hour blind spot.**
+`src/lib/inngest/enqueue-match-score.ts:40`
+`id: score-match:${candidateId}:${jobId}` dedups for 24h. But several scorer
+outcomes write **no summary**: `{skipped:'empty-profile'}`,
+`{stopped:'cost-ceiling'}`, `{scored:false, reason:'cap-exceeded'|'inputs-unavailable'}`,
+and — after M2 — an exhausted version-lookup retry. In each of those, any
+further enqueue for the same pair within 24h is silently dropped.
+
+Most reachable path: a candidate added to a job *before* their CV has parsed is
+skipped as `empty-profile`; the reconciler heals the profile ~15 minutes later;
+nothing re-scores, and re-adding won't either. M2 compounds it — a failing
+version lookup burns the 3 retries and then locks the pair out for a day.
+
+The in-code justification ("the cached summary would have satisfied it anyway")
+holds only when a summary was actually written; on the skip paths none was.
+Notably the same fixer bucketed the *reconciler's* dedup ids by hour and wrote,
+correctly, that a bare row id "would permanently lock a row out" — that
+reasoning wasn't carried across to this key.
+
+**Fix (one line):** `id: \`score-match:${args.candidateId}:${args.jobId}:${Math.floor(Date.now() / 3_600_000)}\``
+— keeps the double-click / fast-promote collapse M1 actually targets (those
+happen within seconds) while capping the blind spot at an hour.
+Non-blocking: the `/matches` Explain button writes through
+`matches/actions.ts` → `upsertMatchSummary` directly, so a manual escape hatch
+exists.
+
+**RR-2 (MEDIUM) — C1's squatter mechanism survives in miniature, now loud.**
+`src/lib/inngest/functions/reconcile-cv-parses.ts:439`
+`if (!hasAnyUsableField(parsedSubset)) continue` still exits with **no state
+change and no counter**, and a merge that populates only out-of-set fields
+(email/phone) is counted (`noProgressRows`) but still not drained. Either way
+the row is re-selected on every sweep and permanently occupies a slot; 25 such
+rows re-block the step. `.neq('extracted_data','{}')` only excludes literally
+empty blobs, not blobs with no *usable* fields. The counters make this loud
+rather than silent — a genuine improvement over the original — but the
+mechanism is the same one C1 described. Consider a `heal_checked_at` stamp so
+un-healable rows leave the window.
+
+**RR-3 (LOW) — the reconciler hardcodes the completeness filters; only
+embed-batch derives them.**
+`profile-completeness.ts:51-53` instructs "add it here AND to the two query
+builders that consume these arrays", but the reconciler's heal step spells out
+seven `.is(...)` / `.containedBy(...)` calls inline rather than consuming
+`PROFILE_COMPLETENESS_*`. A new `ProfileCompletenessFields` key would fail the
+drift tests for the constants and for `NON_EMPTY_PROFILE_OR_FILTER` (derived),
+while the reconciler silently keeps the old filter set — reintroducing
+RR-2-style squatting. Caught at runtime by `postFetchDrops`, not at build time.
+
+**RR-4 (LOW) — M5 × C2 interaction race.**
+M5 now sends the `cv/uploaded` event while the row is still `'failed'` with
+`CV_BUDGET_CAPPED_MESSAGE`, and C2/L5 added `preserveExistingMessage: true` to
+parse-cv's in-body catch. If parse-cv reached that catch before the subsequent
+UPDATE landed, it would preserve the stale budget message; the UI would show
+the budget branch and the reconciler's `ilike '%AI budget%'` would resume the
+row again next sweep. The window is one DB round-trip versus Inngest dispatch →
+HTTP → cold start → the `check-ai-budget` step, so it is very unlikely, and it
+self-corrects on the following sweep. Worth a comment, not a code change.
+
+**RR-5 (LOW) — H1's whitespace-only drift is tested-in.**
+`profile-completeness.test.ts:43` asserts a whitespace-only `location` is
+"empty" for TS, while the SQL uses `not.is.null` and counts it as present. Such
+a row is selected, dropped post-fetch, keeps a NULL embedding forever, and is
+re-selected every 10 minutes — H1 in miniature, now loud via `postFetchDrops`.
+No writer plausibly produces whitespace-only values, so exposure is low.
+
+**RR-7 (LOW) — H2's version map can truncate.**
+`dashboard.ts:588-594` orders by `version` **desc globally across candidates**
+with `limit 1000`. On truncation a candidate can be absent from the map, and
+`maxVersionByCandidate.get(id) === r.version` is then false, so its row is
+filtered out — under-reporting. Correct direction for an alarm, unreachable at
+anchor scale, and documented in-code.
+
+**RR-8 (INFO) — H3's 7-day ceiling means "no alert" no longer implies "no
+problem"** for an event stuck longer than a week. Acceptable because the
+subscription-level Stripe↔local reconciliation is the primary safety net, but
+the founder should know the alert is now bounded.
+
+**RR-9 (INFO) — M7 residual, now symmetric.** `event.exception.values[].value`
+and `breadcrumb.message` remain unscrubbed on **both** SDKs. That was true
+before and is unchanged; the finding was the *asymmetry*, and the two configs
+are now identical by construction (one shared module).
+
+Verified with no new defects: **M2** (hard stop, plain `Error` so Inngest's
+retries handle the transient case), **M3** (`.limit(pairs.length * 3)` applied
+per chunk against the total — over-provisioned, never under; newest-per-pair
+preserved across chunks by the `out.has(key)` guard; 100-id chunking bounds URL
+length), **M7** (shared `scrub`/`PII_KEYS`, `beforeBreadcrumb` strips
+`url`/`from`/`to`, `stripQueryString` avoids `new URL()` which throws on
+relative inputs), **M8** (`pg_proc` loop, no-ops when absent, `public` + `anon`
+only, committed `20260804130000` untouched), **L1–L5, L7–L9**.
+
+---
+
+## Verified-CLEAN properties — regression spot-check
+
+- **Stripe SECURITY INVARIANT 4**: short-circuit at `route.ts:191` is
+  byte-identical (`seen.found && (seen.status === null || seen.status === 'processed')`).
+  The `it.each(['received','error'])` invariant test and the PGRST204
+  degradation test are unmodified and pass.
+- **Tenancy re-verification**: both `organization_id` comparisons intact at
+  `score-application-match.ts:150-153`; `precompute-matches-for-job.ts:116,212`
+  untouched.
+- **REVOKE exclusions**: `20260804120100` unmodified; `record_audit_anonymous`
+  still deliberately excluded; M4 explicitly restates the anon revoke on
+  `record_audit` so `create or replace` cannot regress it.
+- **Append-only migrations**: no committed migration modified; both new files
+  additive and idempotent.
+- **No server-only module imports a browser client**: the two new leaf modules
+  (`postgrest-errors.ts`, `sentry-scrub.ts`) are pure and correctly omit
+  `server-only` — `sentry-scrub` is imported by the browser SDK config, and the
+  production build confirms it bundles.
+
+---
+
+## Re-review verdict: **SHIP**
+
+No code change blocks the merge. Both original residuals (L6, L10) remain
+correctly accepted.
+
+**Two must-do gates before the deploy is described as having healed production
+data** — neither is a code change:
+
+- **V1** — run the read-only query above and confirm both casualties satisfy
+  all eight predicate columns. Until then, "the two casualties self-heal on the
+  first cron run" is unproven, and that is the one claim the founder would act on.
+- **V2** — on the preview deploy, confirm the first `reconcile-cv-parses` run
+  logs no `heal-unmerged-profiles-select` exception. The heal query's PostgREST
+  syntax has never been executed.
+
+**Recommended before merge (optional, one line):** RR-1 — hour-bucket the
+match-score dedup id.
+
+**Carry into the browser pre-smoke:** L10 (refresh the job/pipeline page before
+judging a missing badge) and the RR-1 blind spot (a candidate added to a job
+before their CV parses will not get a badge — expected, not a bug).
+
+---
+
+_Re-reviewed: 2026-08-04_
+_Reviewer: Claude (gsd-code-reviewer), depth=deep, adversarial delta pass_
+_Range: 7474f71..0b51618 (15 commits)_
+
+---
+
+## Re-review addendum — `a34dd01` (V1 fix + RR-1)
+
+**Checked:** 2026-08-04T18:35:00Z · targeted pass over `0b51618..a34dd01` only.
+**Result: SHIP-CONFIRMED.** No new defect. One stale comment block (RR-10, doc-only).
+
+V1 did its job: the C1 predicate mirrored `isProfileEffectivelyEmpty` (all five
+scalars null), and prod showed 62783324 has `location` set and 3bf8ffe0 has
+role + company set — **both casualties were excluded**. The gate caught a fix
+that would have shipped looking correct and healed nothing.
+
+### 1. New defects in the edited regions — none found
+
+**`.filter('candidates.work_experience', 'eq', '[]')` — I do NOT know this to
+be invalid, and have positive reason to think it is fine.**
+- The dotted-path form is the *documented* supabase-js v2 pattern for filtering
+  an embedded resource (`.select('…, cities!inner(name)').filter('cities.name',
+  'eq', 'Bali')`). `.filter()` is the generic escape hatch and passes the column
+  through exactly as `.is()` / `.containedBy()` do on the adjacent lines.
+- The value `[]` is not PostgREST-reserved. The reserved set for filter values
+  is `,` `.` `:` `(` `)` `"` plus the `{}` array-literal form; `[` and `]` pass
+  through and are cast to the column type, giving `work_experience = '[]'::jsonb`.
+- Semantics verified: `work_experience` and `education` are
+  `jsonb not null default '[]'::jsonb` (`20260522094604:26-27`), so `eq.[]` is
+  the complete "empty" test with no NULL hole — the in-code claim is accurate.
+
+**The load-bearing safety claim holds.** The looser predicate now selects
+candidates with populated scalars, so "D-08's fill-empty-only merge makes this
+safe by construction" had to be true rather than asserted. Verified in
+`markCandidateFieldsFromCV`: scalars write only when
+`candidateValue == null || candidateValue === ''`; arrays only when
+`Array.isArray(candidateValue) && candidateValue.length === 0`;
+`work_experience`/`education` guarded identically. A candidate's existing
+`location` / `current_role_title` / `current_company` **cannot** be overwritten
+by the heal. This is the property that makes healing 62783324 and 3bf8ffe0 safe.
+
+**Embedded-shape check:** `candidate_cvs.candidate_id → candidates.id` is
+many-to-one, so PostgREST returns `candidates` as a single object, matching the
+widened `UnmergedProfileRow`. Even if it did not, `(undefined ?? []).length === 0`
+and `isEmptyJsonbArray(undefined)` both yield `true`, so the guard would
+degrade to always-proceed — and the merge is idempotent and fill-empty-only.
+Fail-safe either way.
+
+**Drift direction unchanged and still safe:** TS `isEmptyJsonbArray` treats SQL
+NULL and JSON `null` as empty; SQL `eq.[]` does not. SQL ⊆ TS, so the selector
+under-selects and `postFetchDrops` cannot fire from this direction. Cannot
+recreate starvation.
+
+**RR-1 applied correctly** — `score-match:<cand>:<job>:<hourBucket>`, mirroring
+the reconciler's requeue ids; test updated to compute the same bucket.
+
+### 2. Removing the `getCandidateForEmbedding` fetch — nothing lost
+
+Its result fed **only** the `isProfileEffectivelyEmpty` post-fetch guard.
+`markCandidateFieldsFromCV` takes `candidateId` + `parsed` and performs its own
+read to decide which columns are empty, so the merge path never consumed that
+row. The three heal-signal columns it now needs come from the `!inner` join in
+the same round-trip. Net: one fewer query per row (25 per sweep).
+
+The only thing dropped is the `if (!candidateResult.ok) continue` vanished-row
+guard, which `candidates!inner` already makes near-dead (the join proves the
+candidate existed at select time, and candidate deletes cascade to
+`candidate_cvs`). A delete racing the merge now surfaces as a
+`heal-unmerged-profile` Sentry capture instead of a silent skip — marginally
+noisier for a benign race, not wrong.
+
+### 3. Two-predicates-now-distinct — no test breaks, one stale comment
+
+- No test asserts the two predicates match. `profile-completeness.test.ts`
+  covers `isProfileEffectivelyEmpty`, the `PROFILE_COMPLETENESS_*` drift guard,
+  and `NON_EMPTY_PROFILE_OR_FILTER` — none references the reconciler. Confirmed
+  by re-running the suite: **490 passed / 0 failed**.
+- The contamination guard is genuinely untouched at its sites:
+  `parse-cv.ts:386`, `embed-batch.ts:175`, `precompute-matches-for-job.ts:233`,
+  `match-card.tsx:65` (+ `score-application-match.ts:190`). The reconciler is
+  cleanly out of that set.
+- `profile-completeness.ts:13-15`'s list of contamination sites never included
+  the reconciler, so it is still accurate.
+
+**RR-10 (LOW, doc-only) — stale guidance in `src/lib/ai/profile-completeness.ts:43-54`.**
+That block still says "**Both sweeps** now express the same predicate in their
+SQL selector" and "add it here AND to **the two query builders** that consume
+these arrays … (both call sites keep the TS predicate as a post-fetch guard)".
+After `a34dd01` there is exactly **one** consumer (`embed-batch.ts:130`); the
+reconciler now uses `HEAL_SIGNAL_COLUMNS` and its own SQL. This matters more
+than a typo: V1 failed *because* the heal step was designed to mirror this
+predicate, and the comment still instructs the next developer to restore that
+mirror. Reword to name embed-batch as the sole consumer and state explicitly
+that the reconciler's heal signal is deliberately different (merge-applied vs
+profile-contaminated).
+
+### Gates re-run independently
+
+`tsc --noEmit` clean · `vitest run` **490 passed / 28 todo / 0 failed** ·
+`eslint .` **0 errors** (24 pre-existing test-double warnings).
+
+### Verification gates — status
+
+- **V1 — CLOSED.** Predicate corrected; prod read-only run returns exactly 5
+  rows platform-wide, both casualties included, oldest-first, well under the
+  25-row cap. First cron run heals everything in one pass.
+- **V2 — still open, now a 30-second observation.** If the prod run of the
+  corrected predicate went through PostgREST, V2 is already satisfied; if it
+  was raw SQL, the semantics are proven but the PostgREST spelling is not.
+  Either way: on the preview/prod deploy, confirm the first
+  `reconcile-cv-parses` run logs **no** `heal-unmerged-profiles-select`
+  exception, and that the 5 rows drop to 0 on the following sweep.
+
+### Residual re-rating
+
+**RR-2 (MEDIUM) — aperture widened, keep watching.** The looser predicate
+enlarges the population of rows that can be selected but never drained: a
+candidate whose CV parsed but yielded no skills / work history / education
+merges "successfully", populates nothing in `HEAL_SIGNAL_COLUMNS`, and is
+re-selected every sweep. It is counted (`noProgressRows`) and Sentry-warned, so
+it is loud rather than silent, and prod shows only 5 eligible rows today — but
+the `heal selector/guard mismatch` warning is now the signal that this is
+accumulating. If `noProgressRows` is persistently non-zero after deploy, add a
+`heal_checked_at` stamp so un-healable rows leave the window.
+
+All other residuals (RR-3/4/5/7, RR-8/9, L6, L10) unchanged.
+
+---
+
+_Addendum: 2026-08-04 · range `0b51618..a34dd01` · verdict **SHIP-CONFIRMED**_

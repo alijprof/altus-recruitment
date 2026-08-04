@@ -40,18 +40,28 @@ export type ProfileCompletenessFields = {
  * The `candidates` columns this predicate reads, split by the SQL shape
  * needed to express "empty" for each.
  *
- * Review 2026-08-04 C1/H1: `isProfileEffectivelyEmpty` used to be applied
- * ONLY post-fetch, so rows it discarded kept their pre-fetch state and were
- * re-selected on every sweep — permanently occupying the row cap (the
- * reconciler's heal step could never reach the two production casualties;
- * the embed sweep could silently stop embedding anyone at all). Both sweeps
- * now express the same predicate in their SQL selector, and these arrays are
- * the single source of truth for WHICH columns that SQL must mention.
+ * Review 2026-08-04 H1: `isProfileEffectivelyEmpty` used to be applied ONLY
+ * post-fetch in the embed sweep, so rows it discarded kept their pre-fetch
+ * state and were re-selected every run — permanently occupying the row cap
+ * (the sweep could silently stop embedding anyone at all). The embed-batch
+ * candidate sweep now expresses this predicate in its SQL selector
+ * (NON_EMPTY_PROFILE_OR_FILTER below), and these arrays are the single
+ * source of truth for WHICH columns that SQL must mention.
  *
- * If `ProfileCompletenessFields` gains a field, add it here AND to the two
- * query builders that consume these arrays, or the SQL and TS predicates
- * drift (both call sites keep the TS predicate as a post-fetch guard and
- * Sentry-warn when it drops a row, which is how drift surfaces).
+ * If `ProfileCompletenessFields` gains a field, add it here AND to the
+ * embed-batch query builder, or the SQL and TS predicates drift (the call
+ * site keeps the TS predicate as a post-fetch guard and Sentry-warns when it
+ * drops a row, which is how drift surfaces).
+ *
+ * Re-review 2026-08-04 V1 — deliberately NOT used by the reconciler's heal
+ * step. Its selector keys on the narrower "merge never applied" signal
+ * (skills + work_experience + education all empty, HEAL_SIGNAL_COLUMNS in
+ * reconcile-cv-parses.ts): a candidate with scalars set but zero
+ * skills/work/education still needs the heal, and mirroring THIS predicate
+ * there excluded the exact production rows the heal was written for. Do not
+ * "re-unify" the two predicates — they answer different questions
+ * (contamination: "is there anything to embed/score?" vs heal: "did the
+ * parse's high-value fields ever land?").
  *
  * NULL-checked (scalar) columns vs empty-array-checked (`text[] not null
  * default '{}'`) columns need different PostgREST operators, hence two lists.
