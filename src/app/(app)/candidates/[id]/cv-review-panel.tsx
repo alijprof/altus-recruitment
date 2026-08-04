@@ -103,7 +103,7 @@ function ReviewSheetBody({ extracted }: { extracted: ExtractedShape }) {
  * panels below. Factored out so PendingState's post-timeout retry button
  * and FailedState's retry buttons behave identically.
  */
-function useRetryParse(candidateCvId: string) {
+function useRetryParse(candidateCvId: string, onSuccess?: () => void) {
   const [isPending, startTransition] = useTransition()
   const onRetry = () => {
     startTransition(async () => {
@@ -113,6 +113,10 @@ function useRetryParse(candidateCvId: string) {
         return
       }
       toast.success('Retrying — parsing again…')
+      // Review 2026-08-04 C3: callers that hold local "we've been waiting too
+      // long" state MUST reset it here. Without this the retry succeeded on
+      // the server while the component stayed frozen in its timed-out state.
+      onSuccess?.()
     })
   }
   return { isPending, onRetry }
@@ -122,12 +126,27 @@ function PendingState({ candidateCvId }: { candidateCvId: string }) {
   const router = useRouter()
   // Lazy useState initializer runs once on mount — keeps the impure Date.now()
   // out of the render body (calling it during render trips react-hooks/purity).
-  const [startedAt] = useState(() => Date.now())
+  const [startedAt, setStartedAt] = useState(() => Date.now())
   // SF-5 fix: the 5-minute cap used to only stop the poll and leave "Parsing…"
   // forever with no way out. Now it flips into an honest timed-out state with
   // a retry affordance.
   const [timedOut, setTimedOut] = useState(false)
-  const { isPending, onRetry } = useRetryParse(candidateCvId)
+  // Review 2026-08-04 C3: `timedOut` used to be a one-way latch. The poll
+  // effect cleared its interval and never re-ran (startedAt was frozen by the
+  // lazy initialiser and router is stable), and retryParseAction's
+  // revalidatePath re-rendered <PendingState> at the identical tree position
+  // with parsing_status still 'pending' — so React reused the instance and
+  // the latch survived. The user got a success toast and an amber alert that
+  // never changed again, with no polling: a dead end with extra steps, i.e.
+  // the very SF-5 failure this state was added to close.
+  //
+  // Resetting startedAt is what re-arms it: startedAt is a dependency of the
+  // poll effect, so a new value tears down the (already-cleared) interval and
+  // installs a fresh one, with the 5-minute budget restarted.
+  const { isPending, onRetry } = useRetryParse(candidateCvId, () => {
+    setTimedOut(false)
+    setStartedAt(Date.now())
+  })
 
   // Poll the route every 3s while the CV is still parsing. router.refresh()
   // re-fetches the RSC tree, so when the Inngest job marks the row
