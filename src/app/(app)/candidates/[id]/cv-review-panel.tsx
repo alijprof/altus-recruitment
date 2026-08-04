@@ -20,6 +20,7 @@ import {
   SheetTitle,
   SheetTrigger,
 } from '@/components/ui/sheet'
+import { CV_NO_TEXT_MESSAGE, isBudgetCapped, isUnparseableSource } from '@/lib/cv/parse-messages'
 import type { CandidateCvRow } from '@/lib/db/candidate-cvs'
 
 import { acceptCVFieldsAction, retryParseAction } from './actions'
@@ -82,11 +83,9 @@ function ReviewSheetBody({ extracted }: { extracted: ExtractedShape }) {
           >
             <div className="min-w-0 flex-1 space-y-0.5">
               <p className="text-muted-foreground text-xs font-normal">{label}</p>
-              <p className="break-words text-sm font-normal">{formatValue(value)}</p>
+              <p className="text-sm font-normal break-words">{formatValue(value)}</p>
             </div>
-            {isConfidence(confidence) ? (
-              <ConfidenceBadge confidence={confidence} />
-            ) : null}
+            {isConfidence(confidence) ? <ConfidenceBadge confidence={confidence} /> : null}
           </div>
         )
       })}
@@ -94,11 +93,36 @@ function ReviewSheetBody({ extracted }: { extracted: ExtractedShape }) {
   )
 }
 
-function PendingState() {
+/**
+ * Shared retry transition + toast handling for the amber "failed"/"stuck"
+ * panels below. Factored out so PendingState's post-timeout retry button
+ * and FailedState's retry buttons behave identically.
+ */
+function useRetryParse(candidateCvId: string) {
+  const [isPending, startTransition] = useTransition()
+  const onRetry = () => {
+    startTransition(async () => {
+      const result = await retryParseAction({ candidateCvId })
+      if (!result.ok) {
+        toast.error(result.error)
+        return
+      }
+      toast.success('Retrying — parsing again…')
+    })
+  }
+  return { isPending, onRetry }
+}
+
+function PendingState({ candidateCvId }: { candidateCvId: string }) {
   const router = useRouter()
   // Lazy useState initializer runs once on mount — keeps the impure Date.now()
   // out of the render body (calling it during render trips react-hooks/purity).
   const [startedAt] = useState(() => Date.now())
+  // SF-5 fix: the 5-minute cap used to only stop the poll and leave "Parsing…"
+  // forever with no way out. Now it flips into an honest timed-out state with
+  // a retry affordance.
+  const [timedOut, setTimedOut] = useState(false)
+  const { isPending, onRetry } = useRetryParse(candidateCvId)
 
   // Poll the route every 3s while the CV is still parsing. router.refresh()
   // re-fetches the RSC tree, so when the Inngest job marks the row
@@ -113,12 +137,42 @@ function PendingState() {
     const id = setInterval(() => {
       if (Date.now() - startedAt > MAX_DURATION_MS) {
         clearInterval(id)
+        setTimedOut(true)
         return
       }
       router.refresh()
     }, INTERVAL_MS)
     return () => clearInterval(id)
   }, [router, startedAt])
+
+  if (timedOut) {
+    return (
+      <Alert
+        variant="default"
+        className="border-amber-200 bg-amber-50 text-amber-900 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-100"
+      >
+        <AlertTriangle className="size-4" aria-hidden />
+        <AlertTitle className="text-sm font-semibold">
+          This is taking longer than expected.
+        </AlertTitle>
+        <AlertDescription className="space-y-3">
+          <p className="text-xs font-normal">
+            Parsing normally finishes in under 30 seconds. You can retry now, or upload the CV again
+            if the problem continues.
+          </p>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={onRetry}
+            disabled={isPending}
+            className="bg-background"
+          >
+            {isPending ? 'Retrying…' : 'Try again'}
+          </Button>
+        </AlertDescription>
+      </Alert>
+    )
+  }
 
   return (
     <div className="bg-card space-y-3 rounded-md border p-4">
@@ -144,27 +198,15 @@ function FailedState({
   candidateCvId: string
   parseError?: string | null
 }) {
-  const [isPending, startTransition] = useTransition()
+  const { isPending, onRetry } = useRetryParse(candidateCvId)
 
-  // Batch A item 1: a budget-capped parse is NOT retriable — retrying fails
-  // identically until the monthly AI budget resets or is raised. Detect it by
-  // the message the Inngest function writes (BUDGET_CAPPED_USER_MESSAGE) and
-  // swap the misleading "Try again" button for an honest "paused" message + a
-  // link to the billing page, rather than inviting a retry that can't succeed.
-  const isBudgetCapped = (parseError ?? '').includes('AI budget')
+  // Batch A item 1 / SF-1 fix: both predicates now come from the shared
+  // src/lib/cv/parse-messages.ts module so the server (parse-cv.ts) and
+  // this client component can never drift on the sentinel substrings.
+  const budgetCapped = isBudgetCapped(parseError)
+  const unparseable = isUnparseableSource(parseError)
 
-  const onRetry = () => {
-    startTransition(async () => {
-      const result = await retryParseAction({ candidateCvId })
-      if (!result.ok) {
-        toast.error(result.error)
-        return
-      }
-      toast.success('Retrying — parsing again…')
-    })
-  }
-
-  if (isBudgetCapped) {
+  if (budgetCapped) {
     return (
       <Alert
         variant="default"
@@ -177,24 +219,55 @@ function FailedState({
         <AlertDescription className="space-y-3">
           <p className="text-xs font-normal">
             Parsing resumes automatically when your monthly AI budget resets. To raise it sooner,
-            contact us. Everything else still works — the CV is saved.
+            contact us. Everything else still works — the CV is saved. If the budget has since reset
+            or been raised, a retry works right now too.
           </p>
-          <Button asChild size="sm" variant="outline" className="bg-background">
-            <Link href="/settings/billing">View AI budget</Link>
-          </Button>
+          <div className="flex flex-wrap gap-2">
+            <Button asChild size="sm" variant="outline" className="bg-background">
+              <Link href="/settings/billing">View AI budget</Link>
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={onRetry}
+              disabled={isPending}
+              className="bg-background"
+            >
+              {isPending ? 'Retrying…' : 'Try again now'}
+            </Button>
+          </div>
+        </AlertDescription>
+      </Alert>
+    )
+  }
+
+  if (unparseable) {
+    // SF-1 fix: retrying the SAME bytes cannot produce a different result —
+    // no "Try again" button here. The candidate page's existing upload
+    // control is the re-upload path; we don't add a second uploader.
+    return (
+      <Alert
+        variant="default"
+        className="border-amber-200 bg-amber-50 text-amber-900 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-100"
+      >
+        <AlertTriangle className="size-4" aria-hidden />
+        <AlertTitle className="text-sm font-semibold">CV parsing failed.</AlertTitle>
+        <AlertDescription className="space-y-3">
+          <p className="text-xs font-normal">{parseError ?? CV_NO_TEXT_MESSAGE}</p>
         </AlertDescription>
       </Alert>
     )
   }
 
   return (
-    <Alert variant="default" className="border-amber-200 bg-amber-50 text-amber-900 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-100">
+    <Alert
+      variant="default"
+      className="border-amber-200 bg-amber-50 text-amber-900 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-100"
+    >
       <AlertTriangle className="size-4" aria-hidden />
       <AlertTitle className="text-sm font-semibold">CV parsing failed.</AlertTitle>
       <AlertDescription className="space-y-3">
-        <p className="text-xs font-normal">
-          You can retry now or continue and parse later.
-        </p>
+        <p className="text-xs font-normal">You can retry now or continue and parse later.</p>
         <Button
           size="sm"
           variant="outline"
@@ -232,9 +305,7 @@ function CompleteState({
       if (count === 0) {
         toast.message('No empty fields to fill — candidate already up to date.')
       } else {
-        toast.success(
-          `Filled ${count} ${count === 1 ? 'field' : 'fields'} from the CV.`,
-        )
+        toast.success(`Filled ${count} ${count === 1 ? 'field' : 'fields'} from the CV.`)
       }
       setOpen(false)
       // Refresh so the candidate's newly filled fields render immediately.
@@ -246,9 +317,7 @@ function CompleteState({
     <div className="bg-card space-y-3 rounded-md border p-4">
       <div className="flex items-center justify-between gap-3">
         <h3 className="text-sm font-semibold">Latest CV</h3>
-        <span className="text-muted-foreground text-xs font-normal">
-          Parsing complete
-        </span>
+        <span className="text-muted-foreground text-xs font-normal">Parsing complete</span>
       </div>
       <Sheet open={open} onOpenChange={setOpen}>
         <SheetTrigger asChild>
@@ -262,16 +331,10 @@ function CompleteState({
           aria-describedby="cv-review-description"
         >
           <SheetHeader>
-            <SheetTitle className="text-sm font-semibold">
-              Review extracted data
-            </SheetTitle>
-            <SheetDescription
-              id="cv-review-description"
-              className="text-xs font-normal"
-            >
-              AI-extracted fields from {candidateFullName}&apos;s CV. Accept all
-              fills any empty candidate fields — your manually-entered values
-              are never overwritten.
+            <SheetTitle className="text-sm font-semibold">Review extracted data</SheetTitle>
+            <SheetDescription id="cv-review-description" className="text-xs font-normal">
+              AI-extracted fields from {candidateFullName}&apos;s CV. Accept all fills any empty
+              candidate fields — your manually-entered values are never overwritten.
             </SheetDescription>
           </SheetHeader>
           <Separator />
@@ -295,7 +358,7 @@ function CompleteState({
 
 export function CvReviewPanel({ candidateCv, candidateFullName }: CvReviewPanelProps) {
   if (candidateCv.parsing_status === 'pending') {
-    return <PendingState />
+    return <PendingState candidateCvId={candidateCv.id} />
   }
   if (candidateCv.parsing_status === 'failed') {
     return <FailedState candidateCvId={candidateCv.id} parseError={candidateCv.parse_error} />

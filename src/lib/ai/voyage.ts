@@ -57,6 +57,44 @@ function calcEmbedCostPence(model: ApprovedEmbeddingModel, totalTokens: number):
   return Math.ceil((PRICING_PENCE_PER_MTOK_INPUT[model] * totalTokens) / 1_000_000)
 }
 
+/**
+ * Log a zero-cost `<purpose>_failed` ai_usage row on a terminal Voyage
+ * failure — closes the same calls-vs-parses telemetry gap as claude.ts's
+ * runWithLogging (SF-... 2026-07-31 Steele Charles feature review). Never
+ * called for CapExceededError — that's a cap decision, not an attempted
+ * call. Never throws.
+ */
+async function logFailedEmbedUsage(args: {
+  organizationId: string
+  userId?: string | null
+  purpose: EmbedPurpose
+  latencyMs: number
+}): Promise<void> {
+  try {
+    const supabase = createServiceClient()
+    const { error: logError } = await supabase.rpc('record_ai_usage', {
+      p_organization_id: args.organizationId,
+      p_model: 'voyage-3',
+      p_purpose: `${args.purpose}_failed`,
+      p_input_tokens: 0,
+      p_output_tokens: 0,
+      p_cost_pence: 0,
+      p_latency_ms: args.latencyMs,
+      ...(args.userId ? { p_user_id: args.userId } : {}),
+    })
+    if (logError) {
+      Sentry.captureException(new Error(`record_ai_usage:${logError.code ?? 'rpc_error'}`), {
+        tags: { layer: 'ai', helper: 'record_ai_usage', model: 'voyage-3' },
+      })
+    }
+  } catch (logErr) {
+    const name = logErr instanceof Error ? logErr.name : 'UnknownError'
+    Sentry.captureException(new Error(`record_ai_usage:${name}`), {
+      tags: { layer: 'ai', helper: 'record_ai_usage', model: 'voyage-3' },
+    })
+  }
+}
+
 // Singleton SDK client. Constructed at module load — the env key is .optional()
 // in the Zod schema (Plan 0 boots in dev without it). At call time, an absent
 // key surfaces as an SDK auth error from `embed()`, captured to Sentry by the
@@ -123,13 +161,28 @@ export async function embed(args: EmbedArgs): Promise<EmbedResult> {
   }
 
   const started = Date.now()
-  const response = await voyageClient.embed({
-    input: args.inputs,
-    model: 'voyage-3',
-    inputType: args.inputType,
-    outputDimension: 1024,
-    outputDtype: 'float',
-  })
+  let response
+  try {
+    response = await voyageClient.embed({
+      input: args.inputs,
+      model: 'voyage-3',
+      inputType: args.inputType,
+      outputDimension: 1024,
+      outputDtype: 'float',
+    })
+  } catch (err) {
+    // Terminal failure — the cap check above already passed, so this is a
+    // genuine failed attempt (not a cap decision). Log a zero-cost
+    // `_failed` row, then re-throw unchanged so existing callers'
+    // catch/CapExceededError handling is untouched.
+    await logFailedEmbedUsage({
+      organizationId: args.organizationId,
+      userId: args.userId,
+      purpose: args.purpose,
+      latencyMs: Date.now() - started,
+    })
+    throw err
+  }
 
   const vectors = (response.data ?? []).map((d) => d.embedding ?? [])
   const totalTokens = response.usage?.totalTokens ?? 0
@@ -152,10 +205,9 @@ export async function embed(args: EmbedArgs): Promise<EmbedResult> {
       // supabase.rpc() resolves with { error } on a DB failure — it does NOT
       // throw. Check it explicitly or cost-log gaps are invisible (per-tenant
       // cost logging is non-negotiable, CLAUDE.md). Wrap to code only (PII).
-      Sentry.captureException(
-        new Error(`record_ai_usage:${logError.code ?? 'rpc_error'}`),
-        { tags: { layer: 'ai', helper: 'record_ai_usage', model: 'voyage-3' } },
-      )
+      Sentry.captureException(new Error(`record_ai_usage:${logError.code ?? 'rpc_error'}`), {
+        tags: { layer: 'ai', helper: 'record_ai_usage', model: 'voyage-3' },
+      })
     }
   } catch (logErr) {
     const name = logErr instanceof Error ? logErr.name : 'UnknownError'

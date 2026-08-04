@@ -1,12 +1,10 @@
 import * as Sentry from '@sentry/nextjs'
 
 import { candidateEmbeddingText, jobEmbeddingText } from '@/lib/ai/embed-text'
+import { isProfileEffectivelyEmpty } from '@/lib/ai/profile-completeness'
 import { embed } from '@/lib/ai/voyage'
 import { CapExceededError } from '@/lib/stripe/cap-enforcement'
-import {
-  bumpCandidateEmbedding,
-  type CandidateForEmbedding,
-} from '@/lib/db/candidates'
+import { bumpCandidateEmbedding, type CandidateForEmbedding } from '@/lib/db/candidates'
 import { bumpJobEmbedding, type JobForEmbedding } from '@/lib/db/jobs'
 import { inngest } from '@/lib/inngest/client'
 import { readStatus } from '@/lib/observability/inngest'
@@ -58,9 +56,7 @@ function chunk<T>(list: T[], size: number): T[][] {
   return out
 }
 
-function groupByOrg<T extends { organization_id: string }>(
-  rows: T[],
-): Map<string, T[]> {
+function groupByOrg<T extends { organization_id: string }>(rows: T[]): Map<string, T[]> {
   const out = new Map<string, T[]>()
   for (const r of rows) {
     const list = out.get(r.organization_id) ?? []
@@ -133,10 +129,17 @@ export const embedBatch = inngest.createFunction(
           for (const batch of chunk(orgRows, VOYAGE_BATCH_CAP)) {
             const inputs = batch.map((r) => candidateEmbeddingText(r, null))
             // Defensive: drop rows that produced an empty input string
-            // (shouldn't happen — at minimum the row has a full_name).
+            // (shouldn't happen — at minimum the row has a full_name). ALSO
+            // drop rows that are SF-1 contaminated: a bare `Name: X.` string
+            // passes the non-empty-text check above but is still an
+            // effectively-empty profile (this is exactly how the SF-1
+            // production candidate got embedded from nothing). Skipped rows
+            // keep a NULL embedding and are re-evaluated on later sweeps —
+            // correct, a name-only candidate isn't searchable anyway.
             const usable = batch
               .map((r, idx) => ({ row: r, text: inputs[idx] ?? '' }))
               .filter((p) => p.text.trim().length > 0)
+              .filter((p) => !isProfileEffectivelyEmpty(p.row))
             if (usable.length === 0) continue
 
             const { vectors } = await embed({

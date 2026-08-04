@@ -31,22 +31,14 @@ import { MatchCard } from './match-card'
 
 const MATCH_LIMIT = 10
 
-export default async function JobMatchesPage({
-  params,
-}: {
-  params: Promise<{ id: string }>
-}) {
+export default async function JobMatchesPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
   const supabase = await createSupabaseClient()
 
   const jobResult = await getJob(supabase, id)
   if (!jobResult.ok) {
     if (jobResult.code === 'not_found') notFound()
-    return (
-      <div className="text-destructive p-8">
-        Couldn&apos;t load this job. Please refresh.
-      </div>
-    )
+    return <div className="text-destructive p-8">Couldn&apos;t load this job. Please refresh.</div>
   }
   const job = jobResult.data
 
@@ -54,8 +46,7 @@ export default async function JobMatchesPage({
   // explicit organization_id to defend against service-role RLS bypass.
   // Read from the session via the SECURITY DEFINER RPC.
   const orgRpc = await supabase.rpc('current_organization_id')
-  const organizationId =
-    typeof orgRpc.data === 'string' ? orgRpc.data : null
+  const organizationId = typeof orgRpc.data === 'string' ? orgRpc.data : null
   if (!organizationId) {
     return (
       <div className="text-destructive p-8">
@@ -130,15 +121,15 @@ export default async function JobMatchesPage({
       </header>
 
       {errored ? (
-        <div className="text-destructive rounded-md border border-destructive/40 bg-destructive/5 p-6 text-sm">
+        <div className="text-destructive border-destructive/40 bg-destructive/5 rounded-md border p-6 text-sm">
           Couldn&apos;t load matches. Please refresh.
         </div>
       ) : matches.length === 0 ? (
         <Alert>
           <AlertTitle>Not indexed yet</AlertTitle>
           <AlertDescription>
-            This job hasn&apos;t been embedded yet. Matches will appear within
-            ~30 seconds — refresh shortly.
+            This job hasn&apos;t been embedded yet. Matches will appear within ~30 seconds — refresh
+            shortly.
           </AlertDescription>
         </Alert>
       ) : (
@@ -151,6 +142,16 @@ export default async function JobMatchesPage({
               current_company: row.current_company,
               location: row.location,
               market_status: row.market_status,
+              // HybridCandidateRow (the vector-match RPC's return shape)
+              // doesn't carry these — this fallback only fires when the
+              // candidate vanished between the vector lookup and the
+              // listCandidatesByIds hydrate, an edge case where we can't
+              // know true completeness anyway. Defaulting to "empty" is the
+              // conservative choice for the SF-1 match-card badge.
+              seniority_level: null,
+              years_experience: null,
+              skills: [],
+              sector_tags: [],
             }
             const summary = summaryByCandidate.get(row.id) ?? null
             return (

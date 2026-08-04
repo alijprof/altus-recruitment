@@ -9,6 +9,7 @@ import {
   UnsupportedCVMimeTypeError,
 } from '@/lib/ai/cv-extract'
 import { candidateEmbeddingText } from '@/lib/ai/embed-text'
+import { isProfileEffectivelyEmpty } from '@/lib/ai/profile-completeness'
 import { embed } from '@/lib/ai/voyage'
 import {
   CV_BUDGET_CAPPED_MESSAGE,
@@ -335,6 +336,18 @@ export const parseCVOnUpload = inngest.createFunction(
             throw new Error(`getCandidateForEmbedding: ${candidateResult.code}`)
           }
           const candidate = candidateResult.data
+
+          // SF-1 contamination guard: a CV whose text extracted but whose
+          // structured fields all came back empty (Haiku returned nothing
+          // usable, or the 2.2a merge failed) would otherwise still get
+          // embedded from raw bytes with no profile behind it — findable
+          // and scorable from nothing but a name. Skip the embed entirely;
+          // the row keeps a NULL embedding and stays out of search/match
+          // results, which is correct — a name-only candidate isn't
+          // meaningfully searchable anyway.
+          if (isProfileEffectivelyEmpty(candidate)) {
+            return
+          }
 
           // The hybrid embedding input: structured candidate summary + raw
           // CV text (capped via MAX_CV_CHARS_FOR_EMBED inside the builder).
