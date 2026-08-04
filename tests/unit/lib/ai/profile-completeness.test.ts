@@ -3,7 +3,12 @@
  */
 import { describe, expect, it } from 'vitest'
 
-import { isProfileEffectivelyEmpty } from '@/lib/ai/profile-completeness'
+import {
+  isProfileEffectivelyEmpty,
+  PROFILE_COMPLETENESS_ARRAY_COLUMNS,
+  PROFILE_COMPLETENESS_COLUMNS,
+  PROFILE_COMPLETENESS_SCALAR_COLUMNS,
+} from '@/lib/ai/profile-completeness'
 
 // Minimal shape — only the fields the predicate consumes (full_name is
 // deliberately excluded, see the module's header comment for why).
@@ -40,5 +45,39 @@ describe('isProfileEffectivelyEmpty', () => {
 
   it('is false when sector_tags has a real entry', () => {
     expect(isProfileEffectivelyEmpty({ ...base, sector_tags: ['energy'] })).toBe(false)
+  })
+})
+
+// Review 2026-08-04 C1/H1 drift guard. The reconciler's heal selector and
+// the embed-batch sweep both express this predicate in SQL, built from the
+// exported column lists. If a field is added to the predicate but not to the
+// lists (or vice versa) the SQL and TS versions silently diverge, which is
+// exactly the starvation class those findings describe. These tests fail
+// loudly on that divergence.
+describe('PROFILE_COMPLETENESS_COLUMNS (SQL/TS drift guard)', () => {
+  it('is the concatenation of the scalar and array column lists', () => {
+    expect(PROFILE_COMPLETENESS_COLUMNS).toEqual([
+      ...PROFILE_COMPLETENESS_SCALAR_COLUMNS,
+      ...PROFILE_COMPLETENESS_ARRAY_COLUMNS,
+    ])
+  })
+
+  it('names exactly the keys the base fixture (an empty profile) carries', () => {
+    expect([...PROFILE_COMPLETENESS_COLUMNS].sort()).toEqual(Object.keys(base).sort())
+  })
+
+  it('every listed column, populated alone, flips the predicate to false', () => {
+    const nonEmptyValue: Record<string, unknown> = {
+      current_role_title: 'Engineer',
+      current_company: 'Altus',
+      location: 'Leeds',
+      seniority_level: 'senior',
+      years_experience: 5,
+      skills: ['Python'],
+      sector_tags: ['energy'],
+    }
+    for (const column of PROFILE_COMPLETENESS_COLUMNS) {
+      expect(isProfileEffectivelyEmpty({ ...base, [column]: nonEmptyValue[column] })).toBe(false)
+    }
   })
 })

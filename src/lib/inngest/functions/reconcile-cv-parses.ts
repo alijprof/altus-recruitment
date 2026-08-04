@@ -1,6 +1,9 @@
 import * as Sentry from '@sentry/nextjs'
 
-import { isProfileEffectivelyEmpty } from '@/lib/ai/profile-completeness'
+import {
+  isProfileEffectivelyEmpty,
+  PROFILE_COMPLETENESS_COLUMNS,
+} from '@/lib/ai/profile-completeness'
 import { CV_STUCK_MESSAGE, CV_UPLOAD_INCOMPLETE_MESSAGE } from '@/lib/cv/parse-messages'
 import { decideStuckPendingAction, STUCK_PENDING_GRACE_MS } from '@/lib/cv/reconcile-decisions'
 import {
@@ -283,15 +286,47 @@ export const reconcileCvParses = inngest.createFunction(
     // 62783324-4ec4-4d53-8405-cf913bfe7195 and
     // 3bf8ffe0-d54f-4649-aa1e-0949adb73b2c, Steele Charles org) self-heal
     // on the first run after deploy — a manual SQL backfill was ruled out.
+    //
+    // REVIEW 2026-08-04 C1 — the selector, not the post-fetch guard, is
+    // what decides reachability. The original query took the NEWEST 25
+    // 'complete' rows across all tenants and applied isProfileEffectivelyEmpty
+    // AFTER selection: healthy rows consumed every slot, skipped rows changed
+    // no state, and the same window was re-scanned every 15 minutes forever.
+    // Rows older than that window — including both named casualties — were
+    // permanently unreachable.
+    //
+    // The "needs heal" predicate now lives in SQL:
+    //   * `candidates!inner(...)` + per-column filters = the exact field set
+    //     isProfileEffectivelyEmpty inspects (see PROFILE_COMPLETENESS_*
+    //     in src/lib/ai/profile-completeness.ts).
+    //   * `extracted_data` must be a non-empty object, so a selected row can
+    //     actually contribute something.
+    // A healed candidate stops satisfying the join predicate and DROPS OUT of
+    // the result set, so the 25-row cap now drains instead of stalling — and
+    // `ascending: true` drains OLDEST-FIRST, which is where the casualties are.
     // -------------------------------------------------------------------
     await step.run('heal-unmerged-profiles', async () => {
       const supabase = createServiceClient()
       const { data: rawRows, error } = await supabase
         .from('candidate_cvs')
-        .select('id, candidate_id, extracted_data')
+        .select('id, candidate_id, extracted_data, candidates!inner(id)')
         .eq('parsing_status', 'complete')
         .not('extracted_data', 'is', null)
-        .order('created_at', { ascending: false })
+        // A '{}' blob can never populate a field — excluding it in SQL stops
+        // such a row from squatting a slot on every future run.
+        .neq('extracted_data', '{}')
+        // --- SQL mirror of isProfileEffectivelyEmpty ---------------------
+        .is('candidates.current_role_title', null)
+        .is('candidates.current_company', null)
+        .is('candidates.location', null)
+        .is('candidates.seniority_level', null)
+        .is('candidates.years_experience', null)
+        // `col <@ '{}'` is true only for an empty text[] — the array
+        // equivalent of the IS NULL checks above.
+        .containedBy('candidates.skills', [])
+        .containedBy('candidates.sector_tags', [])
+        // -----------------------------------------------------------------
+        .order('created_at', { ascending: true })
         .limit(HEAL_ROW_CAP)
       if (error) {
         Sentry.captureException(error, {
@@ -305,17 +340,26 @@ export const reconcileCvParses = inngest.createFunction(
       }
       const rows = (rawRows ?? []) as unknown as UnmergedProfileRow[]
 
+      // Drift counters. The SQL selector above and isProfileEffectivelyEmpty
+      // are meant to agree exactly; a non-zero count here means they don't
+      // (a new ProfileCompletenessFields key that only one side knows about,
+      // or a whitespace-only string that SQL sees as present and TS sees as
+      // empty). Reported once per sweep, never per row.
+      let postFetchDrops = 0
+      let noProgressRows = 0
+
       for (const row of rows) {
         try {
           const candidateResult = await getCandidateForEmbedding(supabase, row.candidate_id)
           if (!candidateResult.ok) continue
 
-          // Idempotency: a healed candidate is no longer effectively empty,
-          // so it's skipped on the next sweep. D-08 guarantees fill-empty-
-          // only (never overwrites), so re-running this on an already-
-          // healed candidate is safe even without this guard — the guard
-          // just avoids the wasted read+update round trip.
-          if (!isProfileEffectivelyEmpty(candidateResult.data)) continue
+          // Defence in depth: the row was selected BECAUSE the candidate is
+          // empty, so this should never fire. If it does, SQL and TS have
+          // drifted — count it and report below rather than skipping silently.
+          if (!isProfileEffectivelyEmpty(candidateResult.data)) {
+            postFetchDrops++
+            continue
+          }
 
           const parsedSubset = toParsedCVSubset(row.extracted_data)
           if (!hasAnyUsableField(parsedSubset)) continue
@@ -345,6 +389,15 @@ export const reconcileCvParses = inngest.createFunction(
             level: 'info',
             data: { fieldsPopulated: mergeResult.data.fieldsPopulated.length },
           })
+
+          // A merge that populated only fields OUTSIDE the completeness set
+          // (e.g. email/phone only) leaves the candidate still "effectively
+          // empty", so this row is re-selected on the next sweep. It cannot
+          // starve the cap silently — surface it.
+          const madeProgress = mergeResult.data.fieldsPopulated.some((f) =>
+            (PROFILE_COMPLETENESS_COLUMNS as readonly string[]).includes(f),
+          )
+          if (!madeProgress) noProgressRows++
         } catch (rowErr) {
           Sentry.captureException(
             formatErrorForSentry(rowErr, 'reconcile-cv-parses heal-unmerged-profiles row:'),
@@ -358,6 +411,23 @@ export const reconcileCvParses = inngest.createFunction(
             },
           )
         }
+      }
+
+      // Ids and counts only — no PII (CLAUDE.md).
+      if (postFetchDrops > 0 || noProgressRows > 0) {
+        Sentry.captureMessage('reconcile-cv-parses: heal selector/guard mismatch', {
+          level: 'warning',
+          tags: {
+            layer: 'inngest',
+            function: 'reconcile-cv-parses',
+            subop: 'heal-unmerged-profiles-drift',
+          },
+          extra: {
+            selected: rows.length,
+            post_fetch_drops: postFetchDrops,
+            no_progress_rows: noProgressRows,
+          },
+        })
       }
     })
   },

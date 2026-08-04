@@ -36,6 +36,44 @@ export type ProfileCompletenessFields = {
   sector_tags?: string[] | null
 }
 
+/**
+ * The `candidates` columns this predicate reads, split by the SQL shape
+ * needed to express "empty" for each.
+ *
+ * Review 2026-08-04 C1/H1: `isProfileEffectivelyEmpty` used to be applied
+ * ONLY post-fetch, so rows it discarded kept their pre-fetch state and were
+ * re-selected on every sweep — permanently occupying the row cap (the
+ * reconciler's heal step could never reach the two production casualties;
+ * the embed sweep could silently stop embedding anyone at all). Both sweeps
+ * now express the same predicate in their SQL selector, and these arrays are
+ * the single source of truth for WHICH columns that SQL must mention.
+ *
+ * If `ProfileCompletenessFields` gains a field, add it here AND to the two
+ * query builders that consume these arrays, or the SQL and TS predicates
+ * drift (both call sites keep the TS predicate as a post-fetch guard and
+ * Sentry-warn when it drops a row, which is how drift surfaces).
+ *
+ * NULL-checked (scalar) columns vs empty-array-checked (`text[] not null
+ * default '{}'`) columns need different PostgREST operators, hence two lists.
+ */
+export const PROFILE_COMPLETENESS_SCALAR_COLUMNS = [
+  'current_role_title',
+  'current_company',
+  'location',
+  'seniority_level',
+  'years_experience',
+] as const
+
+export const PROFILE_COMPLETENESS_ARRAY_COLUMNS = ['skills', 'sector_tags'] as const
+
+/** Every column `isProfileEffectivelyEmpty` inspects, in one list. */
+export const PROFILE_COMPLETENESS_COLUMNS = [
+  ...PROFILE_COMPLETENESS_SCALAR_COLUMNS,
+  ...PROFILE_COMPLETENESS_ARRAY_COLUMNS,
+] as const
+
+export type ProfileCompletenessColumn = (typeof PROFILE_COMPLETENESS_COLUMNS)[number]
+
 function isEmptyString(v: string | null | undefined): boolean {
   return v == null || v.trim().length === 0
 }
