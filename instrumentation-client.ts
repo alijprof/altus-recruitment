@@ -6,6 +6,8 @@
 
 import * as Sentry from '@sentry/nextjs'
 
+import { scrub, stripQueryString } from '@/lib/observability/sentry-scrub'
+
 Sentry.init({
   // Deliberate silent no-op when unset: the founder sets this in Vercel.
   // Sentry's SDK no-ops cleanly when `dsn` is undefined — no throw, no
@@ -19,14 +21,36 @@ Sentry.init({
   replaysOnErrorSampleRate: 0,
   sendDefaultPii: false,
 
-  // PII rule: org_id / user_id tags only, never PII. The client SDK never
-  // sends our own `extra`/`contexts` payloads (those are server-only), so
-  // mirroring the two deletes from sentry.server.config.ts's beforeSend is
-  // sufficient here — no need to port the recursive scrub() helper.
+  // PII rule: org_id / user_id tags only, never PII.
+  //
+  // Review 2026-08-04 M7: this used to delete only cookies + user.email, on
+  // the stated grounds that "the client SDK never sends our own
+  // extra/contexts payloads". That was wrong — client components capture raw
+  // error objects (manage-billing-button.tsx, start-checkout-button.tsx), so
+  // the recursive scrub() the server has always run is needed here too. Both
+  // configs now import the same implementation.
   beforeSend(event) {
     if (event.request?.cookies) delete event.request.cookies
     if (event.user?.email) delete event.user.email
+    if (event.request?.url) event.request.url = stripQueryString(event.request.url)
+    if (event.extra) event.extra = scrub(event.extra) as typeof event.extra
+    if (event.contexts) event.contexts = scrub(event.contexts) as typeof event.contexts
     return event
+  },
+
+  // Browser breadcrumbs record every fetch and route change. `/candidates?q=`
+  // and `/search?q=` carry recruiter-entered search terms, which CLAUDE.md
+  // forbids sending anywhere. The path itself is kept (it is what makes a
+  // breadcrumb useful); only the query string and fragment are dropped.
+  beforeBreadcrumb(breadcrumb) {
+    const data = breadcrumb.data
+    if (data) {
+      for (const key of ['url', 'from', 'to']) {
+        const value = data[key]
+        if (typeof value === 'string') data[key] = stripQueryString(value)
+      }
+    }
+    return breadcrumb
   },
 })
 

@@ -1,21 +1,10 @@
 import * as Sentry from '@sentry/nextjs'
 
-// PII scrub keys — CLAUDE.md forbids logging CV text or candidate emails.
-const PII_KEYS = ['email', 'phone', 'cv_text', 'extracted_data', 'candidate_email', 'full_name']
-
-function scrub(obj: unknown): unknown {
-  if (!obj || typeof obj !== 'object') return obj
-  if (Array.isArray(obj)) return obj.map(scrub)
-  const out: Record<string, unknown> = {}
-  for (const [k, v] of Object.entries(obj as Record<string, unknown>)) {
-    if (PII_KEYS.includes(k)) {
-      out[k] = '[REDACTED]'
-    } else {
-      out[k] = scrub(v)
-    }
-  }
-  return out
-}
+// PII scrub — CLAUDE.md forbids logging CV text or candidate emails. The
+// implementation lives in src/lib/observability/sentry-scrub.ts so the client
+// SDK config (instrumentation-client.ts) applies the identical rules; the two
+// used to differ, which is review 2026-08-04 M7.
+import { scrub } from '@/lib/observability/sentry-scrub'
 
 Sentry.init({
   dsn: process.env.SENTRY_DSN,
