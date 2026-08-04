@@ -30,18 +30,17 @@ type StuckWebhookEventRow = {
   created_at: string
 }
 
+type StuckSweepQuery = {
+  gt: (col: string, val: string) => StuckSweepQuery
+  lt: (col: string, val: string) => StuckSweepQuery
+  order: (col: string, opts: { ascending: boolean }) => StuckSweepQuery
+  limit: (n: number) => StuckSweepQuery
+} & PromiseLike<{ data: StuckWebhookEventRow[] | null; error: unknown }>
+
 type StripeWebhookEventsSweepClient = {
   from: (table: 'stripe_webhook_events') => {
     select: (cols: string) => {
-      in: (
-        col: string,
-        vals: string[],
-      ) => {
-        lt: (
-          col: string,
-          val: string,
-        ) => Promise<{ data: StuckWebhookEventRow[] | null; error: unknown }>
-      }
+      in: (col: string, vals: string[]) => StuckSweepQuery
     }
   }
 }
@@ -67,6 +66,11 @@ type StripeWebhookEventsSweepClient = {
 // the anomaly email says so.
 const MAX_PAGES = 20
 const PAGE_SIZE = 100
+
+// Upper bound on the stuck-webhook-event sweep (review 2026-08-04 L8). Far
+// beyond any plausible real incident; if it ever truncates, `truncated: true`
+// rides along in the Sentry payload rather than the count silently lying.
+const STUCK_EVENT_SWEEP_CAP = 500
 
 export const stripeReconcile = inngest.createFunction(
   {
@@ -283,15 +287,36 @@ export const stripeReconcile = inngest.createFunction(
       // signing-key rotation, a code bug in a specific event-type handler,
       // or a stuck queue. Loud is the deliverable here (standing "no
       // safety net" handover item); we do NOT attempt to auto-reprocess.
+      //
+      // Review 2026-08-04 H3 — this used to raise a Sentry `error` on EVERY
+      // daily run, forever, for any row that ever got stuck: the webhook
+      // route deliberately returns 200 when only the final 'processed' stamp
+      // fails (the work IS done), leaving a permanent 'received' row; and a
+      // genuine 'error' row keeps alarming long after Stripe stops retrying
+      // (~3 days). The channel the founder must trust for real billing
+      // incidents was being trained into noise. Two bounds:
+      //   * a 7-day upper age, so resolved-but-unstamped rows age out;
+      //   * severity 'warning' by default, escalating to 'error' only when
+      //     the problem is actively GROWING (a stuck row appeared in the last
+      //     24h) — which is the run-over-run signal that needs a human today.
       let stuckEventsCount = 0
       {
         const sweepClient = serviceClient as unknown as StripeWebhookEventsSweepClient
-        const oneHourAgoIso = new Date(Date.now() - 60 * 60 * 1000).toISOString()
+        const now = Date.now()
+        const oneHourAgoIso = new Date(now - 60 * 60 * 1000).toISOString()
+        const sevenDaysAgoIso = new Date(now - 7 * 24 * 60 * 60 * 1000).toISOString()
+        const oneDayAgoMs = now - 24 * 60 * 60 * 1000
         const { data: stuckRows, error: stuckErr } = await sweepClient
           .from('stripe_webhook_events')
           .select('stripe_event_id, event_type, status, created_at')
           .in('status', ['received', 'error'])
           .lt('created_at', oneHourAgoIso)
+          .gt('created_at', sevenDaysAgoIso)
+          // L8: the sweep had no bound at all, so stuckEventsCount silently
+          // capped at whatever PostgREST's db-max-rows returned. An explicit
+          // cap makes the truncation deliberate and visible in the payload.
+          .order('created_at', { ascending: false })
+          .limit(STUCK_EVENT_SWEEP_CAP)
 
         if (stuckErr) {
           if (!isMissingColumnError(stuckErr)) {
@@ -308,19 +333,28 @@ export const stripeReconcile = inngest.createFunction(
           // (20260804130100_stripe_webhook_event_status.sql) isn't
           // applied yet.
         } else if (stuckRows && stuckRows.length > 0) {
+          // Only ever alerts when rows actually EXIST — a clean run is silent
+          // apart from the heartbeat.
           stuckEventsCount = stuckRows.length
+          const freshCount = stuckRows.filter(
+            (r) => new Date(r.created_at).getTime() >= oneDayAgoMs,
+          ).length
           // Stripe event ids are not PII — event BODIES would be, but we
           // only log ids, types, statuses and counts here.
-          Sentry.captureMessage('stripe_webhook_events_stuck', {
-            level: 'error',
+          Sentry.captureMessage(`stripe_webhook_events_stuck (${stuckEventsCount})`, {
+            level: freshCount > 0 ? 'error' : 'warning',
             tags: {
               phase: 'p5',
               layer: 'inngest',
               function: 'stripe-reconcile',
               subop: 'stuck-events',
+              growing: freshCount > 0 ? 'yes' : 'no',
             },
             extra: {
               count: stuckEventsCount,
+              new_in_last_24h: freshCount,
+              window: '1h to 7d old',
+              truncated: stuckEventsCount === STUCK_EVENT_SWEEP_CAP,
               sample_event_ids: stuckRows.slice(0, 5).map((r) => r.stripe_event_id),
             },
           })

@@ -270,6 +270,66 @@ describe('stripe webhook — idempotency ledger', () => {
     },
   )
 
+  it('retries the processed stamp once after a transient error, then stops alarming', async () => {
+    // Review 2026-08-04 H3: a single transient PostgREST blip on the final
+    // stamp left the row at 'received' permanently (we return 200 because the
+    // work IS done, so Stripe never re-drives it), which the daily reconcile
+    // sweep then reported as stuck every day forever. One retry removes most
+    // of that class.
+    const maybeSingle = vi.fn(async () => ({ data: null, error: null }))
+    const ledgerUpsert = vi
+      .fn()
+      .mockResolvedValueOnce({ error: null }) // 'received' stamp
+      .mockResolvedValueOnce({ error: { code: '08006', message: 'connection blip' } })
+      .mockResolvedValueOnce({ error: null }) // retry succeeds
+    const client = {
+      from: vi.fn(() => ({
+        select: vi.fn(() => ({ eq: vi.fn(() => ({ maybeSingle })) })),
+        upsert: ledgerUpsert,
+      })),
+    }
+    mockCreateServiceClient.mockReturnValue(client)
+    constructEvent.mockReturnValue(
+      makeEvent('customer.subscription.updated', makeStripeSubscription()),
+    )
+
+    const res = await POST(makeRequest())
+
+    expect(res.status).toBe(200)
+    expect(ledgerUpsert).toHaveBeenCalledTimes(3)
+    expect(ledgerUpsert.mock.calls[2]![0]).toMatchObject({ status: 'processed' })
+    // The retry landed, so there is nothing for a human to look at.
+    expect(Sentry.captureException).not.toHaveBeenCalled()
+  })
+
+  it('still returns 200 and reports once when both processed-stamp attempts fail', async () => {
+    const maybeSingle = vi.fn(async () => ({ data: null, error: null }))
+    const transient = { code: '08006', message: 'connection blip' }
+    const ledgerUpsert = vi
+      .fn()
+      .mockResolvedValueOnce({ error: null })
+      .mockResolvedValueOnce({ error: transient })
+      .mockResolvedValueOnce({ error: transient })
+    const client = {
+      from: vi.fn(() => ({
+        select: vi.fn(() => ({ eq: vi.fn(() => ({ maybeSingle })) })),
+        upsert: ledgerUpsert,
+      })),
+    }
+    mockCreateServiceClient.mockReturnValue(client)
+    constructEvent.mockReturnValue(
+      makeEvent('customer.subscription.updated', makeStripeSubscription()),
+    )
+
+    // 200 is correct: the subscription write already succeeded, so re-driving
+    // it buys nothing (SECURITY INVARIANT 4 is about failed PROCESSING, which
+    // still returns 500 — see the handler-throw case above).
+    const res = await POST(makeRequest())
+    expect(res.status).toBe(200)
+    expect(ledgerUpsert).toHaveBeenCalledTimes(3)
+    expect(Sentry.captureException).toHaveBeenCalledTimes(1)
+  })
+
   it('a PGRST204 (missing status column) degrades to the legacy shape and still returns 200', async () => {
     const PGRST204 = { code: 'PGRST204', message: 'column not found' }
     const maybeSingle = vi

@@ -268,16 +268,32 @@ export async function POST(request: Request): Promise<NextResponse> {
   // Processing succeeded — upgrade the row to 'processed'. ignoreDuplicates
   // is false (DO UPDATE) so this upgrades the 'received' row stamped above.
   {
-    const { error } = await ledgerClient.from('stripe_webhook_events').upsert(
-      {
-        stripe_event_id: event.id,
-        event_type: event.type,
-        status: 'processed',
-        processed_at: new Date().toISOString(),
-        error_detail: null,
-      },
-      { onConflict: 'stripe_event_id', ignoreDuplicates: false },
-    )
+    const stampProcessed = () =>
+      ledgerClient.from('stripe_webhook_events').upsert(
+        {
+          stripe_event_id: event.id,
+          event_type: event.type,
+          status: 'processed',
+          processed_at: new Date().toISOString(),
+          error_detail: null,
+        },
+        { onConflict: 'stripe_event_id', ignoreDuplicates: false },
+      )
+
+    let { error } = await stampProcessed()
+
+    // Review 2026-08-04 H3: a single transient PostgREST blip here used to
+    // leave the row at 'received' PERMANENTLY (we correctly return 200
+    // because the work is done, so Stripe never re-drives it), which then
+    // produced a daily Sentry alert forever. One retry costs a few
+    // milliseconds and removes most of that class. Only retried for
+    // non-missing-column errors — a missing column is a deterministic
+    // pre-migration state with its own fallback below, and retrying it would
+    // fail identically.
+    if (error && !isMissingColumnError(error)) {
+      ;({ error } = await stampProcessed())
+    }
+
     if (error) {
       if (isMissingColumnError(error)) {
         // Pre-migration: retry the legacy shape so the idempotency table
