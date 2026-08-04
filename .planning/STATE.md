@@ -56,6 +56,7 @@ All 6 go-live blockers from `.planning/audits/PRE-LAUNCH-AUDIT-2026-06-18.md` fi
 | 260618-priv | 3 | Privacy-policy scaffold + /terms + PUBLIC_PATHS + apply/footer links | b0cd85a | ✅ clean |
 | 260618-rev | — | Consolidated review remediation (WR-01/02/03) | 0700a4a | — |
 | 260804-lfz | SC review SF-1/2/4/5/7 + SEC | CV-pipeline silent-failure cluster (honest errors, reconciler sweep, profile heal, contamination guards, failed-attempt telemetry) + browser Sentry resurrection + anon-RPC REVOKE migration (file-only) | 1cb386d, b8aeff1, e97dc2b, 9bb65c6 | verified 12/12 must-haves (human_needed: post-deploy items); full-branch review pending |
+| 260804-lih | SC review SF-3 + TEL + STRIPE | Match scores on all 4 application-create paths (idempotent, tenant-verified, 3 display surfaces) + search/view/export/attribution telemetry + Stripe webhook status ledger (non-dedupe invariant preserved) + Vercel Analytics | a55fb45, a5a07ac, 8b313c0 | verified 9/9 truths + 5/5 artifacts (human_needed: live-service items); full-branch review pending |
 
 ### Still required before real paying customers (NOT code) — FOUNDER OWNS
 - **Blocker 3 residual:** /privacy is a TEMPLATE (live + reachable) — needs a UK DP solicitor review + [placeholders] filled; DPA + ROPA are separate org deliverables.
