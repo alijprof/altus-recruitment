@@ -5,6 +5,7 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 
 import type { Database, Tables, TablesInsert, TablesUpdate } from '@/types/database'
 
+import { isMissingColumnError } from './postgrest-errors'
 import type { DbResult } from './types'
 
 // ---------------------------------------------------------------------------
@@ -146,11 +147,6 @@ export type UpdateCandidateCVParseInput = {
   // candidate_cvs.parse_error_detail, added by migration 20260804120000.
   // Recruiter-invisible; the honest UI copy lives in parseError.
   parseErrorDetail?: string | null
-}
-
-function isMissingColumnError(error: { code?: string; message?: string }, column: string): boolean {
-  if (error.code === 'PGRST204') return true
-  return typeof error.message === 'string' && error.message.includes(column)
 }
 
 /**

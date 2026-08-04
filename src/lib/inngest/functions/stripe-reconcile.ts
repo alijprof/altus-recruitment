@@ -1,6 +1,7 @@
 import * as Sentry from '@sentry/nextjs'
 import type Stripe from 'stripe'
 
+import { isMissingColumnError } from '@/lib/db/postgrest-errors'
 import { upsertSubscriptionFromStripe } from '@/lib/db/subscriptions'
 import { sendResendEmail } from '@/lib/email/resend'
 import { env } from '@/lib/env'
@@ -11,17 +12,10 @@ import type { LocalSubscriptionRow, StripeSubSnapshot } from '@/lib/stripe/recon
 import { assertStripe, stripe } from '@/lib/stripe/client'
 import { createServiceClient } from '@/lib/supabase/service'
 
-// Duplicated (not imported) from src/app/api/stripe/webhook/route.ts —
-// that file is a Next.js route handler (`export const runtime = 'nodejs'`)
-// and importing it here would pull route-handler bundling concerns into
-// the Inngest function graph. Same contract: true when a PostgREST error
-// indicates the referenced column doesn't exist yet ('PGRST204' schema-
-// cache write miss, or '42703' Postgres undefined_column). Audit §4.10.
-function isMissingColumnError(err: unknown): boolean {
-  if (err === null || typeof err !== 'object') return false
-  const code = (err as { code?: string }).code
-  return code === 'PGRST204' || code === '42703'
-}
+// isMissingColumnError comes from the shared leaf module rather than from
+// the webhook route (importing a Next.js route handler here would pull
+// route-handler bundling concerns into the Inngest function graph) — review
+// 2026-08-04 L9. Audit §4.10.
 
 type StuckWebhookEventRow = {
   stripe_event_id: string

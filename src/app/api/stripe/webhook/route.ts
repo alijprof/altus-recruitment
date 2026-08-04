@@ -39,6 +39,7 @@ import * as Sentry from '@sentry/nextjs'
 import { assertStripe, stripe } from '@/lib/stripe/client'
 import { PLANS } from '@/lib/stripe/plans'
 import type { PlanKey } from '@/lib/stripe/plans'
+import { isMissingColumnError } from '@/lib/db/postgrest-errors'
 import { upsertSubscriptionFromStripe } from '@/lib/db/subscriptions'
 import {
   derivePlanKey,
@@ -87,16 +88,12 @@ function asStripeWebhookEventsClient(
   return client as unknown as StripeWebhookEventsClient
 }
 
-// True when a PostgREST error indicates the referenced column doesn't
-// exist yet — 'PGRST204' (schema-cache write miss) or '42703' (Postgres
-// undefined_column, surfaced on reads). Every ledger write in this file is
-// guarded by this check so the route degrades silently when this code is
-// deployed BEFORE 20260804130100_stripe_webhook_event_status.sql lands.
-function isMissingColumnError(err: unknown): boolean {
-  if (err === null || typeof err !== 'object') return false
-  const code = (err as { code?: string }).code
-  return code === 'PGRST204' || code === '42703'
-}
+// Every ledger write in this file is guarded by isMissingColumnError so the
+// route degrades silently when this code is deployed BEFORE
+// 20260804130100_stripe_webhook_event_status.sql lands. The predicate is
+// shared with stripe-reconcile.ts and candidate-cvs.ts (review 2026-08-04
+// L9) — three verbatim-ish copies of a load-bearing pre-migration guard were
+// certain to drift on a DB whose migrations are pushed by hand.
 
 // Two-step seen-check: try the status-aware select; on a missing-column
 // error, fall back to the legacy stripe_event_id-only select and treat any
