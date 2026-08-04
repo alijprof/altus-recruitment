@@ -232,30 +232,52 @@ export async function listLatestMatchScoresForPairs(
   const candidateIds = Array.from(new Set(pairs.map((p) => p.candidateId)))
   const jobIds = Array.from(new Set(pairs.map((p) => p.jobId)))
 
-  const { data, error } = await asAiSummariesClient(supabase)
-    .from('ai_summaries')
-    .select('candidate_id, job_id, content, created_at')
-    .eq('kind', 'match_score')
-    .in('candidate_id', candidateIds)
-    .in('job_id', jobIds)
-    .order('created_at', { ascending: false })
-
-  if (error) {
-    Sentry.captureException(error, {
-      tags: { layer: 'db', helper: 'listLatestMatchScoresForPairs' },
-    })
-    return { ok: false, code: 'internal' }
-  }
+  // Review 2026-08-04 M3 — two bounds on an otherwise open-ended query.
+  //
+  // 1. `.limit()`. Rows came back `created_at desc` with NO bound, so any
+  //    server-side db-max-rows silently truncated the tail and badges simply
+  //    vanished for the oldest pairs with no error anywhere. An explicit cap
+  //    makes the ceiling ours: we keep only the newest row per pair, so
+  //    `pairs.length * 3` leaves generous headroom for historical duplicates
+  //    while staying far below any server cap.
+  // 2. Chunked candidate ids. Both `.in()` lists go into the URL query
+  //    string; `listAllApplicationsByStage` (the global pipeline) can pass
+  //    hundreds of candidate UUIDs, which risks a 414 from the edge before
+  //    PostgREST ever sees it.
+  const ROW_LIMIT = pairs.length * 3
+  const ID_CHUNK = 100
 
   const wantedPairs = new Set(pairs.map((p) => `${p.candidateId}:${p.jobId}`))
   const out = new Map<string, { score: number; note: string | null }>()
-  for (const row of data ?? []) {
-    if (!row.candidate_id || !row.job_id) continue
-    const key = `${row.candidate_id}:${row.job_id}`
-    if (!wantedPairs.has(key)) continue // cross-product row outside the requested pairs
-    if (out.has(key)) continue // already kept the newest (rows arrive newest-first)
-    out.set(key, { score: row.content.score, note: row.content.strengths[0] ?? null })
+
+  for (let i = 0; i < candidateIds.length; i += ID_CHUNK) {
+    const candidateIdChunk = candidateIds.slice(i, i + ID_CHUNK)
+
+    const { data, error } = await asAiSummariesClient(supabase)
+      .from('ai_summaries')
+      .select('candidate_id, job_id, content, created_at')
+      .eq('kind', 'match_score')
+      .in('candidate_id', candidateIdChunk)
+      .in('job_id', jobIds)
+      .order('created_at', { ascending: false })
+      .limit(ROW_LIMIT)
+
+    if (error) {
+      Sentry.captureException(error, {
+        tags: { layer: 'db', helper: 'listLatestMatchScoresForPairs' },
+      })
+      return { ok: false, code: 'internal' }
+    }
+
+    for (const row of data ?? []) {
+      if (!row.candidate_id || !row.job_id) continue
+      const key = `${row.candidate_id}:${row.job_id}`
+      if (!wantedPairs.has(key)) continue // cross-product row outside the requested pairs
+      if (out.has(key)) continue // already kept the newest (rows arrive newest-first)
+      out.set(key, { score: row.content.score, note: row.content.strengths[0] ?? null })
+    }
   }
+
   return { ok: true, data: out }
 }
 
