@@ -19,23 +19,38 @@ import { listLatestMatchScoresForPairs, upsertMatchSummary } from '@/lib/db/ai-s
 
 type QueryResult = { data: unknown[] | null; error: unknown }
 
-// Hand-rolled chainable stub matching the fluent .eq/.in/.order shape used
-// by listLatestMatchScoresForPairs. `onQuery` lets a test assert whether
-// the terminal call (order, which triggers the round-trip) actually fired.
+// Hand-rolled chainable stub matching the fluent .eq/.in/.order/.limit shape
+// used by listLatestMatchScoresForPairs. `onQuery` lets a test assert whether
+// the terminal call (limit, which triggers the round-trip) actually fired.
+//
+// `.limit()` became terminal with review 2026-08-04 M3 — the query had no
+// bound at all, so PostgREST's db-max-rows could silently truncate and make
+// match badges disappear for the oldest pairs with no error. `capturedLimit`
+// is exposed so a test can pin that bound.
 function selectClientReturning(result: QueryResult, onQuery: () => void) {
+  const state: { limit: number | null; inCalls: Array<[string, string[]]> } = {
+    limit: null,
+    inCalls: [],
+  }
   const chain = {
     eq: () => chain,
-    in: () => chain,
-    order: () => {
+    in: (col: string, vals: string[]) => {
+      state.inCalls.push([col, vals])
+      return chain
+    },
+    order: () => chain,
+    limit: (n: number) => {
+      state.limit = n
       onQuery()
       return Promise.resolve(result)
     },
   }
-  return {
+  const client = {
     from: () => ({
       select: () => chain,
     }),
   }
+  return Object.assign(client, { __state: state })
 }
 
 type EnrichmentClientArg = Parameters<typeof listLatestMatchScoresForPairs>[0]
@@ -128,6 +143,37 @@ describe('listLatestMatchScoresForPairs', () => {
     if (result.ok) {
       expect(result.data.get('cand-1:job-1')).toEqual({ score: 90, note: 'newest' })
     }
+  })
+
+  // Review 2026-08-04 M3.
+  it('bounds the query with an explicit limit derived from the pair count', async () => {
+    const client = selectClientReturning({ data: [], error: null }, vi.fn())
+    const pairs = Array.from({ length: 7 }, (_, i) => ({
+      candidateId: `cand-${i}`,
+      jobId: 'job-1',
+    }))
+    await listLatestMatchScoresForPairs(client as unknown as EnrichmentClientArg, pairs)
+    // Headroom for historical duplicates (only the newest per pair is kept),
+    // while staying far below any server-side db-max-rows.
+    expect(client.__state.limit).toBe(pairs.length * 3)
+  })
+
+  it('chunks the candidate-id list so a large pipeline cannot build a 414-length URL', async () => {
+    const onQuery = vi.fn()
+    const client = selectClientReturning({ data: [], error: null }, onQuery)
+    const pairs = Array.from({ length: 250 }, (_, i) => ({
+      candidateId: `cand-${i}`,
+      jobId: 'job-1',
+    }))
+    const result = await listLatestMatchScoresForPairs(
+      client as unknown as EnrichmentClientArg,
+      pairs,
+    )
+    expect(result.ok).toBe(true)
+    // 250 distinct candidate ids at 100 per request.
+    expect(onQuery).toHaveBeenCalledTimes(3)
+    const candidateInCalls = client.__state.inCalls.filter(([col]) => col === 'candidate_id')
+    expect(candidateInCalls.map(([, vals]) => vals.length)).toEqual([100, 100, 50])
   })
 })
 
