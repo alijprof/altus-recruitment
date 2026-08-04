@@ -55,6 +55,9 @@ vi.mock('@/lib/db/organizations', () => ({
 // Stub the service client to return:
 //   * candidate_cvs row by id → matching row
 //   * storage.list → exact-name match
+//   * update() → records the patch so we can assert the row is flipped to
+//     'failed' when inngest.send throws (behaviour now changed — see below)
+const UPDATE_CALLS: Array<Record<string, unknown>> = []
 vi.mock('@/lib/supabase/service', () => ({
   createServiceClient: () => ({
     from: (_table: string) => ({
@@ -76,6 +79,16 @@ vi.mock('@/lib/supabase/service', () => ({
           }),
         }),
       }),
+      update: (patch: Record<string, unknown>) => {
+        UPDATE_CALLS.push(patch)
+        return {
+          eq: (_c: string, _v: string) => ({
+            select: () => ({
+              single: async () => ({ data: { id: 'cv-1' }, error: null }),
+            }),
+          }),
+        }
+      },
     }),
     storage: {
       from: (_bucket: string) => ({
@@ -88,12 +101,11 @@ vi.mock('@/lib/supabase/service', () => ({
   }),
 }))
 
-describe('confirmApplyAction — inngest fallback (M-8)', () => {
-  it('returns ok even when inngest.send throws; logs PII-safe Sentry event', async () => {
+describe('confirmApplyAction — inngest fallback (M-8, SF-4 fix)', () => {
+  it('returns ok even when inngest.send throws; logs PII-safe Sentry event; marks the row failed', async () => {
     SENTRY_CAPTURES.length = 0
-    const { confirmApplyAction } = await import(
-      '@/app/(public)/apply/[orgSlug]/actions'
-    )
+    UPDATE_CALLS.length = 0
+    const { confirmApplyAction } = await import('@/app/(public)/apply/[orgSlug]/actions')
     const result = await confirmApplyAction({
       candidateId: 'cand-1',
       candidateCvId: 'cv-1',
@@ -116,5 +128,11 @@ describe('confirmApplyAction — inngest fallback (M-8)', () => {
     expect(sendFailure?.tags?.subop).toBe('inngest.send')
     // No email / name in the message.
     expect(sendFailure?.message).not.toMatch(/@/)
+
+    // SF-4 fix: the row must flip to 'failed' so the recruiter's Retry
+    // button actually renders — previously this was an "M-8 fallback"
+    // comment that left the row 'pending' forever with no retry affordance.
+    const failedUpdate = UPDATE_CALLS.find((p) => p.parsing_status === 'failed')
+    expect(failedUpdate).toBeDefined()
   })
 })

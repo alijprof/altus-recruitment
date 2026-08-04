@@ -11,13 +11,17 @@ import {
 import { candidateEmbeddingText } from '@/lib/ai/embed-text'
 import { embed } from '@/lib/ai/voyage'
 import {
+  CV_BUDGET_CAPPED_MESSAGE,
+  CV_NO_TEXT_MESSAGE,
+  CV_PARSE_FAILED_MESSAGE,
+} from '@/lib/cv/parse-messages'
+import {
+  getCandidateCV,
   markCandidateFieldsFromCV,
+  toParsedCVSubset,
   updateCandidateCVParse,
 } from '@/lib/db/candidate-cvs'
-import {
-  bumpCandidateEmbedding,
-  getCandidateForEmbedding,
-} from '@/lib/db/candidates'
+import { bumpCandidateEmbedding, getCandidateForEmbedding } from '@/lib/db/candidates'
 import { inngest } from '@/lib/inngest/client'
 import { readStatus } from '@/lib/observability/inngest'
 import { checkCap, CapExceededError } from '@/lib/stripe/cap-enforcement'
@@ -25,15 +29,16 @@ import { createServiceClient } from '@/lib/supabase/service'
 
 // Friendly message shown in the UI when parsing fails. Locked to the
 // UI-SPEC §Error States literal so the panel renders the exact copy.
-const FAILED_USER_MESSAGE =
-  'Parsing failed. You can retry now or continue and parse later.'
+// Shared with cv-review-panel.tsx via src/lib/cv/parse-messages.ts (SF-1).
+const FAILED_USER_MESSAGE = CV_PARSE_FAILED_MESSAGE
 
 // Shown when parsing is blocked by the AI budget (monthly £ ceiling or the
 // cv_parse cap). Batch A item 1: an honest "paused" message — NOT a misleading
 // "retry now", because retrying fails identically until the budget resets or is
 // raised. The cv-review panel keys off the 'AI budget' substring to swap the
 // retry button for a billing link. Keep that phrase if you edit this copy.
-const BUDGET_CAPPED_USER_MESSAGE = 'AI budget reached — parsing paused until reset.'
+// Shared with cv-review-panel.tsx via src/lib/cv/parse-messages.ts (SF-1).
+const BUDGET_CAPPED_USER_MESSAGE = CV_BUDGET_CAPPED_MESSAGE
 
 // Cap raw CV text to avoid runaway tokens. Typical CV is < 10k chars;
 // 60k is the conservative ceiling — anything longer is either OCR noise
@@ -69,21 +74,46 @@ function asCVUploadedData(value: unknown): CVUploadedEventData {
  * Record a final failure on the candidate_cvs row. Best-effort: if THIS
  * call itself fails we just log to Sentry — there's nothing else to do
  * (the row remains 'pending' and the user can hit Retry).
+ *
+ * `preserveExistingMessage` (SF-1 root-cause fix): today the scanned-PDF
+ * branch writes a specific honest message, then throws NonRetriableError,
+ * which fires onFailure, which used to call this with the GENERIC
+ * FAILED_USER_MESSAGE — overwriting the honest one. This is exactly why the
+ * audit found "the stored parse_error is the generic UI string; no root
+ * cause persisted anywhere". When true, this reads the row first; if it's
+ * already 'failed' with a non-empty parse_error, it leaves that message
+ * alone instead of clobbering it. Every in-body call site keeps the
+ * current overwrite behaviour (preserveExistingMessage defaults to false).
  */
-async function markCvFailed(args: { candidateCvId: string; userMessage: string }) {
+async function markCvFailed(args: {
+  candidateCvId: string
+  userMessage: string
+  parseErrorDetail?: string
+  preserveExistingMessage?: boolean
+}) {
   try {
     const supabase = createServiceClient()
+    let userMessage = args.userMessage
+    if (args.preserveExistingMessage) {
+      const existing = await getCandidateCV(supabase, args.candidateCvId)
+      if (
+        existing.ok &&
+        existing.data.parsing_status === 'failed' &&
+        typeof existing.data.parse_error === 'string' &&
+        existing.data.parse_error.length > 0
+      ) {
+        userMessage = existing.data.parse_error
+      }
+    }
     await updateCandidateCVParse(supabase, {
       id: args.candidateCvId,
       status: 'failed',
-      parseError: args.userMessage,
+      parseError: userMessage,
+      parseErrorDetail: args.parseErrorDetail,
     })
   } catch (err) {
     Sentry.captureException(
-      new Error(
-        (err instanceof Error ? err.name : 'unknown') +
-          ': mark-cv-failed write failed',
-      ),
+      new Error((err instanceof Error ? err.name : 'unknown') + ': mark-cv-failed write failed'),
       {
         tags: {
           layer: 'inngest',
@@ -113,33 +143,29 @@ export const parseCVOnUpload = inngest.createFunction(
       // bypass the beforeSend PII scrub.
       const originalData = asCVUploadedData(event.data.event.data)
       const status = readStatus(error)
-      Sentry.captureException(
-        new Error(`${error.name}: ${status} (onFailure handler)`),
-        {
-          tags: {
-            layer: 'inngest',
-            function: 'parse-cv-on-upload',
-            handler: 'onFailure',
-            candidate_cv_id: originalData.candidate_cv_id,
-          },
+      Sentry.captureException(new Error(`${error.name}: ${status} (onFailure handler)`), {
+        tags: {
+          layer: 'inngest',
+          function: 'parse-cv-on-upload',
+          handler: 'onFailure',
+          candidate_cv_id: originalData.candidate_cv_id,
         },
-      )
+      })
       await markCvFailed({
         candidateCvId: originalData.candidate_cv_id,
         userMessage: FAILED_USER_MESSAGE,
+        parseErrorDetail: `${error.name}: ${status}`,
+        // SF-1 root-cause fix: don't clobber an honest in-body message
+        // (e.g. the scanned-PDF branch's CV_NO_TEXT_MESSAGE) with this
+        // generic fallback — see markCvFailed's doc comment.
+        preserveExistingMessage: true,
       })
     },
   },
   async ({ event, step }) => {
     const data = asCVUploadedData(event.data)
-    const {
-      organization_id,
-      candidate_id,
-      candidate_cv_id,
-      storage_path,
-      mime_type,
-      user_id,
-    } = data
+    const { organization_id, candidate_id, candidate_cv_id, storage_path, mime_type, user_id } =
+      data
 
     // -----------------------------------------------------------------------
     // CRITICAL — tenant boundary check.
@@ -157,9 +183,7 @@ export const parseCVOnUpload = inngest.createFunction(
     // The apply-form layout is set in submitApplyAction (D2-... — keep
     // `applicants/` segregated for separate retention policy later).
     // -----------------------------------------------------------------------
-    const isRecruiterUpload = storage_path.startsWith(
-      `${organization_id}/${candidate_id}/`,
-    )
+    const isRecruiterUpload = storage_path.startsWith(`${organization_id}/${candidate_id}/`)
     const isApplyFormUpload = storage_path.startsWith(
       `${organization_id}/applicants/${candidate_id}-`,
     )
@@ -186,13 +210,12 @@ export const parseCVOnUpload = inngest.createFunction(
     // sail through. checkCap fails open, so a billing glitch never blocks here.
     // Wrapped in a step so the check (and any soft-cap email it fires) is
     // memoised and not re-run on later step replays.
-    const budget = await step.run('check-ai-budget', () =>
-      checkCap(organization_id, 'cv_parse'),
-    )
+    const budget = await step.run('check-ai-budget', () => checkCap(organization_id, 'cv_parse'))
     if (!budget.allow && budget.mode === 'hard') {
       await markCvFailed({
         candidateCvId: candidate_cv_id,
         userMessage: BUDGET_CAPPED_USER_MESSAGE,
+        parseErrorDetail: 'pre-flight: AI budget cap (mode=hard)',
       })
       return
     }
@@ -204,13 +227,9 @@ export const parseCVOnUpload = inngest.createFunction(
       // not. Base64 round-trip is the standard pattern.
       const base64Buffer = await step.run('download-cv', async () => {
         const supabase = createServiceClient()
-        const { data: blob, error } = await supabase.storage
-          .from('cvs')
-          .download(storage_path)
+        const { data: blob, error } = await supabase.storage.from('cvs').download(storage_path)
         if (error || !blob) {
-          throw new NonRetriableError(
-            `download failed: ${error?.message ?? 'no data'}`,
-          )
+          throw new NonRetriableError(`download failed: ${error?.message ?? 'no data'}`)
         }
         const ab = await blob.arrayBuffer()
         return Buffer.from(ab).toString('base64')
@@ -234,19 +253,20 @@ export const parseCVOnUpload = inngest.createFunction(
           // don't contain candidate PII — they're library internals.
           const name = err instanceof Error ? err.name : 'UnknownError'
           const message = err instanceof Error ? err.message.slice(0, 500) : ''
-          throw new NonRetriableError(
-            `extract-text failed: ${name}: ${message}`,
-          )
+          throw new NonRetriableError(`extract-text failed: ${name}: ${message}`)
         }
       })
 
       if (!text || text.trim().length < MIN_EXTRACTED_CHARS) {
-        // Almost certainly a scanned image PDF. Mark as failed with a
-        // helpful UI message and stop the pipeline.
+        // SF-1 fix: almost certainly a scanned image PDF. Mark as failed
+        // with an HONEST message — retrying the same bytes cannot work, so
+        // CV_NO_TEXT_MESSAGE says so explicitly instead of inviting a
+        // doomed retry. The detail carries the char count + mime type only
+        // (never extracted text) for the recruiter-invisible root cause.
         await markCvFailed({
           candidateCvId: candidate_cv_id,
-          userMessage:
-            'CV appears to contain no extractable text (scanned image?).',
+          userMessage: CV_NO_TEXT_MESSAGE,
+          parseErrorDetail: `extract-text yielded ${text?.length ?? 0} chars for mime ${mime_type}`,
         })
         throw new NonRetriableError('cv contains no extractable text')
       }
@@ -278,32 +298,23 @@ export const parseCVOnUpload = inngest.createFunction(
 
         // D-08: empty-field merge ONLY. The helper enforces both null and
         // empty-array predicates so a CV row never clobbers user input.
-        await markCandidateFieldsFromCV(supabase, {
+        //
+        // SF-2 fix: the merge result is CHECKED. Previously the return value
+        // was discarded — a failed merge (e.g. a transient DB error) still
+        // landed the row as parsing_status='complete', lying about the
+        // candidate's profile state. Throwing here (inside step.run) makes
+        // Inngest retry the step; if retries exhaust, onFailure marks the
+        // row honestly failed instead of silently discarding the outcome.
+        const mergeResult = await markCandidateFieldsFromCV(supabase, {
           candidateId: candidate_id,
-          // The helper subset matches the parsed CV shape one-to-one.
-          parsed: {
-            name: parsed.name ?? null,
-            email: parsed.email ?? null,
-            phone: parsed.phone ?? null,
-            location: parsed.location ?? null,
-            current_role: parsed.current_role ?? null,
-            current_company: parsed.current_company ?? null,
-            seniority_level: parsed.seniority_level ?? null,
-            salary_current_estimate: parsed.salary_current_estimate ?? null,
-            salary_expectation: parsed.salary_expectation ?? null,
-            // parseCV's tool schema doesn't return `currency` — leave null
-            // and let the candidate column keep its 'GBP' default.
-            currency: null,
-            years_experience_total: parsed.years_experience_total ?? null,
-            skills: parsed.skills ?? null,
-            sector_tags: parsed.sector_tags ?? null,
-            // JSONB-array fields — added 2026-05-22 to populate the
-            // candidates.work_experience and candidates.education columns
-            // introduced for the LinkedIn-PDF flow.
-            work_history: parsed.work_history ?? null,
-            education: parsed.education ?? null,
-          },
+          // toParsedCVSubset is the single source of truth for this
+          // mapping — also used by the reconciler's heal-unmerged-profiles
+          // step so the two call sites never drift.
+          parsed: toParsedCVSubset(parsed),
         })
+        if (!mergeResult.ok) {
+          throw new Error(`markCandidateFieldsFromCV: ${mergeResult.code}`)
+        }
       })
 
       // Step 5: embed the candidate (Plan 1 Task 1.1).
@@ -383,6 +394,7 @@ export const parseCVOnUpload = inngest.createFunction(
         await markCvFailed({
           candidateCvId: candidate_cv_id,
           userMessage: BUDGET_CAPPED_USER_MESSAGE,
+          parseErrorDetail: 'mid-parse: CapExceededError',
         })
         return
       }
@@ -408,6 +420,7 @@ export const parseCVOnUpload = inngest.createFunction(
       await markCvFailed({
         candidateCvId: candidate_cv_id,
         userMessage: FAILED_USER_MESSAGE,
+        parseErrorDetail: `${name}: ${status}`,
       })
       throw err
     }

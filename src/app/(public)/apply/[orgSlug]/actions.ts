@@ -34,13 +34,10 @@ import { createHash } from 'node:crypto'
 import * as Sentry from '@sentry/nextjs'
 import { headers } from 'next/headers'
 
+import { CV_STUCK_MESSAGE } from '@/lib/cv/parse-messages'
 import { createActivity } from '@/lib/db/activities'
-import {
-  createCandidate,
-  getCandidateByEmailForOrg,
-  updateCandidate,
-} from '@/lib/db/candidates'
-import { createCandidateCV, nextCVVersion } from '@/lib/db/candidate-cvs'
+import { createCandidate, getCandidateByEmailForOrg, updateCandidate } from '@/lib/db/candidates'
+import { createCandidateCV, nextCVVersion, updateCandidateCVParse } from '@/lib/db/candidate-cvs'
 import { getOrganizationBySlug } from '@/lib/db/organizations'
 import { env } from '@/lib/env'
 import { inngest } from '@/lib/inngest/client'
@@ -69,9 +66,7 @@ export type SubmitApplyResult =
   | { ok: false; fieldErrors: Record<string, string[] | undefined> }
   | { ok: false; formError: string }
 
-export type ConfirmApplyResult =
-  | { ok: true; redirectTo: string }
-  | { ok: false; formError: string }
+export type ConfirmApplyResult = { ok: true; redirectTo: string } | { ok: false; formError: string }
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -102,7 +97,13 @@ async function hashIp(): Promise<string> {
 function fileExt(name: string): string {
   const dot = name.lastIndexOf('.')
   if (dot < 0 || dot === name.length - 1) return 'bin'
-  return name.slice(dot + 1).toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 8) || 'bin'
+  return (
+    name
+      .slice(dot + 1)
+      .toLowerCase()
+      .replace(/[^a-z0-9]/g, '')
+      .slice(0, 8) || 'bin'
+  )
 }
 
 // ---------------------------------------------------------------------------
@@ -157,10 +158,7 @@ export async function submitApplyAction(
     if (!parsed.success) {
       return {
         ok: false,
-        fieldErrors: parsed.error.flatten().fieldErrors as Record<
-          string,
-          string[] | undefined
-        >,
+        fieldErrors: parsed.error.flatten().fieldErrors as Record<string, string[] | undefined>,
       }
     }
 
@@ -214,8 +212,7 @@ export async function submitApplyAction(
     if (!rl.allowed) {
       return {
         ok: false,
-        formError:
-          'Too many submissions from this network. Please try again in a few hours.',
+        formError: 'Too many submissions from this network. Please try again in a few hours.',
       }
     }
 
@@ -325,16 +322,13 @@ export async function submitApplyAction(
     //     sides are server-constructed, machine-checkable assertions
     //     prevent future "looks-safe-but-not-asserted" regressions.
     if (!storagePath.startsWith(`${org.id}/applicants/`)) {
-      Sentry.captureException(
-        new Error('apply: storage path tenant assertion failed'),
-        {
-          tags: {
-            layer: 'server-action',
-            action: 'submitApplyAction',
-            org_slug: slug,
-          },
+      Sentry.captureException(new Error('apply: storage path tenant assertion failed'), {
+        tags: {
+          layer: 'server-action',
+          action: 'submitApplyAction',
+          org_slug: slug,
         },
-      )
+      })
       return { ok: false, formError: 'Something went wrong. Please try again.' }
     }
 
@@ -409,30 +403,24 @@ export async function submitApplyAction(
         args: Record<string, unknown>,
       ) => Promise<{ error: { message?: string } | null }>
     }
-    const { error: auditError } = await supabaseRpc.rpc(
-      'record_audit_anonymous',
-      {
-        p_organization_id: org.id,
-        p_action: 'create',
-        p_entity_type: 'candidate',
-        p_entity_id: candidateId,
-        p_metadata: { source: 'apply_form', ip_hash: ipHash },
-      },
-    )
+    const { error: auditError } = await supabaseRpc.rpc('record_audit_anonymous', {
+      p_organization_id: org.id,
+      p_action: 'create',
+      p_entity_type: 'candidate',
+      p_entity_id: candidateId,
+      p_metadata: { source: 'apply_form', ip_hash: ipHash },
+    })
     if (auditError) {
       // Audit failure is non-fatal — the candidate + CV rows still exist.
       // Surface in Sentry for forensics.
-      Sentry.captureException(
-        new Error(`apply: record_audit_anonymous failed`),
-        {
-          tags: {
-            layer: 'server-action',
-            action: 'submitApplyAction',
-            subop: 'record_audit_anonymous',
-            org_slug: slug,
-          },
+      Sentry.captureException(new Error(`apply: record_audit_anonymous failed`), {
+        tags: {
+          layer: 'server-action',
+          action: 'submitApplyAction',
+          subop: 'record_audit_anonymous',
+          org_slug: slug,
         },
-      )
+      })
     }
 
     // 12. Return signed URL + ids. NOTE: we DO NOT fire cv/uploaded here —
@@ -504,23 +492,19 @@ export async function confirmApplyAction(args: {
     //    list() within the parent dir + filter on filename basename.
     const lastSlash = cvRow.storage_path.lastIndexOf('/')
     const dir = lastSlash >= 0 ? cvRow.storage_path.slice(0, lastSlash) : ''
-    const basename =
-      lastSlash >= 0 ? cvRow.storage_path.slice(lastSlash + 1) : cvRow.storage_path
+    const basename = lastSlash >= 0 ? cvRow.storage_path.slice(lastSlash + 1) : cvRow.storage_path
     const { data: listing, error: listError } = await supabase.storage
       .from('cvs')
       .list(dir, { search: basename, limit: 1 })
     if (listError) {
-      Sentry.captureException(
-        new Error(`apply-confirm: storage.list failed`),
-        {
-          tags: {
-            layer: 'server-action',
-            action: 'confirmApplyAction',
-            subop: 'storage.list',
-            org_slug: args.orgSlug,
-          },
+      Sentry.captureException(new Error(`apply-confirm: storage.list failed`), {
+        tags: {
+          layer: 'server-action',
+          action: 'confirmApplyAction',
+          subop: 'storage.list',
+          org_slug: args.orgSlug,
         },
-      )
+      })
       return { ok: false, formError: 'Could not confirm upload. Please try again.' }
     }
     const objectExists = (listing ?? []).some((o) => o.name === basename)
@@ -554,10 +538,14 @@ export async function confirmApplyAction(args: {
     // 3. Fire cv/uploaded. Reuses the Phase 1 parse pipeline → Plan 1
     //    embed chain. NEVER add a parallel path.
     //
-    //    Failure handling (VERIFICATION M-8): wrap in try/catch + Sentry.
-    //    DO NOT roll back — the audit + DB rows are still useful; the
-    //    recruiter can manually retry parsing from the candidate detail
-    //    page via the Phase 1 Retry button.
+    //    Failure handling (VERIFICATION M-8, SF-4 fix): wrap in try/catch +
+    //    Sentry. DO NOT roll back — the audit + DB rows are still useful.
+    //    SF-4: the OLD comment here claimed "Phase 1's Retry button covers
+    //    it" — that was FALSE. The Retry button only renders for
+    //    parsing_status='failed'; a send failure left the row 'pending'
+    //    forever with no retry affordance and no honest signal to the
+    //    recruiter. Fix: flip the row to 'failed' with an honest message so
+    //    the Retry button on the candidate detail page actually renders.
     try {
       await inngest.send({
         name: 'cv/uploaded',
@@ -572,21 +560,25 @@ export async function confirmApplyAction(args: {
       })
     } catch (sendErr) {
       const errName = sendErr instanceof Error ? sendErr.name : 'UnknownError'
-      Sentry.captureException(
-        new Error(`apply-confirm: inngest.send ${errName}`),
-        {
-          tags: {
-            layer: 'server-action',
-            action: 'confirmApplyAction',
-            subop: 'inngest.send',
-            org_slug: args.orgSlug,
-          },
+      Sentry.captureException(new Error(`apply-confirm: inngest.send ${errName}`), {
+        tags: {
+          layer: 'server-action',
+          action: 'confirmApplyAction',
+          subop: 'inngest.send',
+          org_slug: args.orgSlug,
         },
-      )
-      // M-8 fallback: candidate + cv rows persist. parsing_status stays
-      // 'pending'; Phase 1's Retry button on the candidate detail page
-      // re-fires cv/uploaded. Return ok so the user reaches the success
-      // page — their CV IS safely uploaded; only the parse hasn't queued.
+      })
+      // SF-4: mark the row 'failed' (best-effort — updateCandidateCVParse
+      // already captures its own errors to Sentry) so the recruiter's Retry
+      // button on the candidate detail page actually renders. Still return
+      // ok below so the applicant reaches the success page — their CV IS
+      // safely uploaded; only the parse hasn't queued.
+      await updateCandidateCVParse(supabase, {
+        id: args.candidateCvId,
+        status: 'failed',
+        parseError: CV_STUCK_MESSAGE,
+        parseErrorDetail: `apply-confirm: inngest.send ${errName}`,
+      })
     }
 
     return { ok: true, redirectTo: `/apply/${args.orgSlug}/success` }

@@ -141,34 +141,75 @@ export type UpdateCandidateCVParseInput = {
   status: ParsingStatus
   extractedData?: unknown
   parseError?: string | null
+  // PII-free technical root cause (error name/status, extracted char COUNT,
+  // mime type — NEVER extracted text or a PII-bearing message). Written to
+  // candidate_cvs.parse_error_detail, added by migration 20260804120000.
+  // Recruiter-invisible; the honest UI copy lives in parseError.
+  parseErrorDetail?: string | null
+}
+
+function isMissingColumnError(error: { code?: string; message?: string }, column: string): boolean {
+  if (error.code === 'PGRST204') return true
+  return typeof error.message === 'string' && error.message.includes(column)
 }
 
 /**
  * Update parse outcome on a candidate_cvs row. Used by the Inngest function
  * (via the service-role client) and by retryParseAction (via the SSR client).
+ *
+ * `parse_error_detail` (migration 20260804120000) may reach production AFTER
+ * this code deploys — the founder pushes migration files manually. Writes
+ * are defensive: on a PGRST204 ("column not found in schema cache") or an
+ * error message mentioning the column, retry the identical update WITHOUT
+ * `parse_error_detail`. The user-facing status write must never be blocked
+ * by the detail write.
  */
 export async function updateCandidateCVParse(
   supabase: SupabaseClient<Database>,
   input: UpdateCandidateCVParseInput,
 ): Promise<DbResult<{ id: string }>> {
-  const patch: TablesUpdate<'candidate_cvs'> = {
+  // reason: built as a Record<string, unknown> and cast at the boundary —
+  // src/types/database.ts is generated and will not contain
+  // parse_error_detail until the founder regenerates it (do NOT run
+  // `pnpm db:types` here; it needs a linked DB). Same idiom as the dynamic
+  // patch built in markCandidateFieldsFromCV below.
+  const patch: Record<string, unknown> = {
     parsing_status: input.status,
   }
   if (input.extractedData !== undefined) {
-    // reason: extracted_data is a JSONB column — the generated Json union
-    // does not structurally match unknown. Cast at the boundary.
-    patch.extracted_data = input.extractedData as TablesUpdate<'candidate_cvs'>['extracted_data']
+    patch.extracted_data = input.extractedData
   }
   if (input.parseError !== undefined) {
     patch.parse_error = input.parseError
   }
+  if (input.parseErrorDetail !== undefined) {
+    patch.parse_error_detail = input.parseErrorDetail
+  }
 
-  const { error } = await supabase
-    .from('candidate_cvs')
-    .update(patch)
-    .eq('id', input.id)
-    .select('id')
-    .single()
+  const runUpdate = (p: Record<string, unknown>) =>
+    supabase
+      .from('candidate_cvs')
+      .update(p as unknown as TablesUpdate<'candidate_cvs'>)
+      .eq('id', input.id)
+      .select('id')
+      .single()
+
+  let { error } = await runUpdate(patch)
+
+  if (error && 'parse_error_detail' in patch && isMissingColumnError(error, 'parse_error_detail')) {
+    // Pre-migration deploy is an EXPECTED state, not an error — breadcrumb
+    // only, never captureException.
+    Sentry.addBreadcrumb({
+      category: 'cv-parse',
+      message: 'parse_error_detail column missing from schema cache — retried without it',
+      level: 'info',
+    })
+    const withoutDetail: Record<string, unknown> = {}
+    for (const [key, value] of Object.entries(patch)) {
+      if (key !== 'parse_error_detail') withoutDetail[key] = value
+    }
+    ;({ error } = await runUpdate(withoutDetail))
+  }
 
   if (error) {
     Sentry.captureException(error, {
@@ -204,7 +245,7 @@ export async function updateCandidateCVParse(
 // the candidate row. If this list grows, expand both arrays together.
 // ---------------------------------------------------------------------------
 
-type ParsedCVSubset = {
+export type ParsedCVSubset = {
   name?: string | null
   email?: string | null
   phone?: string | null
@@ -232,6 +273,42 @@ type ParsedCVSubset = {
     qualification?: string
     year?: string
   }> | null
+}
+
+/**
+ * Convert a stored `candidate_cvs.extracted_data` JSON blob (or the direct
+ * return value of `parseCV()`, which is written verbatim into that column)
+ * into the `ParsedCVSubset` shape consumed by `markCandidateFieldsFromCV`.
+ *
+ * Single source of truth for this mapping — src/lib/inngest/functions/
+ * parse-cv.ts (Step 4, fresh parse) and reconcile-cv-parses.ts (heal-
+ * unmerged-profiles, re-processing a stored row) both call this so the
+ * field mapping never drifts between the two call sites.
+ */
+export function toParsedCVSubset(extracted: unknown): ParsedCVSubset {
+  const e = (extracted ?? {}) as Record<string, unknown>
+  return {
+    name: (e.name as string | undefined) ?? null,
+    email: (e.email as string | undefined) ?? null,
+    phone: (e.phone as string | undefined) ?? null,
+    location: (e.location as string | undefined) ?? null,
+    current_role: (e.current_role as string | undefined) ?? null,
+    current_company: (e.current_company as string | undefined) ?? null,
+    seniority_level: (e.seniority_level as string | undefined) ?? null,
+    salary_current_estimate: (e.salary_current_estimate as number | undefined) ?? null,
+    salary_expectation: (e.salary_expectation as number | undefined) ?? null,
+    // parseCV's tool schema doesn't return `currency` — leave null and let
+    // the candidate column keep its 'GBP' default.
+    currency: null,
+    years_experience_total: (e.years_experience_total as number | undefined) ?? null,
+    skills: (e.skills as string[] | undefined) ?? null,
+    sector_tags: (e.sector_tags as string[] | undefined) ?? null,
+    // JSONB-array fields — added 2026-05-22 to populate the
+    // candidates.work_experience and candidates.education columns
+    // introduced for the LinkedIn-PDF flow.
+    work_history: (e.work_history as ParsedCVSubset['work_history']) ?? null,
+    education: (e.education as ParsedCVSubset['education']) ?? null,
+  }
 }
 
 // Map parsed.work_history (CV shape) onto candidates.work_experience
@@ -352,11 +429,7 @@ export async function markCandidateFieldsFromCV(
     const candidateValue = row[col]
     const parsedValue = args.parsed[parsedKey]
     const isEmpty = Array.isArray(candidateValue) && candidateValue.length === 0
-    if (
-      isEmpty &&
-      Array.isArray(parsedValue) &&
-      parsedValue.length > 0
-    ) {
+    if (isEmpty && Array.isArray(parsedValue) && parsedValue.length > 0) {
       patch[col] = parsedValue
     }
   }
@@ -386,14 +459,17 @@ export async function markCandidateFieldsFromCV(
   const candidateWorkExperience = row['work_experience']
   const workExperienceEmpty =
     Array.isArray(candidateWorkExperience) && candidateWorkExperience.length === 0
-  if (workExperienceEmpty && Array.isArray(args.parsed.work_history) && args.parsed.work_history.length > 0) {
+  if (
+    workExperienceEmpty &&
+    Array.isArray(args.parsed.work_history) &&
+    args.parsed.work_history.length > 0
+  ) {
     const mapped = mapWorkHistory(args.parsed.work_history)
     if (mapped.length > 0) patch['work_experience'] = mapped
   }
 
   const candidateEducation = row['education']
-  const educationEmpty =
-    Array.isArray(candidateEducation) && candidateEducation.length === 0
+  const educationEmpty = Array.isArray(candidateEducation) && candidateEducation.length === 0
   if (educationEmpty && Array.isArray(args.parsed.education) && args.parsed.education.length > 0) {
     const mapped = mapEducation(args.parsed.education)
     if (mapped.length > 0) patch['education'] = mapped
