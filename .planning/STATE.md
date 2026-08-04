@@ -55,6 +55,7 @@ All 6 go-live blockers from `.planning/audits/PRE-LAUNCH-AUDIT-2026-06-18.md` fi
 | 260618-cmp | rank 7 | Campaign double-send idempotency guard (sequential-resubmit dedupe) | b1119db | ✅ (WR-01 comment scoped honestly) |
 | 260618-priv | 3 | Privacy-policy scaffold + /terms + PUBLIC_PATHS + apply/footer links | b0cd85a | ✅ clean |
 | 260618-rev | — | Consolidated review remediation (WR-01/02/03) | 0700a4a | — |
+| 260804-lfz | SC review SF-1/2/4/5/7 + SEC | CV-pipeline silent-failure cluster (honest errors, reconciler sweep, profile heal, contamination guards, failed-attempt telemetry) + browser Sentry resurrection + anon-RPC REVOKE migration (file-only) | 1cb386d, b8aeff1, e97dc2b, 9bb65c6 | verified 12/12 must-haves (human_needed: post-deploy items); full-branch review pending |
 
 ### Still required before real paying customers (NOT code) — FOUNDER OWNS
 - **Blocker 3 residual:** /privacy is a TEMPLATE (live + reachable) — needs a UK DP solicitor review + [placeholders] filled; DPA + ROPA are separate org deliverables.
