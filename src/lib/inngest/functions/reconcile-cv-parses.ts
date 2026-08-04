@@ -4,7 +4,11 @@ import {
   isProfileEffectivelyEmpty,
   PROFILE_COMPLETENESS_COLUMNS,
 } from '@/lib/ai/profile-completeness'
-import { CV_STUCK_MESSAGE, CV_UPLOAD_INCOMPLETE_MESSAGE } from '@/lib/cv/parse-messages'
+import {
+  CV_BUDGET_CAPPED_ILIKE_PATTERN,
+  CV_STUCK_MESSAGE,
+  CV_UPLOAD_INCOMPLETE_MESSAGE,
+} from '@/lib/cv/parse-messages'
 import { decideStuckPendingAction, STUCK_PENDING_GRACE_MS } from '@/lib/cv/reconcile-decisions'
 import {
   markCandidateFieldsFromCV,
@@ -42,6 +46,17 @@ import { createServiceClient } from '@/lib/supabase/service'
 const STUCK_PENDING_ROW_CAP = 50
 const BUDGET_CAPPED_ROW_CAP = 50
 const HEAL_ROW_CAP = 25
+
+// Hour-granularity bucket for the reconciler's Inngest dedup ids (M5, M6).
+// Inngest dedups on `id` for 24h, so a bare row id would permanently lock a
+// row out of ever being re-driven. Bucketing turns that into "at most one
+// reconciler-initiated send per row per hour" — enough to stop two concurrent
+// parses of the same row (the cron fires every 15 minutes) without ever
+// becoming a permanent block.
+const REQUEUE_BUCKET_MS = 60 * 60 * 1000
+function requeueBucket(): number {
+  return Math.floor(Date.now() / REQUEUE_BUCKET_MS)
+}
 
 type StuckPendingRow = {
   id: string
@@ -169,6 +184,20 @@ export const reconcileCvParses = inngest.createFunction(
 
           if (action === 'requeue') {
             await inngest.send({
+              // Review 2026-08-04 M6 — the requeue had no dedup id and made no
+              // status transition, so a large PDF plus Anthropic 429 backoff
+              // (claude.ts waits up to 60s x 4 attempts) could exceed the
+              // 15-minute grace and get a SECOND parse started concurrently:
+              // two Haiku calls and two markCandidateFieldsFromCV merges on the
+              // same row.
+              //
+              // The bucket makes this a rate limit rather than a permanent
+              // lock: at most one reconciler requeue per row per hour, while
+              // the cron runs every 15 minutes. A genuinely stuck row is still
+              // retried on the next hour, and retryParseAction (which sends no
+              // id) is completely unaffected — the recruiter's manual retry
+              // must never be swallowed.
+              id: `cv-reconcile-requeue:${row.id}:${requeueBucket()}`,
               name: 'cv/uploaded',
               data: {
                 organization_id: row.organization_id,
@@ -221,7 +250,10 @@ export const reconcileCvParses = inngest.createFunction(
         .from('candidate_cvs')
         .select('id, organization_id, candidate_id, storage_path, mime_type')
         .eq('parsing_status', 'failed')
-        .ilike('parse_error', '%AI budget%')
+        // L1: the pattern lives beside the copy it matches, and a unit test
+        // asserts they still agree — a reword that dropped 'AI budget' used to
+        // silently disable the auto-resume the UI promises.
+        .ilike('parse_error', CV_BUDGET_CAPPED_ILIKE_PATTERN)
         .limit(BUDGET_CAPPED_ROW_CAP)
       if (error) {
         Sentry.captureException(error, {
@@ -238,21 +270,53 @@ export const reconcileCvParses = inngest.createFunction(
 
       const byOrg = groupByOrg(rows)
       for (const [orgId, orgRows] of byOrg) {
+        let capResult
         try {
           // One checkCap call per org per sweep — never per row.
-          const capResult = await checkCap(orgId, 'cv_parse')
-          if (!capResult.allow) {
-            // Still capped — expected state, not an error. Skip silently
-            // (same reasoning as embed-batch's CapExceededError continue).
-            continue
-          }
-          for (const row of orgRows) {
-            await updateCandidateCVParse(supabase, {
-              id: row.id,
-              status: 'pending',
-              parseError: null,
-            })
+          capResult = await checkCap(orgId, 'cv_parse')
+        } catch (capErr) {
+          Sentry.captureException(
+            formatErrorForSentry(capErr, 'reconcile-cv-parses resume-budget-capped cap:'),
+            {
+              tags: {
+                layer: 'inngest',
+                function: 'reconcile-cv-parses',
+                subop: 'resume-budget-capped-cap',
+                org_id: orgId,
+              },
+            },
+          )
+          continue
+        }
+
+        // Review 2026-08-04 L2 — align with parse-cv.ts's own pre-flight,
+        // which only BLOCKS on `mode === 'hard'`. Skipping on any !allow left
+        // a soft-capped (80-99%) org's rows parked indefinitely even though a
+        // fresh parse for that same org would have run fine.
+        if (!capResult.allow && capResult.mode === 'hard') {
+          // Still hard-capped — expected state, not an error. Skip silently
+          // (same reasoning as embed-batch's CapExceededError continue).
+          continue
+        }
+
+        for (const row of orgRows) {
+          // Review 2026-08-04 M5 — per-ROW try/catch, and SEND BEFORE UPDATE.
+          //
+          // Previously the row was flipped to 'pending' with parse_error
+          // nulled and THEN the event was sent. A send failure was swallowed
+          // by an org-level catch that also skipped every remaining row in
+          // that org, leaving row 1 sitting 'pending' with no message — an
+          // indefinite spinner instead of an honest failure, for at least
+          // another 15 minutes.
+          //
+          // Sending first inverts the risk into the harmless direction: if the
+          // UPDATE then fails, the row keeps its honest budget-capped message
+          // and parse-cv overwrites the state itself when it runs.
+          try {
             await inngest.send({
+              // Same hourly bucket rationale as the requeue above (M6): bounds
+              // concurrent re-parses of one row without ever locking it out.
+              id: `cv-reconcile-resume:${row.id}:${requeueBucket()}`,
               name: 'cv/uploaded',
               data: {
                 organization_id: row.organization_id,
@@ -263,19 +327,29 @@ export const reconcileCvParses = inngest.createFunction(
                 user_id: null,
               },
             })
-          }
-        } catch (orgErr) {
-          Sentry.captureException(
-            formatErrorForSentry(orgErr, 'reconcile-cv-parses resume-budget-capped org:'),
-            {
-              tags: {
-                layer: 'inngest',
-                function: 'reconcile-cv-parses',
-                subop: 'resume-budget-capped-org',
-                org_id: orgId,
+            await updateCandidateCVParse(supabase, {
+              id: row.id,
+              status: 'pending',
+              parseError: null,
+              // Clear the technical cause too — a pending row carrying the
+              // root cause of a previous failure is stale by definition.
+              parseErrorDetail: null,
+            })
+          } catch (rowErr) {
+            Sentry.captureException(
+              formatErrorForSentry(rowErr, 'reconcile-cv-parses resume-budget-capped row:'),
+              {
+                tags: {
+                  layer: 'inngest',
+                  function: 'reconcile-cv-parses',
+                  subop: 'resume-budget-capped-row',
+                  org_id: orgId,
+                  candidate_cv_id: row.id,
+                },
               },
-            },
-          )
+            )
+            // One bad row must not skip the rest of the org's backlog.
+          }
         }
       }
     })
