@@ -96,10 +96,11 @@ export async function convertShortlistToApplicationAction(
     return { ok: false, error: 'Promotion failed.' }
   }
 
-  // SF-3: fire the cached-match-score job now that this pair is a
-  // standard application — the shortlist-add path already fired once, but
-  // idempotency is handled inside the Inngest function, so a second event
-  // here is a safe cache-hit no-op, not a duplicate spend.
+  // SF-3: fire the cached-match-score job now that this pair is a standard
+  // application. Review 2026-08-04 H4 made this the FIRST (and only) enqueue
+  // for a shortlisted pair — addToShortlistAction no longer fires one,
+  // because no shortlist surface renders a score badge, so that spend bought
+  // nothing. This is the moment the score first has somewhere to appear.
   await enqueueApplicationMatchScore({
     organizationId: app.organization_id,
     applicationId: parsed.data.applicationId,

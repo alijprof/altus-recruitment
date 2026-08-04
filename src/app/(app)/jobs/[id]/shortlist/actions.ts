@@ -4,7 +4,6 @@ import * as Sentry from '@sentry/nextjs'
 import { revalidatePath } from 'next/cache'
 import { z } from 'zod'
 
-import { enqueueApplicationMatchScore } from '@/lib/inngest/enqueue-match-score'
 import { ENTITLEMENT_BLOCKED_MESSAGE, requireEntitledOrg } from '@/lib/stripe/require-entitlement'
 import { createClient as createSupabaseClient } from '@/lib/supabase/server'
 import type { Enums, TablesInsert } from '@/types/database'
@@ -100,17 +99,20 @@ export async function addToShortlistAction(
   // so the pipeline view won't change — but revalidate anyway in case
   // the recruiter has both surfaces open simultaneously.
 
-  // SF-3: fire the cached-match-score job for this new pair. Shortlist
-  // rows are still application_type='shortlist', not filtered by the
-  // pipeline kanban invariant above — the recruiter still benefits from
-  // seeing a score once the row is promoted to a standard application.
-  await enqueueApplicationMatchScore({
-    organizationId: data.organization_id,
-    applicationId: data.id,
-    candidateId: data.candidate_id,
-    jobId: data.job_id,
-    userId: userData.user.id,
-  })
+  // NO match-score enqueue here — review 2026-08-04 H4, decided.
+  //
+  // This path briefly fired one billed Sonnet call per shortlist add. But a
+  // shortlist IS the recruiter's large working set, and the D3-17 invariant
+  // keeps shortlist rows out of BOTH surfaces that render a score badge
+  // (listApplicationsForJob filters application_type='standard', and the
+  // kanban delegates to it) — so the spend bought nothing visible until
+  // promotion, at which point convertShortlistToApplicationAction fires the
+  // event anyway. Shortlisting 40 candidates meant 40 Sonnet calls and zero
+  // badges, with the only ceiling being MAX_MONTHLY_MATCH_SPEND_PENCE.
+  //
+  // Scoring therefore happens on PROMOTION to a standard application, which
+  // is the moment the score first has somewhere to render. If a shortlist
+  // surface ever grows a score badge, re-add the enqueue here.
 
   return { ok: true, applicationId: data.id }
 }

@@ -22,10 +22,12 @@ import { createServiceClient } from '@/lib/supabase/service'
 // Batch 2 Task 1).
 //
 // Triggered on `application/score-match`, fired by
-// enqueueApplicationMatchScore from all four application-create paths
-// (add-to-job, add-to-shortlist, promote-shortlist-to-application,
-// add-float — the last is a permanent no-op today since floats have
-// job_id=null). Unlike precompute-matches-for-job (which scores the top-10
+// enqueueApplicationMatchScore from the application-create paths that lead
+// to a rendered score: add-to-job and promote-shortlist-to-application.
+// add-float calls it too but is a permanent no-op (floats have job_id=null).
+// add-to-shortlist deliberately does NOT (review 2026-08-04 H4: no shortlist
+// surface renders a badge, so the spend was invisible until promotion, which
+// fires its own event). Unlike precompute-matches-for-job (which scores the top-10
 // vector candidates for a JOB), this scores exactly ONE candidate x job
 // pair the moment a recruiter puts them together, so the score lands on
 // the screens the recruiter actually works from (the job's applications
