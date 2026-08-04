@@ -37,6 +37,19 @@ export async function enqueueApplicationMatchScore(args: {
 
   try {
     await inngest.send({
+      // Review 2026-08-04 M1 — dedup key. The scorer's cache guard only helps
+      // once a PRIOR run has finished writing, so a double-clicked "Add to
+      // job", or a shortlist promoted seconds after it was added, produced two
+      // concurrent runs that both missed the cache, both paid Sonnet, and left
+      // the loser taking a 23505. Inngest dedups on `id` for 24h.
+      //
+      // Keyed on the PAIR, not the application id: the pair is what the cached
+      // summary is keyed on, and two application rows for the same pair should
+      // not buy two identical explanations. The 24h horizon is the trade-off —
+      // a re-score inside that window is dropped, which is acceptable because
+      // the cached summary would have satisfied it anyway (embedding-version
+      // changes invalidate the cache but do not warrant a same-day re-spend).
+      id: `score-match:${args.candidateId}:${args.jobId}`,
       name: 'application/score-match',
       data: {
         organization_id: args.organizationId,

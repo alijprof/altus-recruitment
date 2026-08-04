@@ -52,6 +52,7 @@ describe('enqueueApplicationMatchScore', () => {
     await enqueueApplicationMatchScore(BASE_ARGS)
     expect(send).toHaveBeenCalledTimes(1)
     expect(send).toHaveBeenCalledWith({
+      id: 'score-match:cand-1:job-1',
       name: 'application/score-match',
       data: {
         organization_id: 'org-1',
@@ -61,6 +62,25 @@ describe('enqueueApplicationMatchScore', () => {
         user_id: 'user-1',
       },
     })
+  })
+
+  it('keys the Inngest dedup id on the candidate x job PAIR, not the application (M1)', async () => {
+    // Two application rows for the same pair (shortlist promoted to standard,
+    // or a double-clicked "Add to job") must collapse to one billed run.
+    send.mockResolvedValue(undefined)
+    await enqueueApplicationMatchScore(BASE_ARGS)
+    await enqueueApplicationMatchScore({ ...BASE_ARGS, applicationId: 'app-2' })
+    const ids = send.mock.calls.map((call) => (call[0] as { id: string }).id)
+    expect(new Set(ids).size).toBe(1)
+  })
+
+  it('gives different pairs different dedup ids', async () => {
+    send.mockResolvedValue(undefined)
+    await enqueueApplicationMatchScore(BASE_ARGS)
+    await enqueueApplicationMatchScore({ ...BASE_ARGS, candidateId: 'cand-2' })
+    await enqueueApplicationMatchScore({ ...BASE_ARGS, jobId: 'job-2' })
+    const ids = send.mock.calls.map((call) => (call[0] as { id: string }).id)
+    expect(new Set(ids).size).toBe(3)
   })
 
   it('never throws when inngest.send rejects — captures to Sentry and resolves', async () => {

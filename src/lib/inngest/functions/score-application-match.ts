@@ -71,6 +71,18 @@ function asScoreMatchData(value: unknown): ScoreMatchEventData {
   return value as ScoreMatchEventData
 }
 
+/**
+ * onFailure-only variant. Review 2026-08-04 L3: the failure handler read
+ * `event.data.event.data.application_id` through a non-null cast, so an
+ * Inngest payload shape without the nested event would make the FAILURE
+ * HANDLER ITSELF throw — losing the report of the original failure. Optional
+ * chaining all the way down; the id is a tag, not a contract.
+ */
+function readApplicationIdForFailure(value: unknown): string {
+  const id = (value as { application_id?: unknown } | null | undefined)?.application_id
+  return typeof id === 'string' && id.length > 0 ? id : 'unknown'
+}
+
 // Defensive estimate when we can't observe Anthropic's actual token usage.
 // runWithLogging records the authoritative number in ai_usage; the value
 // here only feeds ai_summaries.cost_pence (display-side bookkeeping).
@@ -83,7 +95,7 @@ export const scoreApplicationMatch = inngest.createFunction(
     concurrency: { limit: 2, key: 'event.data.organization_id' },
     retries: 3,
     onFailure: async ({ event, error }) => {
-      const originalData = asScoreMatchData(event.data.event.data)
+      const applicationId = readApplicationIdForFailure(event?.data?.event?.data)
       Sentry.captureException(
         formatErrorForSentry(error, 'score-application-match onFailure:'),
         {
@@ -91,7 +103,7 @@ export const scoreApplicationMatch = inngest.createFunction(
             layer: 'inngest',
             function: 'score-application-match',
             handler: 'onFailure',
-            application_id: originalData.application_id ?? 'unknown',
+            application_id: applicationId,
           },
         },
       )
@@ -141,13 +153,30 @@ export const scoreApplicationMatch = inngest.createFunction(
           throw new NonRetriableError('candidate or job not in claimed organization')
         }
 
+        // Review 2026-08-04 M2 — these two versions ARE the cache key. The
+        // previous `?? 0` substitution meant a transient read failure wrote a
+        // summary keyed on version 0: the next run read the real version,
+        // missed the cache, and paid Sonnet again, while the 0-keyed row sat
+        // there forever (deleteStaleMatchSummaries reaps by version mismatch
+        // against real versions, never against a fabricated 0).
+        //
+        // A failed lookup is therefore a hard stop, not a substitution.
+        // Throwing a plain Error (not NonRetriableError) inside step.run is
+        // deliberate: the failure mode is transient, so Inngest's 3 retries
+        // are the right response and onFailure reports it if they exhaust.
         const candVersionResult = await getCandidateEmbeddingVersion(supabase, candidate_id)
+        if (!candVersionResult.ok) {
+          throw new Error(`getCandidateEmbeddingVersion: ${candVersionResult.code}`)
+        }
         const jobVersionResult = await getJobEmbeddingVersion(supabase, job_id)
+        if (!jobVersionResult.ok) {
+          throw new Error(`getJobEmbeddingVersion: ${jobVersionResult.code}`)
+        }
 
         return {
           candidate: candidateResult.data,
-          candidateEmbeddingVersion: candVersionResult.ok ? candVersionResult.data : 0,
-          jobEmbeddingVersion: jobVersionResult.ok ? jobVersionResult.data : 0,
+          candidateEmbeddingVersion: candVersionResult.data,
+          jobEmbeddingVersion: jobVersionResult.data,
         }
       })
 
