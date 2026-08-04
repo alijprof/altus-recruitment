@@ -549,24 +549,96 @@ function emptyCvParseHealth(): CvParseHealth {
 // resolve on the reconciler's own next 15-min pass anyway).
 const CV_PARSE_HEALTH_CANDIDATE_LIMIT = 5
 
+// Review 2026-08-04 H2 — the failed count used to be unbounded in time and
+// blind to CV versioning, so a CV that failed and was then successfully
+// re-uploaded counted against the org FOREVER, on an amber home-screen card
+// with no dismiss affordance. Compounding it, the new reconciler converts
+// every abandoned apply-form upload into a 'failed' row, so each applicant
+// who closed the tab permanently incremented the live customer's alarm.
+//
+// Two bounds, both required for the widget to be able to reach zero:
+//   1. Only failures inside this window count. Anything older is history,
+//      not "needs attention".
+//   2. Only the LATEST candidate_cvs version per candidate counts, so a
+//      superseded failure (re-uploaded, now parsed 'complete') drops out —
+//      which is also what makes the card disappear once the work is done.
+const CV_PARSE_HEALTH_FAILED_WINDOW_MS = 14 * 24 * 60 * 60 * 1000
+
+// Hard bound on the version-resolution scan. Well beyond anchor scale (a
+// 2-3 person agency does not have 200 distinct failed CVs in 14 days); if it
+// ever truncates, the widget under-reports rather than over-reports, which is
+// the correct direction for an alarm.
+const CV_PARSE_HEALTH_SCAN_CAP = 200
+
+type VersionedCvRow = { id: string; candidate_id: string; version: number }
+
+/**
+ * Drop rows that are no longer the newest `candidate_cvs` version for their
+ * candidate (H2). `candidate_cvs` is versioned by `nextCVVersion`, so a CV
+ * that failed and was then re-uploaded leaves a stale 'failed' row behind
+ * forever; without this filter that row alarms the dashboard for the rest of
+ * the org's life.
+ *
+ * Fails OPEN (returns the input unchanged) on a read error: the widget is a
+ * best-effort signal and must never crash or blank the dashboard.
+ */
+async function keepLatestVersionOnly(
+  supabase: SupabaseClient<Database>,
+  rows: VersionedCvRow[],
+): Promise<VersionedCvRow[]> {
+  if (rows.length === 0) return rows
+  const candidateIds = Array.from(new Set(rows.map((r) => r.candidate_id)))
+
+  const { data, error } = await supabase
+    .from('candidate_cvs')
+    .select('candidate_id, version')
+    .in('candidate_id', candidateIds)
+    .order('version', { ascending: false })
+    .limit(CV_PARSE_HEALTH_SCAN_CAP * 5)
+
+  if (error) {
+    Sentry.captureException(error, {
+      tags: { layer: 'db', helper: 'getCvParseHealth:latest-version' },
+    })
+    return rows
+  }
+
+  const maxVersionByCandidate = new Map<string, number>()
+  for (const row of (data ?? []) as Array<{ candidate_id: string; version: number }>) {
+    const current = maxVersionByCandidate.get(row.candidate_id)
+    if (current === undefined || row.version > current) {
+      maxVersionByCandidate.set(row.candidate_id, row.version)
+    }
+  }
+
+  return rows.filter((r) => maxVersionByCandidate.get(r.candidate_id) === r.version)
+}
+
 export async function getCvParseHealth(supabase: SupabaseClient<Database>): Promise<CvParseHealth> {
   // Mirrors the reconciler's own grace window (src/lib/cv/reconcile-decisions.ts
   // STUCK_PENDING_GRACE_MS) — "stale" here means "the reconciler would already
   // be acting on this row", not an arbitrary second threshold.
   const staleCutoff = new Date(Date.now() - 15 * 60_000).toISOString()
+  const failedCutoff = new Date(Date.now() - CV_PARSE_HEALTH_FAILED_WINDOW_MS).toISOString()
 
   // reason: candidate_cvs columns are in the generated Database type, but
   // PostgREST's typed overloads don't carry the { count: 'exact' } + .limit()
   // combination through cleanly here — cast the row shape at the boundary,
   // same idiom as selectIn() above in this file. RLS scopes both queries to
   // the caller's org; no organization_id filter is appended (see file header).
+  //
+  // stale-pending keeps { count: 'exact' } — it is inherently current (rows
+  // leave the state the moment the reconciler acts) so it needs no windowing.
+  // The failed scan cannot use `count` because the "is this the latest
+  // version?" filter runs below, after the version lookup.
   const [failedResult, staleResult] = await Promise.all([
     supabase
       .from('candidate_cvs')
-      .select('id, candidate_id', { count: 'exact' })
+      .select('id, candidate_id, version')
       .eq('parsing_status', 'failed')
+      .gte('created_at', failedCutoff)
       .order('created_at', { ascending: false })
-      .limit(CV_PARSE_HEALTH_CANDIDATE_LIMIT),
+      .limit(CV_PARSE_HEALTH_SCAN_CAP),
     supabase
       .from('candidate_cvs')
       .select('id, candidate_id', { count: 'exact' })
@@ -593,16 +665,30 @@ export async function getCvParseHealth(supabase: SupabaseClient<Database>): Prom
     return emptyCvParseHealth()
   }
 
-  const failedRows = (failedResult.data ?? []) as Array<{ id: string; candidate_id: string }>
+  const failedScanRows = (failedResult.data ?? []) as Array<{
+    id: string
+    candidate_id: string
+    version: number
+  }>
   const staleRows = (staleResult.data ?? []) as Array<{ id: string; candidate_id: string }>
 
+  // H2: keep only failures that are still the candidate's CURRENT CV. A row
+  // whose candidate has since uploaded a newer version — successful or not —
+  // is superseded history, and counting it is what made this card permanent.
+  const latestFailedRows = await keepLatestVersionOnly(supabase, failedScanRows)
+
   const candidateIds: string[] = []
-  for (const row of [...failedRows, ...staleRows]) {
+  for (const row of [...latestFailedRows, ...staleRows]) {
     if (candidateIds.length >= CV_PARSE_HEALTH_CANDIDATE_LIMIT) break
     if (!candidateIds.includes(row.candidate_id)) candidateIds.push(row.candidate_id)
   }
 
-  const failed = failedResult.error ? 0 : (failedResult.count ?? 0)
+  // One candidate with three superseded failed CVs is one problem, not three,
+  // so the count is over distinct candidates — which also makes it agree with
+  // the list of names rendered underneath it.
+  const failed = failedResult.error
+    ? 0
+    : new Set(latestFailedRows.map((r) => r.candidate_id)).size
   const stalePending = staleResult.error ? 0 : (staleResult.count ?? 0)
 
   if (candidateIds.length === 0) {
