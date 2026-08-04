@@ -36,9 +36,7 @@ export async function getDashboardMetrics(
   supabase: SupabaseClient<Database>,
 ): Promise<DashboardMetrics> {
   const now = new Date()
-  const monthStart = new Date(
-    Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1),
-  ).toISOString()
+  const monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)).toISOString()
   const nextMonthStart = new Date(
     Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1),
   ).toISOString()
@@ -226,13 +224,7 @@ async function selectIn(
   // helper is intentionally polymorphic over a closed set of known tables.
   // Narrowing via overloads would force a 6-way switch with no real benefit
   // and break the simple `Map<string, ...>` accumulators above.
-  table:
-    | 'candidates'
-    | 'jobs'
-    | 'companies'
-    | 'contacts'
-    | 'applications'
-    | 'users',
+  table: 'candidates' | 'jobs' | 'companies' | 'contacts' | 'applications' | 'users',
   select: string,
   ids: string[],
 ) {
@@ -328,9 +320,7 @@ export async function getStaleApplications(
   const cutoff = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000).toISOString()
   const { data, error } = await supabase
     .from('applications')
-    .select(
-      'id, job_id, candidate_id, stage, stage_changed_at, candidates(full_name), jobs(title)',
-    )
+    .select('id, job_id, candidate_id, stage, stage_changed_at, candidates(full_name), jobs(title)')
     .lt('stage_changed_at', cutoff)
     .not('stage', 'in', '(rejected,withdrawn,placed)')
     .order('stage_changed_at', { ascending: true })
@@ -412,7 +402,10 @@ export async function getFollowUpCandidates(
   const { data, error } = (await (
     supabase.from('candidates') as unknown as {
       select: (s: string) => {
-        in: (col: string, vals: string[]) => {
+        in: (
+          col: string,
+          vals: string[],
+        ) => {
           or: (expr: string) => {
             limit: (n: number) => Promise<{ data: unknown[] | null; error: unknown }>
           }
@@ -459,9 +452,7 @@ export async function getFollowUpCandidates(
       days_since_contact: row.last_contacted_at
         ? Math.max(
             0,
-            Math.floor(
-              (now - new Date(row.last_contacted_at).getTime()) / (24 * 60 * 60 * 1000),
-            ),
+            Math.floor((now - new Date(row.last_contacted_at).getTime()) / (24 * 60 * 60 * 1000)),
           )
         : null,
     }))
@@ -532,6 +523,117 @@ export async function getOnboardingCounts(
     jobs: jobs.count ?? 0,
     teamMembers: teamMembers.count ?? 0,
   }
+}
+
+// -----------------------------------------------------------------------------
+// 6. CV parse health — SF-4 org-level visibility (2026-07-31 Steele Charles
+//    feature review). Surfaces failed + stale-pending CV parses so a stuck
+//    parse is never silently invisible to the whole org, only to whichever
+//    recruiter happens to be looking at that one candidate page.
+// -----------------------------------------------------------------------------
+
+export type CvParseHealthCandidate = { id: string; fullName: string }
+
+export type CvParseHealth = {
+  failed: number
+  stalePending: number
+  candidates: CvParseHealthCandidate[]
+}
+
+function emptyCvParseHealth(): CvParseHealth {
+  return { failed: 0, stalePending: 0, candidates: [] }
+}
+
+// Max affected candidates shown in the widget (failed rows take priority —
+// they're the more actionable state; a stale-pending row will likely
+// resolve on the reconciler's own next 15-min pass anyway).
+const CV_PARSE_HEALTH_CANDIDATE_LIMIT = 5
+
+export async function getCvParseHealth(supabase: SupabaseClient<Database>): Promise<CvParseHealth> {
+  // Mirrors the reconciler's own grace window (src/lib/cv/reconcile-decisions.ts
+  // STUCK_PENDING_GRACE_MS) — "stale" here means "the reconciler would already
+  // be acting on this row", not an arbitrary second threshold.
+  const staleCutoff = new Date(Date.now() - 15 * 60_000).toISOString()
+
+  // reason: candidate_cvs columns are in the generated Database type, but
+  // PostgREST's typed overloads don't carry the { count: 'exact' } + .limit()
+  // combination through cleanly here — cast the row shape at the boundary,
+  // same idiom as selectIn() above in this file. RLS scopes both queries to
+  // the caller's org; no organization_id filter is appended (see file header).
+  const [failedResult, staleResult] = await Promise.all([
+    supabase
+      .from('candidate_cvs')
+      .select('id, candidate_id', { count: 'exact' })
+      .eq('parsing_status', 'failed')
+      .order('created_at', { ascending: false })
+      .limit(CV_PARSE_HEALTH_CANDIDATE_LIMIT),
+    supabase
+      .from('candidate_cvs')
+      .select('id, candidate_id', { count: 'exact' })
+      .eq('parsing_status', 'pending')
+      .lt('created_at', staleCutoff)
+      .order('created_at', { ascending: false })
+      .limit(CV_PARSE_HEALTH_CANDIDATE_LIMIT),
+  ])
+
+  if (failedResult.error) {
+    Sentry.captureException(failedResult.error, {
+      tags: { layer: 'db', helper: 'getCvParseHealth:failed' },
+    })
+  }
+  if (staleResult.error) {
+    Sentry.captureException(staleResult.error, {
+      tags: { layer: 'db', helper: 'getCvParseHealth:stale' },
+    })
+  }
+  // Degrade to zeros rather than throwing — this widget must never crash the
+  // dashboard. Partial success (one query ok, one errored) still surfaces
+  // the healthy half rather than hiding everything.
+  if (failedResult.error && staleResult.error) {
+    return emptyCvParseHealth()
+  }
+
+  const failedRows = (failedResult.data ?? []) as Array<{ id: string; candidate_id: string }>
+  const staleRows = (staleResult.data ?? []) as Array<{ id: string; candidate_id: string }>
+
+  const candidateIds: string[] = []
+  for (const row of [...failedRows, ...staleRows]) {
+    if (candidateIds.length >= CV_PARSE_HEALTH_CANDIDATE_LIMIT) break
+    if (!candidateIds.includes(row.candidate_id)) candidateIds.push(row.candidate_id)
+  }
+
+  const failed = failedResult.error ? 0 : (failedResult.count ?? 0)
+  const stalePending = staleResult.error ? 0 : (staleResult.count ?? 0)
+
+  if (candidateIds.length === 0) {
+    return { failed, stalePending, candidates: [] }
+  }
+
+  // Two-query pattern (no PostgREST embedded selects — no precedent for
+  // them in this file, see header comment).
+  const { data: candidateRows, error: candidatesError } = await supabase
+    .from('candidates')
+    .select('id, full_name')
+    .in('id', candidateIds)
+
+  if (candidatesError) {
+    Sentry.captureException(candidatesError, {
+      tags: { layer: 'db', helper: 'getCvParseHealth:candidates' },
+    })
+    return { failed, stalePending, candidates: [] }
+  }
+
+  const nameById = new Map<string, string>()
+  for (const row of (candidateRows ?? []) as Array<{ id: string; full_name: string }>) {
+    nameById.set(row.id, row.full_name)
+  }
+
+  const candidates: CvParseHealthCandidate[] = candidateIds.map((id) => ({
+    id,
+    fullName: nameById.get(id) ?? 'Unknown candidate',
+  }))
+
+  return { failed, stalePending, candidates }
 }
 
 // re-export Json for callers that want to type metadata blobs without

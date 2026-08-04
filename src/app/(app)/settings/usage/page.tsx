@@ -2,13 +2,7 @@ import Link from 'next/link'
 import { redirect } from 'next/navigation'
 import { ChevronLeft } from 'lucide-react'
 
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from '@/components/ui/card'
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Progress } from '@/components/ui/progress'
 import {
   Table,
@@ -54,6 +48,20 @@ type AiUsageRow = {
   created_at: string
 }
 
+// SF-... telemetry (2026-07-31 Steele Charles feature review): failed AI
+// attempts now land in ai_usage as `<purpose>_failed` rows at zero cost, so
+// the calls-vs-parses gap is visible internally. That suffix is an internal
+// bookkeeping convention, not customer-facing copy — translate it to a
+// readable label here rather than leaking the raw enum-ish string.
+const FAILED_SUFFIX = '_failed'
+
+function formatPurposeLabel(purpose: string): string {
+  if (purpose.endsWith(FAILED_SUFFIX)) {
+    return `${purpose.slice(0, -FAILED_SUFFIX.length)} — failed attempt (no cost)`
+  }
+  return purpose
+}
+
 export default async function UsagePage() {
   const supabase = await createClient()
   const {
@@ -68,8 +76,7 @@ export default async function UsagePage() {
   }
 
   const now = new Date()
-  const monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1))
-    .toISOString()
+  const monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)).toISOString()
 
   // reason: ai_usage columns include `purpose` and `cost_pence` from the
   // Phase 1 schema; generated Database type has them but TS sees the cast
@@ -77,8 +84,14 @@ export default async function UsagePage() {
   const usageClient = supabase as unknown as {
     from: (table: 'ai_usage') => {
       select: (cols: string) => {
-        gte: (col: string, val: string) => {
-          order: (col: string, opts: { ascending: boolean }) => Promise<{
+        gte: (
+          col: string,
+          val: string,
+        ) => {
+          order: (
+            col: string,
+            opts: { ascending: boolean },
+          ) => Promise<{
             data: AiUsageRow[] | null
             error: unknown
           }>
@@ -111,10 +124,7 @@ export default async function UsagePage() {
 
   const matchSpendPence = byPurpose.get('match_score')?.pence ?? 0
   const ceilingPence = env.MAX_MONTHLY_MATCH_SPEND_PENCE
-  const matchPctOfCeiling = Math.min(
-    100,
-    Math.round((matchSpendPence / ceilingPence) * 100),
-  )
+  const matchPctOfCeiling = Math.min(100, Math.round((matchSpendPence / ceilingPence) * 100))
 
   const topExpensive = [...rows]
     .sort((a, b) => (b.cost_pence ?? 0) - (a.cost_pence ?? 0))
@@ -147,20 +157,16 @@ export default async function UsagePage() {
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <div className="text-3xl font-semibold tabular-nums">
-            {formatPence(totalPence)}
-          </div>
+          <div className="text-3xl font-semibold tabular-nums">{formatPence(totalPence)}</div>
         </CardContent>
       </Card>
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-base font-semibold">
-            Match-scoring ceiling
-          </CardTitle>
+          <CardTitle className="text-base font-semibold">Match-scoring ceiling</CardTitle>
           <CardDescription>
-            Sonnet match-scoring stops automatically when the org crosses this
-            month-to-date spend cap. Recruiters retain the vector-only fallback.
+            Sonnet match-scoring stops automatically when the org crosses this month-to-date spend
+            cap. Recruiters retain the vector-only fallback.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-2">
@@ -181,9 +187,7 @@ export default async function UsagePage() {
         </CardHeader>
         <CardContent>
           {purposeBreakdown.length === 0 ? (
-            <p className="text-muted-foreground text-sm">
-              No AI usage recorded yet this month.
-            </p>
+            <p className="text-muted-foreground text-sm">No AI usage recorded yet this month.</p>
           ) : (
             <Table>
               <TableHeader>
@@ -196,10 +200,8 @@ export default async function UsagePage() {
               <TableBody>
                 {purposeBreakdown.map((row) => (
                   <TableRow key={row.purpose}>
-                    <TableCell className="font-medium">{row.purpose}</TableCell>
-                    <TableCell className="text-right tabular-nums">
-                      {row.count}
-                    </TableCell>
+                    <TableCell className="font-medium">{formatPurposeLabel(row.purpose)}</TableCell>
+                    <TableCell className="text-right tabular-nums">{row.count}</TableCell>
                     <TableCell className="text-right tabular-nums">
                       {formatPence(row.pence)}
                     </TableCell>
@@ -213,18 +215,14 @@ export default async function UsagePage() {
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-base font-semibold">
-            Top 10 most expensive calls
-          </CardTitle>
+          <CardTitle className="text-base font-semibold">Top 10 most expensive calls</CardTitle>
           <CardDescription>
             High-cost calls help diagnose runaway prompts or oversized inputs.
           </CardDescription>
         </CardHeader>
         <CardContent>
           {topExpensive.length === 0 ? (
-            <p className="text-muted-foreground text-sm">
-              No AI usage recorded yet this month.
-            </p>
+            <p className="text-muted-foreground text-sm">No AI usage recorded yet this month.</p>
           ) : (
             <Table>
               <TableHeader>
@@ -242,7 +240,7 @@ export default async function UsagePage() {
                     <TableCell className="text-muted-foreground text-xs">
                       {new Date(row.created_at).toLocaleString('en-GB')}
                     </TableCell>
-                    <TableCell>{row.purpose}</TableCell>
+                    <TableCell>{formatPurposeLabel(row.purpose)}</TableCell>
                     <TableCell className="text-xs">{row.model}</TableCell>
                     <TableCell className="text-right tabular-nums">
                       {row.latency_ms ?? 0}ms

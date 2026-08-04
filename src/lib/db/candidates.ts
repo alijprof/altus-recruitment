@@ -104,8 +104,7 @@ export async function listCandidates(
       // via auth.getUser + a profile lookup is too much for this layer;
       // we extract org via current_organization_id() RPC.
       const orgResult = await supabase.rpc('current_organization_id')
-      const organizationId =
-        typeof orgResult.data === 'string' ? orgResult.data : null
+      const organizationId = typeof orgResult.data === 'string' ? orgResult.data : null
       if (!organizationId) {
         // No session / no org — fall through to trigram path which only
         // needs auth.uid() for RLS.
@@ -146,8 +145,7 @@ export async function listCandidates(
     // above. Reading the RPC twice is harmless (it's a SECURITY DEFINER
     // session-context read).
     const orgRpcAgain = await supabase.rpc('current_organization_id')
-    const organizationIdForSearch =
-      typeof orgRpcAgain.data === 'string' ? orgRpcAgain.data : null
+    const organizationIdForSearch = typeof orgRpcAgain.data === 'string' ? orgRpcAgain.data : null
     if (!organizationIdForSearch) {
       return listCandidates(supabase, { ...args, mode: 'trigram' })
     }
@@ -275,11 +273,7 @@ export async function getCandidate(
   supabase: SupabaseClient<Database>,
   id: string,
 ): Promise<DbResult<CandidateWithLastContact>> {
-  const { data, error } = await supabase
-    .from('candidates')
-    .select('*')
-    .eq('id', id)
-    .maybeSingle()
+  const { data, error } = await supabase.from('candidates').select('*').eq('id', id).maybeSingle()
 
   if (error) {
     Sentry.captureException(error, { tags: { layer: 'db', helper: 'getCandidate' } })
@@ -370,19 +364,11 @@ export async function createCandidate(
     consent_basis: input.consent_basis,
     consent_at: input.consent_at,
     consent_text_version: input.consent_text_version,
-    ...(input.organization_id !== undefined
-      ? { organization_id: input.organization_id }
-      : {}),
-    ...(input.source_detail !== undefined
-      ? { source_detail: input.source_detail }
-      : {}),
+    ...(input.organization_id !== undefined ? { organization_id: input.organization_id } : {}),
+    ...(input.source_detail !== undefined ? { source_detail: input.source_detail } : {}),
   } as unknown as TablesInsert<'candidates'>
 
-  const { data, error } = await supabase
-    .from('candidates')
-    .insert(payload)
-    .select('id')
-    .single()
+  const { data, error } = await supabase.from('candidates').insert(payload).select('id').single()
 
   if (error) {
     Sentry.captureException(error, { tags: { layer: 'db', helper: 'createCandidate' } })
@@ -577,6 +563,13 @@ export async function bumpCandidateEmbedding(
  * Bulk fetch candidates by id (Plan 1 Task 1.3 — used by /jobs/[id]/matches
  * to hydrate display fields after `getTopCandidatesByVector` returns ids +
  * scores). Tight column set keeps the row payload small.
+ *
+ * seniority_level / years_experience / skills / sector_tags added for SF-1
+ * (2026-07-31 Steele Charles feature review) — match-card.tsx's "Profile
+ * incomplete" badge needs the full isProfileEffectivelyEmpty field set, not
+ * just the display fields; a missing field would make the predicate treat
+ * EVERY candidate as empty (false positive), so these are select columns
+ * here, not just a widened TypeScript type.
  */
 export type CandidateByIdRow = Pick<
   Tables<'candidates'>,
@@ -586,6 +579,10 @@ export type CandidateByIdRow = Pick<
   | 'current_company'
   | 'location'
   | 'market_status'
+  | 'seniority_level'
+  | 'years_experience'
+  | 'skills'
+  | 'sector_tags'
 >
 
 export async function listCandidatesByIds(
@@ -595,7 +592,9 @@ export async function listCandidatesByIds(
   if (ids.length === 0) return { ok: true, data: [] }
   const { data, error } = await supabase
     .from('candidates')
-    .select('id, full_name, current_role_title, current_company, location, market_status')
+    .select(
+      'id, full_name, current_role_title, current_company, location, market_status, seniority_level, years_experience, skills, sector_tags',
+    )
     .in('id', ids)
 
   if (error) {
@@ -662,7 +661,9 @@ export async function listCandidateActivities(
 ): Promise<DbResult<CandidateActivityRow[]>> {
   const { data, error } = await supabase
     .from('activities')
-    .select('id, kind, body, occurred_at, actor_user_id, metadata, actor:users!actor_user_id(full_name, email)')
+    .select(
+      'id, kind, body, occurred_at, actor_user_id, metadata, actor:users!actor_user_id(full_name, email)',
+    )
     .eq('entity_type', 'candidate')
     .eq('entity_id', candidateId)
     .order('occurred_at', { ascending: false })

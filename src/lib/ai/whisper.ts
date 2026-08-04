@@ -50,6 +50,44 @@ function calcTranscribeCostPence(
   return Math.ceil((PRICING_PENCE_PER_MINUTE[model] * durationSeconds) / 60)
 }
 
+/**
+ * Log a zero-cost `<purpose>_failed` ai_usage row on a terminal Whisper
+ * failure — closes the same calls-vs-parses telemetry gap as claude.ts's
+ * runWithLogging (SF-... 2026-07-31 Steele Charles feature review). Never
+ * called for CapExceededError — that's a cap decision, not an attempted
+ * call. Never throws.
+ */
+async function logFailedTranscribeUsage(args: {
+  organizationId: string
+  userId?: string | null
+  purpose: TranscribePurpose
+  latencyMs: number
+}): Promise<void> {
+  try {
+    const supabase = createServiceClient()
+    const { error: rpcErr } = await supabase.rpc('record_ai_usage', {
+      p_organization_id: args.organizationId,
+      p_model: 'whisper-1',
+      p_purpose: `${args.purpose}_failed`,
+      p_input_tokens: 0,
+      p_output_tokens: 0,
+      p_cost_pence: 0,
+      p_latency_ms: args.latencyMs,
+      ...(args.userId ? { p_user_id: args.userId } : {}),
+    })
+    if (rpcErr) {
+      Sentry.captureException(new Error(`record_ai_usage:${rpcErr.code ?? 'rpc_error'}`), {
+        tags: { layer: 'ai', helper: 'record_ai_usage', model: 'whisper-1' },
+      })
+    }
+  } catch (logErr) {
+    const name = logErr instanceof Error ? logErr.name : 'UnknownError'
+    Sentry.captureException(new Error(`record_ai_usage:${name}`), {
+      tags: { layer: 'ai', helper: 'record_ai_usage', model: 'whisper-1' },
+    })
+  }
+}
+
 // Singleton SDK client. Constructed at module load. env.OPENAI_API_KEY is
 // .optional() in the Zod schema (the app boots in dev without it); a missing
 // key surfaces as an SDK auth error from the first transcribe() call.
@@ -147,18 +185,33 @@ export async function transcribe(args: TranscribeArgs): Promise<TranscribeResult
   // alongside the text. We use this as the source of truth for ai_usage
   // cost-tracking and any caller that needs it. The latency overhead vs
   // default 'json' is negligible compared to the transcribe step itself.
-  const response = await openaiClient.audio.transcriptions.create({
-    file,
-    model: 'whisper-1',
-    language: 'en',
-    response_format: 'verbose_json',
-    // Treat untrusted user audio as data, not instructions — the prompt
-    // here ONLY influences Whisper's lexicon (not a Claude-style system
-    // prompt). Locked vocabulary covers the most-frequent UK recruitment
-    // terms so Whisper picks them over phonetic neighbours.
-    prompt:
-      'UK recruitment spec call. Roles, salaries in GBP £. Limited company, IR35, perm/contract.',
-  })
+  let response
+  try {
+    response = await openaiClient.audio.transcriptions.create({
+      file,
+      model: 'whisper-1',
+      language: 'en',
+      response_format: 'verbose_json',
+      // Treat untrusted user audio as data, not instructions — the prompt
+      // here ONLY influences Whisper's lexicon (not a Claude-style system
+      // prompt). Locked vocabulary covers the most-frequent UK recruitment
+      // terms so Whisper picks them over phonetic neighbours.
+      prompt:
+        'UK recruitment spec call. Roles, salaries in GBP £. Limited company, IR35, perm/contract.',
+    })
+  } catch (err) {
+    // Terminal failure — the cap check above already passed, so this is a
+    // genuine failed attempt (not a cap decision). Log a zero-cost
+    // `_failed` row, then re-throw unchanged so existing callers' error
+    // handling is untouched.
+    await logFailedTranscribeUsage({
+      organizationId: args.organizationId,
+      userId: args.userId,
+      purpose: args.purpose,
+      latencyMs: Date.now() - started,
+    })
+    throw err
+  }
 
   // reason: the OpenAI SDK's transcriptions.create() return type is a
   // discriminated union by response_format; verbose_json adds `duration`

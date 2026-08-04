@@ -12,6 +12,7 @@ import { embedJobOnJDChange } from '@/lib/inngest/functions/embed-job-on-jd-chan
 import { parseCVOnUpload } from '@/lib/inngest/functions/parse-cv'
 import { precomputeMatchesForJob } from '@/lib/inngest/functions/precompute-matches-for-job'
 import { probeFfmpeg } from '@/lib/inngest/functions/probe-ffmpeg'
+import { reconcileCvParses } from '@/lib/inngest/functions/reconcile-cv-parses'
 import { refreshOutlookSubscription } from '@/lib/inngest/functions/refresh-outlook-subscription'
 import { specAudioRetentionSweep } from '@/lib/inngest/functions/spec-audio-retention-sweep'
 import { specDraftCleanupSweep } from '@/lib/inngest/functions/spec-draft-cleanup-sweep'
@@ -54,5 +55,9 @@ export const { GET, POST, PUT } = serve({
     // Remediation 2026-07-03 — daily Stripe ↔ local billing reconciliation
     // (audit MAJOR-6).
     stripeReconcile,
+    // Remediation 2026-07-31 (Steele Charles feature review, SF-4/SF-5/SF-2) —
+    // 15-min CV-pipeline reconciler: stuck-pending sweep, budget-cap auto-
+    // resume, and unmerged-profile self-heal.
+    reconcileCvParses,
   ],
 })

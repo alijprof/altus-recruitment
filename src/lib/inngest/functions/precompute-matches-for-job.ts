@@ -3,16 +3,14 @@ import { NonRetriableError } from 'inngest'
 
 import { buildMatchInputs, scoreCandidateForJob } from '@/lib/ai/match'
 import { CapExceededError } from '@/lib/ai/claude'
+import { isProfileEffectivelyEmpty } from '@/lib/ai/profile-completeness'
 import {
   getOrgMatchSpendThisMonth,
   getMatchSummary,
   upsertMatchSummary,
 } from '@/lib/db/ai-summaries'
 import { getCandidateForEmbedding } from '@/lib/db/candidates'
-import {
-  getCandidateEmbeddingVersion,
-  getTopCandidatesForJob,
-} from '@/lib/db/embeddings'
+import { getCandidateEmbeddingVersion, getTopCandidatesForJob } from '@/lib/db/embeddings'
 import { getJobForEmbedding } from '@/lib/db/jobs'
 import { env } from '@/lib/env'
 import { inngest } from '@/lib/inngest/client'
@@ -74,17 +72,14 @@ export const precomputeMatchesForJob = inngest.createFunction(
     retries: 3,
     onFailure: async ({ event, error }) => {
       const originalData = asJobScoreData(event.data.event.data)
-      Sentry.captureException(
-        formatErrorForSentry(error, 'precompute-matches onFailure:'),
-        {
-          tags: {
-            layer: 'inngest',
-            function: 'precompute-matches-for-job',
-            handler: 'onFailure',
-            job_id: originalData.job_id ?? 'unknown',
-          },
+      Sentry.captureException(formatErrorForSentry(error, 'precompute-matches onFailure:'), {
+        tags: {
+          layer: 'inngest',
+          function: 'precompute-matches-for-job',
+          handler: 'onFailure',
+          job_id: originalData.job_id ?? 'unknown',
         },
-      )
+      })
     },
   },
   async ({ event, step }) => {
@@ -126,17 +121,14 @@ export const precomputeMatchesForJob = inngest.createFunction(
         if (!spendResult.ok) {
           // Treat as 0 — better to over-spend by one batch than to
           // permanently block scoring when the aggregate read flakes.
-          Sentry.captureException(
-            new Error('precompute-matches: spend lookup failed'),
-            {
-              tags: {
-                layer: 'inngest',
-                function: 'precompute-matches-for-job',
-                subop: 'spend-lookup',
-                organization_id,
-              },
+          Sentry.captureException(new Error('precompute-matches: spend lookup failed'), {
+            tags: {
+              layer: 'inngest',
+              function: 'precompute-matches-for-job',
+              subop: 'spend-lookup',
+              organization_id,
             },
-          )
+          })
           return { spendPence: 0, jobEmbeddingVersion: jobResult.data.embedding_version ?? 0 }
         }
         return {
@@ -149,21 +141,18 @@ export const precomputeMatchesForJob = inngest.createFunction(
       // recruiter retains the vector-only fallback while a real human
       // investigates.
       if (context.spendPence >= env.MAX_MONTHLY_MATCH_SPEND_PENCE) {
-        Sentry.captureMessage(
-          `match scoring spend ceiling reached for org ${organization_id}`,
-          {
-            level: 'warning',
-            tags: {
-              layer: 'inngest',
-              function: 'precompute-matches-for-job',
-              organization_id,
-            },
-            extra: {
-              month_to_date_pence: context.spendPence,
-              ceiling_pence: env.MAX_MONTHLY_MATCH_SPEND_PENCE,
-            },
+        Sentry.captureMessage(`match scoring spend ceiling reached for org ${organization_id}`, {
+          level: 'warning',
+          tags: {
+            layer: 'inngest',
+            function: 'precompute-matches-for-job',
+            organization_id,
           },
-        )
+          extra: {
+            month_to_date_pence: context.spendPence,
+            ceiling_pence: env.MAX_MONTHLY_MATCH_SPEND_PENCE,
+          },
+        })
         return { stopped: 'cost-ceiling', spend_pence: context.spendPence }
       }
 
@@ -216,16 +205,11 @@ export const precomputeMatchesForJob = inngest.createFunction(
           // re-check before the Sonnet call costs one extra read and
           // closes the leak if the RPC ever regresses. Fail closed:
           // log + skip the candidate (no Sonnet call, no ai_usage row).
-          const candForVerifyResult = await getCandidateForEmbedding(
-            supabase,
-            candidate.id,
-          )
+          const candForVerifyResult = await getCandidateForEmbedding(supabase, candidate.id)
           if (!candForVerifyResult.ok) {
             return
           }
-          if (
-            candForVerifyResult.data.organization_id !== organization_id
-          ) {
+          if (candForVerifyResult.data.organization_id !== organization_id) {
             Sentry.captureException(
               new Error('precompute-matches: cross-tenant candidate in top-N'),
               {
@@ -237,6 +221,22 @@ export const precomputeMatchesForJob = inngest.createFunction(
                 },
               },
             )
+            return
+          }
+
+          // SF-1 contamination guard: a candidate with no real profile
+          // content (Haiku returned nothing usable, or the CV merge never
+          // landed) should never get a Sonnet-scored match explanation —
+          // there's no signal to explain and no ai_usage spend is
+          // justified. Skip before the cache lookup so we never even check
+          // for a stale cached score to refresh.
+          if (isProfileEffectivelyEmpty(candForVerifyResult.data)) {
+            Sentry.addBreadcrumb({
+              category: 'match-score',
+              message: 'precompute-matches: skipped effectively-empty profile',
+              level: 'info',
+              data: { candidate_id: candidate.id },
+            })
             return
           }
 
@@ -283,18 +283,15 @@ export const precomputeMatchesForJob = inngest.createFunction(
             // spend-ceiling bail — Sentry warning, exit the loop, recruiter
             // still sees vector-only results. No retries (same as cost ceiling).
             if (scoreErr instanceof CapExceededError) {
-              Sentry.captureMessage(
-                `match scoring AI cap exceeded for org ${organization_id}`,
-                {
-                  level: 'warning',
-                  tags: {
-                    layer: 'inngest',
-                    function: 'precompute-matches-for-job',
-                    organization_id,
-                    bucket: scoreErr.bucket,
-                  },
+              Sentry.captureMessage(`match scoring AI cap exceeded for org ${organization_id}`, {
+                level: 'warning',
+                tags: {
+                  layer: 'inngest',
+                  function: 'precompute-matches-for-job',
+                  organization_id,
+                  bucket: scoreErr.bucket,
                 },
-              )
+              })
               return // exit this step.run — vector-only fallback stays
             }
             throw scoreErr

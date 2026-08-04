@@ -1,6 +1,7 @@
 import { EmptyState } from '@/components/app/empty-state'
 import { MetricCard } from '@/components/app/metric-card'
 import {
+  getCvParseHealth,
   getDashboardMetrics,
   getFollowUpCandidates,
   getOnboardingCounts,
@@ -10,6 +11,7 @@ import {
 import { getDormantClients } from '@/lib/db/dormant-clients'
 import { createClient } from '@/lib/supabase/server'
 
+import { CvParseHealthWidget } from './_dashboard/cv-parse-health-widget'
 import { DormantClientsWidget } from './_dashboard/dormant-clients-widget'
 import { FollowUpWidget } from './_dashboard/follow-up-widget'
 import { RecentActivityFeed } from './_dashboard/recent-activity-feed'
@@ -25,15 +27,23 @@ import { WelcomeChecklist } from './_dashboard/welcome-checklist'
 export default async function DashboardPage() {
   const supabase = await createClient()
 
-  const [metrics, onboardingCounts, activityResult, staleResult, followUpResult, dormantResult] =
-    await Promise.all([
-      getDashboardMetrics(supabase),
-      getOnboardingCounts(supabase),
-      getRecentActivity(supabase, 20),
-      getStaleApplications(supabase, 20),
-      getFollowUpCandidates(supabase, 10),
-      getDormantClients(supabase),
-    ])
+  const [
+    metrics,
+    onboardingCounts,
+    activityResult,
+    staleResult,
+    followUpResult,
+    dormantResult,
+    cvParseHealth,
+  ] = await Promise.all([
+    getDashboardMetrics(supabase),
+    getOnboardingCounts(supabase),
+    getRecentActivity(supabase, 20),
+    getStaleApplications(supabase, 20),
+    getFollowUpCandidates(supabase, 10),
+    getDormantClients(supabase),
+    getCvParseHealth(supabase),
+  ])
 
   const isEmpty = metrics.candidates === 0 && metrics.openJobs === 0
 
@@ -81,6 +91,7 @@ export default async function DashboardPage() {
           <RecentActivityFeed entries={activityResult.ok ? activityResult.data : []} />
         </div>
         <div className="space-y-6">
+          <CvParseHealthWidget health={cvParseHealth} />
           <StaleApplicationsWidget items={staleResult.ok ? staleResult.data : []} />
           <FollowUpWidget items={followUpResult.ok ? followUpResult.data : []} />
           <DormantClientsWidget items={dormantResult.ok ? dormantResult.data : []} />

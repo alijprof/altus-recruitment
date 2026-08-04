@@ -12,10 +12,7 @@ export { CapExceededError }
 
 // Hard-coded model IDs from CLAUDE.md. Any new model needs explicit approval
 // (and a pricing entry below); the TS layer refuses unknown IDs.
-export type ApprovedModel =
-  | 'claude-haiku-4-5-20251001'
-  | 'claude-sonnet-4-6'
-  | 'claude-opus-4-7'
+export type ApprovedModel = 'claude-haiku-4-5-20251001' | 'claude-sonnet-4-6' | 'claude-opus-4-7'
 
 export const claudeClient = new Anthropic({
   apiKey: env.ANTHROPIC_API_KEY,
@@ -66,6 +63,59 @@ type RunArgs = {
 // MAX_ATTEMPTS constant makes the contract unambiguous.
 const MAX_ATTEMPTS = 4 // 1 initial + 3 retries
 
+type LogUsageArgs = {
+  model: ApprovedModel
+  organizationId: string
+  userId?: string | null
+  purpose: string
+  inputTokens: number
+  outputTokens: number
+  costPence: number
+  latencyMs: number
+}
+
+/**
+ * Write one ai_usage row. Never throws — a cost-logging failure must never
+ * break the caller's AI result (success path) or mask the underlying error
+ * (failure path, below). Factored out of runWithLogging so both the
+ * success-path log and the SF-... `_failed` telemetry (2026-07-31 Steele
+ * Charles feature review) share one write path.
+ */
+async function logUsage(args: LogUsageArgs): Promise<void> {
+  try {
+    const supabase = createServiceClient()
+    const { error: logError } = await supabase.rpc('record_ai_usage', {
+      p_organization_id: args.organizationId,
+      p_model: args.model,
+      p_purpose: args.purpose,
+      p_input_tokens: args.inputTokens,
+      p_output_tokens: args.outputTokens,
+      p_cost_pence: args.costPence,
+      p_latency_ms: args.latencyMs,
+      ...(args.userId ? { p_user_id: args.userId } : {}),
+    })
+    if (logError) {
+      // supabase.rpc() resolves with { error } on a DB failure — it does
+      // NOT throw. Without this check a dropped cost row is invisible and
+      // the founder under-counts per-tenant spend (non-negotiable,
+      // CLAUDE.md). Wrap to code only — never pass the raw error (PII).
+      Sentry.captureException(new Error(`record_ai_usage:${logError.code ?? 'rpc_error'}`), {
+        tags: {
+          layer: 'ai',
+          helper: 'record_ai_usage',
+          model: args.model,
+          purpose: args.purpose,
+        },
+      })
+    }
+  } catch (logErr) {
+    const name = logErr instanceof Error ? logErr.name : 'UnknownError'
+    Sentry.captureException(new Error(`record_ai_usage:${name}`), {
+      tags: { layer: 'ai', helper: 'record_ai_usage', model: args.model, purpose: args.purpose },
+    })
+  }
+}
+
 export async function runWithLogging(args: RunArgs): Promise<Anthropic.Message> {
   // Cap enforcement — check BEFORE the Anthropic call (05-01 Task 1.4).
   // Fail open: if checkCap throws, we let the call proceed rather than
@@ -82,7 +132,9 @@ export async function runWithLogging(args: RunArgs): Promise<Anthropic.Message> 
     }
     // soft mode: call proceeds normally; email already queued by checkCap.
   } catch (err) {
-    // CapExceededError is intentional — re-throw.
+    // CapExceededError is intentional — re-throw. Deliberately NOT logged as
+    // a `_failed` ai_usage row below — no API call was attempted, so this is
+    // a cap DECISION, not a failed attempt (see the outer try/catch below).
     if (err instanceof CapExceededError) throw err
     // Any other checkCap error: fail open (log via Sentry inside checkCap).
   }
@@ -90,83 +142,86 @@ export async function runWithLogging(args: RunArgs): Promise<Anthropic.Message> 
   const started = Date.now()
   let attempt = 0
   let lastError: unknown
-  while (attempt < MAX_ATTEMPTS) {
-    try {
-      const response = await claudeClient.messages.create({
-        model: args.model,
-        ...args.request,
-      })
-      const cost = calcCostPence(
-        args.model,
-        response.usage.input_tokens,
-        response.usage.output_tokens,
-      )
+  // Outer try/catch: every terminal exit from the retry loop below (the
+  // non-retriable 4xx throw, the "unknown error" throw, and retry-budget
+  // exhaustion) lands here exactly once — never inside the loop's `continue`
+  // branches — so this logs exactly ONE `_failed` ai_usage row per failed
+  // runWithLogging invocation, not one per retry attempt.
+  try {
+    while (attempt < MAX_ATTEMPTS) {
       try {
-        const supabase = createServiceClient()
-        const { error: logError } = await supabase.rpc('record_ai_usage', {
-          p_organization_id: args.organizationId,
-          p_model: args.model,
-          p_purpose: args.purpose,
-          p_input_tokens: response.usage.input_tokens,
-          p_output_tokens: response.usage.output_tokens,
-          p_cost_pence: cost,
-          p_latency_ms: Date.now() - started,
-          ...(args.userId ? { p_user_id: args.userId } : {}),
+        const response = await claudeClient.messages.create({
+          model: args.model,
+          ...args.request,
         })
-        if (logError) {
-          // supabase.rpc() resolves with { error } on a DB failure — it does
-          // NOT throw. Without this check a dropped cost row is invisible and
-          // the founder under-counts per-tenant spend (non-negotiable,
-          // CLAUDE.md). Wrap to code only — never pass the raw error (PII).
-          Sentry.captureException(
-            new Error(`record_ai_usage:${logError.code ?? 'rpc_error'}`),
-            { tags: { layer: 'ai', helper: 'record_ai_usage', model: args.model } },
-          )
-        }
-      } catch (logErr) {
-        const name = logErr instanceof Error ? logErr.name : 'UnknownError'
-        Sentry.captureException(new Error(`record_ai_usage:${name}`), {
-          tags: { layer: 'ai', helper: 'record_ai_usage', model: args.model },
+        const cost = calcCostPence(
+          args.model,
+          response.usage.input_tokens,
+          response.usage.output_tokens,
+        )
+        await logUsage({
+          model: args.model,
+          organizationId: args.organizationId,
+          userId: args.userId,
+          purpose: args.purpose,
+          inputTokens: response.usage.input_tokens,
+          outputTokens: response.usage.output_tokens,
+          costPence: cost,
+          latencyMs: Date.now() - started,
         })
+        return response
+      } catch (err) {
+        lastError = err
+        if (err instanceof Anthropic.APIError) {
+          // 429 = rate limit; 529 = overloaded. Both retry with exponential
+          // backoff; 429 honours the retry-after header if present.
+          if (err.status === 429 || err.status === 529) {
+            const retryAfterRaw = (err.headers as Record<string, string> | undefined)?.[
+              'retry-after'
+            ]
+            const retryAfter = Number(retryAfterRaw)
+            const waitMs =
+              Number.isFinite(retryAfter) && retryAfter > 0
+                ? // Honour the server-supplied Retry-After but bound it (audit
+                  // min-19 + review finding 6). Clamping too low retries before
+                  // Anthropic's window reopens (drawing another 429); not clamping
+                  // at all lets a pathological header hang a request to the
+                  // function timeout. 60s covers Anthropic's typical windows while
+                  // keeping the worst case (4 attempts) within the 300s budget.
+                  Math.min(60_000, retryAfter * 1000)
+                : Math.min(30_000, 1000 * 2 ** attempt)
+            await new Promise((resolve) => setTimeout(resolve, waitMs))
+            attempt++
+            continue
+          }
+          if (err.status !== undefined && err.status >= 400 && err.status < 500) {
+            // Non-retriable 4xx (other than 429).
+            throw err
+          }
+          if (err.status !== undefined && err.status >= 500) {
+            await new Promise((resolve) => setTimeout(resolve, 1000 * 2 ** attempt))
+            attempt++
+            continue
+          }
+        }
+        // Unknown error — do not retry.
+        throw err
       }
-      return response
-    } catch (err) {
-      lastError = err
-      if (err instanceof Anthropic.APIError) {
-        // 429 = rate limit; 529 = overloaded. Both retry with exponential
-        // backoff; 429 honours the retry-after header if present.
-        if (err.status === 429 || err.status === 529) {
-          const retryAfterRaw = (err.headers as Record<string, string> | undefined)?.['retry-after']
-          const retryAfter = Number(retryAfterRaw)
-          const waitMs =
-            Number.isFinite(retryAfter) && retryAfter > 0
-              ? // Honour the server-supplied Retry-After but bound it (audit
-                // min-19 + review finding 6). Clamping too low retries before
-                // Anthropic's window reopens (drawing another 429); not clamping
-                // at all lets a pathological header hang a request to the
-                // function timeout. 60s covers Anthropic's typical windows while
-                // keeping the worst case (4 attempts) within the 300s budget.
-                Math.min(60_000, retryAfter * 1000)
-              : Math.min(30_000, 1000 * 2 ** attempt)
-          await new Promise((resolve) => setTimeout(resolve, waitMs))
-          attempt++
-          continue
-        }
-        if (err.status !== undefined && err.status >= 400 && err.status < 500) {
-          // Non-retriable 4xx (other than 429).
-          throw err
-        }
-        if (err.status !== undefined && err.status >= 500) {
-          await new Promise((resolve) => setTimeout(resolve, 1000 * 2 ** attempt))
-          attempt++
-          continue
-        }
-      }
-      // Unknown error — do not retry.
-      throw err
     }
+    throw lastError
+  } catch (terminalErr) {
+    await logUsage({
+      model: args.model,
+      organizationId: args.organizationId,
+      userId: args.userId,
+      purpose: `${args.purpose}_failed`,
+      inputTokens: 0,
+      outputTokens: 0,
+      costPence: 0,
+      latencyMs: Date.now() - started,
+    })
+    throw terminalErr
   }
-  throw lastError
 }
 
 // CV PARSE TOOL — D-05 schema. Single tool call extracts all fields plus a

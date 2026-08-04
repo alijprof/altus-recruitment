@@ -3,13 +3,8 @@ import { AlertTriangle, CheckCircle2, Sparkles } from 'lucide-react'
 
 import { MatchScoreBadge } from '@/components/app/match-score-badge'
 import { Badge } from '@/components/ui/badge'
-import {
-  Card,
-  CardContent,
-  CardFooter,
-  CardHeader,
-  CardTitle,
-} from '@/components/ui/card'
+import { Card, CardContent, CardFooter, CardHeader, CardTitle } from '@/components/ui/card'
+import { isProfileEffectivelyEmpty } from '@/lib/ai/profile-completeness'
 import type { MatchSummaryRow } from '@/lib/db/ai-summaries'
 import type { CandidateByIdRow } from '@/lib/db/candidates'
 
@@ -61,6 +56,14 @@ export function MatchCard({
     ((summary.candidate_embedding_version ?? 0) !== candidateEmbeddingVersion ||
       (summary.job_embedding_version ?? 0) !== jobEmbeddingVersion)
 
+  // SF-1: badge (never delete) an existing score generated from a
+  // near-empty profile. precompute-matches-for-job now skips scoring these
+  // going forward, but a pre-existing cached summary can still be sitting
+  // on a candidate whose profile is effectively empty — this is the
+  // non-destructive half of "badge vs delete" (the delete choice is the
+  // founder's, out of scope here).
+  const isIncompleteProfile = summary !== null && isProfileEffectivelyEmpty(candidate)
+
   return (
     <Card>
       <CardHeader>
@@ -88,10 +91,19 @@ export function MatchCard({
             {isStale ? (
               <Badge
                 variant="outline"
-                className="border-amber-200/60 bg-amber-50 text-amber-700 dark:border-amber-900/60 dark:bg-amber-950 dark:text-amber-300 text-xs font-normal"
+                className="border-amber-200/60 bg-amber-50 text-xs font-normal text-amber-700 dark:border-amber-900/60 dark:bg-amber-950 dark:text-amber-300"
                 title="The candidate or job has changed since this score was generated. Click Explain to refresh."
               >
                 Refreshing…
+              </Badge>
+            ) : null}
+            {isIncompleteProfile ? (
+              <Badge
+                variant="outline"
+                className="text-muted-foreground text-xs font-normal"
+                title="This score was generated from a near-empty candidate profile and should not be trusted."
+              >
+                Profile incomplete
               </Badge>
             ) : null}
           </div>
@@ -101,7 +113,7 @@ export function MatchCard({
       {summary ? (
         <CardContent className="space-y-4">
           <section aria-label="Strengths">
-            <h3 className="text-muted-foreground mb-1 text-xs font-semibold uppercase tracking-wide">
+            <h3 className="text-muted-foreground mb-1 text-xs font-semibold tracking-wide uppercase">
               Strengths
             </h3>
             <ul className="space-y-1.5">
@@ -118,7 +130,7 @@ export function MatchCard({
           </section>
 
           <section aria-label="Gaps">
-            <h3 className="text-muted-foreground mb-1 text-xs font-semibold uppercase tracking-wide">
+            <h3 className="text-muted-foreground mb-1 text-xs font-semibold tracking-wide uppercase">
               Gaps
             </h3>
             {summary.content.gaps.length === 0 ? (
@@ -139,7 +151,7 @@ export function MatchCard({
           </section>
 
           <section aria-label="Screening questions">
-            <h3 className="text-muted-foreground mb-1 text-xs font-semibold uppercase tracking-wide">
+            <h3 className="text-muted-foreground mb-1 text-xs font-semibold tracking-wide uppercase">
               Screening questions
             </h3>
             <ol className="list-decimal space-y-1.5 pl-5 text-sm">
@@ -152,8 +164,8 @@ export function MatchCard({
       ) : (
         <CardContent>
           <p className="text-muted-foreground text-sm">
-            This candidate is a strong vector match for the job but hasn&apos;t been scored
-            yet. Click Explain to generate strengths, gaps, and screening questions.
+            This candidate is a strong vector match for the job but hasn&apos;t been scored yet.
+            Click Explain to generate strengths, gaps, and screening questions.
           </p>
         </CardContent>
       )}
@@ -164,17 +176,13 @@ export function MatchCard({
             <Sparkles className="size-3" aria-hidden="true" />
             <span>
               AI generated · {summary.content.confidence} confidence ·{' '}
-              <time dateTime={summary.created_at}>
-                {formatRelativeTime(summary.created_at)}
-              </time>
+              <time dateTime={summary.created_at}>{formatRelativeTime(summary.created_at)}</time>
             </span>
           </div>
         ) : (
           <span />
         )}
-        {!summary || isStale ? (
-          <ExplainButton jobId={jobId} candidateId={candidate.id} />
-        ) : null}
+        {!summary || isStale ? <ExplainButton jobId={jobId} candidateId={candidate.id} /> : null}
       </CardFooter>
     </Card>
   )
