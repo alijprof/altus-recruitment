@@ -39,14 +39,16 @@ export async function addCandidateToJobAction(rawInput: unknown): Promise<AddCan
   }
 
   const supabase = await createSupabaseClient()
-  // Read once — reused below both for the SF-3 match-score enqueue and (in
-  // a later plan increment) for owner_user_id attribution.
+  // Read once — reused below both for the SF-3 match-score enqueue and for
+  // owner_user_id attribution (audit §4.9 — matches the shortlist and
+  // float actions, which already stamp owner_user_id).
   const { data: userData } = await supabase.auth.getUser()
   const userId = userData.user?.id ?? null
 
   const result = await createApplication(supabase, {
     jobId: parsed.data.jobId,
     candidateId: parsed.data.candidateId,
+    ownerUserId: userId,
   })
 
   if (!result.ok) {

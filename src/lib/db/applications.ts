@@ -287,6 +287,11 @@ export type CreateApplicationInput = {
   jobId: string
   candidateId: string
   applicationType?: Enums<'application_type'>
+  // Audit §4.9 (M-6b parity): attribute the add-to-job action to the
+  // recruiter who performed it, matching the shortlist and float actions
+  // (which already stamp owner_user_id). Feeds coalesce(owner_user_id,
+  // created_by) in the buyer-value RPCs.
+  ownerUserId?: string | null
 }
 
 /**
@@ -307,6 +312,7 @@ export async function createApplication(
     job_id: input.jobId,
     candidate_id: input.candidateId,
     application_type: input.applicationType ?? ('standard' as Enums<'application_type'>),
+    ...(input.ownerUserId ? { owner_user_id: input.ownerUserId } : {}),
   } as unknown as TablesInsert<'applications'>
 
   const { data, error } = await supabase.from('applications').insert(payload).select('*').single()

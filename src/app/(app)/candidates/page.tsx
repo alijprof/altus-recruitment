@@ -3,6 +3,7 @@ import Link from 'next/link'
 import { EmptyState } from '@/components/app/empty-state'
 import { isListView, ViewToggle } from '@/components/app/view-toggle'
 import { Button } from '@/components/ui/button'
+import { recordSearchAudit } from '@/lib/db/audit'
 import { listCandidates, type SortDir, type SortKey } from '@/lib/db/candidates'
 import { createClient } from '@/lib/supabase/server'
 
@@ -77,6 +78,18 @@ export default async function CandidatesPage({
 
   const { rows, total } = result.data
   const isEmptyDatabase = total === 0 && !q
+
+  // SF-6 / audit §4.8: instrument keyword search on the candidates list too
+  // — same telemetry contract as /search (mode/flag/count, never the raw
+  // query string).
+  if (q) {
+    await recordSearchAudit(supabase, {
+      mode: 'keyword',
+      semantic_ok: false,
+      result_count: total,
+      surface: 'candidates_list',
+    })
+  }
 
   return (
     <div className="space-y-6">

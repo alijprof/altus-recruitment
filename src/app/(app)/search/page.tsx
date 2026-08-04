@@ -3,6 +3,7 @@ import { Sparkles } from 'lucide-react'
 
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { embed } from '@/lib/ai/voyage'
+import { recordSearchAudit } from '@/lib/db/audit'
 import { listCandidates } from '@/lib/db/candidates'
 import {
   countCandidatesWithoutEmbedding,
@@ -114,6 +115,18 @@ export default async function SearchPage({
           market_status: r.market_status,
         }))
       : []
+
+    // SF-6 / audit §4.8: instrument every search render so a four-week
+    // telemetry window can finally distinguish "search is unused" from
+    // "search is broken". Never the raw query string — mode/flag/count
+    // only.
+    await recordSearchAudit(supabase, {
+      mode: 'trigram',
+      semantic_ok: false,
+      result_count: rows.length,
+      surface: 'search',
+    })
+
     return (
       <div className="space-y-6">
         <header className="space-y-1">
@@ -193,6 +206,25 @@ export default async function SearchPage({
           market_status: r.market_status,
         }))
       : []
+  }
+
+  // SF-6 / audit §4.8: `semantic_ok` is the whole point — it is what
+  // finally distinguishes "semantic search is unused" from "semantic
+  // search is silently broken". Never the raw query string.
+  if (rows?.ok) {
+    await recordSearchAudit(supabase, {
+      mode: 'semantic',
+      semantic_ok: true,
+      result_count: rows.data.length,
+      surface: 'search',
+    })
+  } else {
+    await recordSearchAudit(supabase, {
+      mode: 'semantic',
+      semantic_ok: false,
+      result_count: fallbackRows.length,
+      surface: 'search',
+    })
   }
 
   return (
