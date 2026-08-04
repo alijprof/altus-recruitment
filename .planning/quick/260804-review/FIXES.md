@@ -243,3 +243,24 @@ Inngest paths; the REVOKE migration's deliberate `record_audit_anonymous`
 exclusion; and the pre/post-migration column tolerance, which is now
 centralised rather than triplicated (L9) with its strict/loose behaviours
 preserved exactly.
+
+## Addendum — re-review fixes (applied by orchestrator, 2026-08-04)
+
+- **V1 (re-review verification gate) — heal predicate corrected.** The C1 fix
+  mirrored isProfileEffectivelyEmpty (all 5 scalars null + both arrays empty),
+  which excluded BOTH production casualties (62783324 has location set;
+  3bf8ffe0 has role+company set) — verified against prod via read-only SQL.
+  The selector now keys on the actual merge signal: skills + work_experience +
+  education all empty (+ non-trivial extracted_data). Read-only prod query of
+  the corrected predicate returns exactly 5 rows platform-wide, both
+  casualties included, oldest-first, well under the 25 cap. Post-fetch guard,
+  drift counters, and progress check updated to the same signal
+  (HEAL_SIGNAL_COLUMNS). The contamination guard (isProfileEffectivelyEmpty)
+  is unchanged at its four sites — the two predicates serve different
+  purposes and are now deliberately distinct.
+- **RR-1 — score-match dedup id hour-bucketed** (mirrors the reconciler's
+  requeue ids), capping the no-summary-outcome blind spot at 1h instead of
+  24h. Test updated.
+- Residuals RR-2 (squatter rows loud-not-drained; bounded by SQL extracted-
+  data guard), RR-3/4/5/7 (LOW), RR-8/9 (INFO), L6, L10 — accepted, carried
+  to the founder report.

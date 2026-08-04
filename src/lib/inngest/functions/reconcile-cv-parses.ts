@@ -1,10 +1,6 @@
 import * as Sentry from '@sentry/nextjs'
 
 import {
-  isProfileEffectivelyEmpty,
-  PROFILE_COMPLETENESS_COLUMNS,
-} from '@/lib/ai/profile-completeness'
-import {
   CV_BUDGET_CAPPED_ILIKE_PATTERN,
   CV_STUCK_MESSAGE,
   CV_UPLOAD_INCOMPLETE_MESSAGE,
@@ -16,7 +12,6 @@ import {
   updateCandidateCVParse,
   type ParsedCVSubset,
 } from '@/lib/db/candidate-cvs'
-import { getCandidateForEmbedding } from '@/lib/db/candidates'
 import { inngest } from '@/lib/inngest/client'
 import { formatErrorForSentry } from '@/lib/observability/inngest'
 import { checkCap } from '@/lib/stripe/cap-enforcement'
@@ -79,6 +74,22 @@ type UnmergedProfileRow = {
   id: string
   candidate_id: string
   extracted_data: unknown
+  candidates: {
+    id: string
+    skills: string[] | null
+    work_experience: unknown
+    education: unknown
+  }
+}
+
+// The heal signal: the high-value columns the D-08 merge exists to populate.
+// A merge that only filled fields outside this set leaves the row re-selectable.
+const HEAL_SIGNAL_COLUMNS = ['skills', 'work_experience', 'education'] as const
+
+// jsonb columns are `not null default '[]'` (20260522094604) but tolerate a
+// null anyway — a null and an empty array are both "merge never applied".
+function isEmptyJsonbArray(v: unknown): boolean {
+  return v == null || (Array.isArray(v) && v.length === 0)
 }
 
 // Copied locally rather than exported from embed-batch.ts (plan directive —
@@ -370,9 +381,15 @@ export const reconcileCvParses = inngest.createFunction(
     // permanently unreachable.
     //
     // The "needs heal" predicate now lives in SQL:
-    //   * `candidates!inner(...)` + per-column filters = the exact field set
-    //     isProfileEffectivelyEmpty inspects (see PROFILE_COMPLETENESS_*
-    //     in src/lib/ai/profile-completeness.ts).
+    //   * `candidates!inner(...)` + filters on the HEAL SIGNAL: skills,
+    //     work_experience, education ALL still empty. Re-review V1
+    //     (2026-08-04) corrected this from a full isProfileEffectivelyEmpty
+    //     mirror — that predicate also required every scalar to be null,
+    //     which excluded both named casualties (62783324 has location set;
+    //     3bf8ffe0 has role+company set). "Merge never applied" is signalled
+    //     by the empty high-value arrays, not by empty scalars, and D-08's
+    //     fill-empty-only merge makes healing rows with populated scalars
+    //     safe by construction.
     //   * `extracted_data` must be a non-empty object, so a selected row can
     //     actually contribute something.
     // A healed candidate stops satisfying the join predicate and DROPS OUT of
@@ -383,22 +400,19 @@ export const reconcileCvParses = inngest.createFunction(
       const supabase = createServiceClient()
       const { data: rawRows, error } = await supabase
         .from('candidate_cvs')
-        .select('id, candidate_id, extracted_data, candidates!inner(id)')
+        .select('id, candidate_id, extracted_data, candidates!inner(id, skills, work_experience, education)')
         .eq('parsing_status', 'complete')
         .not('extracted_data', 'is', null)
         // A '{}' blob can never populate a field — excluding it in SQL stops
         // such a row from squatting a slot on every future run.
         .neq('extracted_data', '{}')
-        // --- SQL mirror of isProfileEffectivelyEmpty ---------------------
-        .is('candidates.current_role_title', null)
-        .is('candidates.current_company', null)
-        .is('candidates.location', null)
-        .is('candidates.seniority_level', null)
-        .is('candidates.years_experience', null)
-        // `col <@ '{}'` is true only for an empty text[] — the array
-        // equivalent of the IS NULL checks above.
+        // --- SQL shape of "the D-08 merge never applied" (heal signal) ---
+        // Scalars are deliberately NOT filtered — see step header (V1).
         .containedBy('candidates.skills', [])
-        .containedBy('candidates.sector_tags', [])
+        // jsonb `not null default '[]'` — eq-empty-array is the complete
+        // "empty" test (pre-migration rows were default-backfilled).
+        .filter('candidates.work_experience', 'eq', '[]')
+        .filter('candidates.education', 'eq', '[]')
         // -----------------------------------------------------------------
         .order('created_at', { ascending: true })
         .limit(HEAL_ROW_CAP)
@@ -414,23 +428,25 @@ export const reconcileCvParses = inngest.createFunction(
       }
       const rows = (rawRows ?? []) as unknown as UnmergedProfileRow[]
 
-      // Drift counters. The SQL selector above and isProfileEffectivelyEmpty
-      // are meant to agree exactly; a non-zero count here means they don't
-      // (a new ProfileCompletenessFields key that only one side knows about,
-      // or a whitespace-only string that SQL sees as present and TS sees as
-      // empty). Reported once per sweep, never per row.
+      // Drift counters. The SQL selector above and the TS heal-signal check
+      // below are meant to agree exactly; a non-zero count here means they
+      // don't. Reported once per sweep, never per row.
       let postFetchDrops = 0
       let noProgressRows = 0
 
       for (const row of rows) {
         try {
-          const candidateResult = await getCandidateForEmbedding(supabase, row.candidate_id)
-          if (!candidateResult.ok) continue
-
-          // Defence in depth: the row was selected BECAUSE the candidate is
-          // empty, so this should never fire. If it does, SQL and TS have
-          // drifted — count it and report below rather than skipping silently.
-          if (!isProfileEffectivelyEmpty(candidateResult.data)) {
+          // Defence in depth: the row was selected BECAUSE the heal signal
+          // (skills + work_experience + education all empty) held in SQL.
+          // Re-check the same signal in TS from the joined columns; a drop
+          // here means the SQL and TS predicates drifted — count it and
+          // report below rather than skipping silently.
+          const joined = row.candidates
+          const mergeStillNeeded =
+            (joined.skills ?? []).length === 0 &&
+            isEmptyJsonbArray(joined.work_experience) &&
+            isEmptyJsonbArray(joined.education)
+          if (!mergeStillNeeded) {
             postFetchDrops++
             continue
           }
@@ -464,12 +480,12 @@ export const reconcileCvParses = inngest.createFunction(
             data: { fieldsPopulated: mergeResult.data.fieldsPopulated.length },
           })
 
-          // A merge that populated only fields OUTSIDE the completeness set
-          // (e.g. email/phone only) leaves the candidate still "effectively
-          // empty", so this row is re-selected on the next sweep. It cannot
-          // starve the cap silently — surface it.
+          // A merge that populated only fields OUTSIDE the heal-signal set
+          // (e.g. email/phone only) leaves skills/work/education still empty,
+          // so this row is re-selected on the next sweep. It cannot starve
+          // the cap silently — surface it.
           const madeProgress = mergeResult.data.fieldsPopulated.some((f) =>
-            (PROFILE_COMPLETENESS_COLUMNS as readonly string[]).includes(f),
+            (HEAL_SIGNAL_COLUMNS as readonly string[]).includes(f),
           )
           if (!madeProgress) noProgressRows++
         } catch (rowErr) {

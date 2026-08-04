@@ -45,11 +45,17 @@ export async function enqueueApplicationMatchScore(args: {
       //
       // Keyed on the PAIR, not the application id: the pair is what the cached
       // summary is keyed on, and two application rows for the same pair should
-      // not buy two identical explanations. The 24h horizon is the trade-off —
-      // a re-score inside that window is dropped, which is acceptable because
-      // the cached summary would have satisfied it anyway (embedding-version
-      // changes invalidate the cache but do not warrant a same-day re-spend).
-      id: `score-match:${args.candidateId}:${args.jobId}`,
+      // not buy two identical explanations.
+      //
+      // Re-review 2026-08-04 RR-1 — hour-bucketed, mirroring the reconciler's
+      // requeue ids. Several scorer outcomes (empty-profile skip, cost
+      // ceiling, cap exceeded, inputs unavailable) write NO summary, so a
+      // bare pair key turned those transient skips into a 24h scoring blind
+      // spot — most reachably: candidate added to a job pre-parse, healed by
+      // the reconciler minutes later, never scored. The hour bucket keeps the
+      // double-click / fast-promote collapse (seconds apart) while capping
+      // any blind spot at one hour.
+      id: `score-match:${args.candidateId}:${args.jobId}:${Math.floor(Date.now() / 3_600_000)}`,
       name: 'application/score-match',
       data: {
         organization_id: args.organizationId,

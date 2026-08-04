@@ -52,7 +52,9 @@ describe('enqueueApplicationMatchScore', () => {
     await enqueueApplicationMatchScore(BASE_ARGS)
     expect(send).toHaveBeenCalledTimes(1)
     expect(send).toHaveBeenCalledWith({
-      id: 'score-match:cand-1:job-1',
+      // RR-1: hour-bucketed so transient no-summary skips can't blind-spot
+      // scoring for 24h; the bucket is stable within a test run.
+      id: `score-match:cand-1:job-1:${Math.floor(Date.now() / 3_600_000)}`,
       name: 'application/score-match',
       data: {
         organization_id: 'org-1',
