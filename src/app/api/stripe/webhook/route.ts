@@ -6,8 +6,19 @@
 //      Stripe HMAC signature covers the exact bytes Stripe sent.
 //   3. `stripe.webhooks.constructEvent` — verifies the signature; on throw
 //      returns 400, never leaking error detail.
-//   4. Idempotency: INSERT into `stripe_webhook_events` BEFORE processing;
-//      short-circuit on duplicate (unique constraint on stripe_event_id).
+//   4. Idempotency + status ledger (audit §4.10, Steele Charles feature
+//      review 2026-07-31): `stripe_webhook_events` now records the FULL
+//      lifecycle — 'received' (up-front stamp), 'processed' (success,
+//      with `processed_at`), or 'error' (with `error_detail`, name +
+//      event type only — NEVER the underlying error's message text, a
+//      third-party SDK field). The route short-circuits ONLY on a row
+//      whose status is 'processed' (or legacy NULL, back-dated to
+//      'processed' by the migration) — a
+//      'received' or 'error' row must NOT short-circuit, so a failed
+//      event is still re-delivered and re-driven by Stripe. Every ledger
+//      write degrades silently when the new columns don't exist yet
+//      (PGRST204 / 42703) so this code is safe to deploy BEFORE the
+//      migration lands.
 //
 // Lifecycle events handled:
 //   checkout.session.completed → upsert subscription (first-time checkout)
@@ -40,6 +51,85 @@ import {
 import { createServiceClient } from '@/lib/supabase/service'
 import { sendTrialEndingEmail, sendPaymentFailedEmail } from '@/lib/email/billing-emails'
 import { env } from '@/lib/env'
+
+// ---------------------------------------------------------------------------
+// Status ledger helpers (audit §4.10). `src/types/database.ts` won't know
+// the status/error_detail/processed_at columns until the founder pushes
+// 20260804130100_stripe_webhook_event_status.sql and regenerates types
+// (`pnpm db:types` — do NOT run it as part of this change). Narrow local
+// cast at the .from() boundary, same idiom as `asAiSummariesClient` in
+// src/lib/db/ai-summaries.ts. Drop this cast once types are regenerated.
+// ---------------------------------------------------------------------------
+
+type StripeWebhookEventsClient = {
+  from: (table: 'stripe_webhook_events') => {
+    select: (cols: string) => {
+      eq: (
+        col: string,
+        val: unknown,
+      ) => {
+        maybeSingle: () => Promise<{
+          data: { stripe_event_id: string; status?: string | null } | null
+          error: unknown
+        }>
+      }
+    }
+    upsert: (
+      row: Record<string, unknown>,
+      opts: { onConflict: string; ignoreDuplicates: boolean },
+    ) => Promise<{ error: unknown }>
+  }
+}
+
+function asStripeWebhookEventsClient(
+  client: ReturnType<typeof createServiceClient>,
+): StripeWebhookEventsClient {
+  return client as unknown as StripeWebhookEventsClient
+}
+
+// True when a PostgREST error indicates the referenced column doesn't
+// exist yet — 'PGRST204' (schema-cache write miss) or '42703' (Postgres
+// undefined_column, surfaced on reads). Every ledger write in this file is
+// guarded by this check so the route degrades silently when this code is
+// deployed BEFORE 20260804130100_stripe_webhook_event_status.sql lands.
+function isMissingColumnError(err: unknown): boolean {
+  if (err === null || typeof err !== 'object') return false
+  const code = (err as { code?: string }).code
+  return code === 'PGRST204' || code === '42703'
+}
+
+// Two-step seen-check: try the status-aware select; on a missing-column
+// error, fall back to the legacy stripe_event_id-only select and treat any
+// existing row as 'processed' (the exact pre-migration contract). Returns
+// `ok: false` only for a REAL database error — the caller returns 500.
+async function readLedgerSeenStatus(
+  client: StripeWebhookEventsClient,
+  eventId: string,
+): Promise<
+  | { ok: true; found: boolean; status: string | null }
+  | { ok: false; error: unknown }
+> {
+  const { data, error } = await client
+    .from('stripe_webhook_events')
+    .select('stripe_event_id, status')
+    .eq('stripe_event_id', eventId)
+    .maybeSingle()
+  if (!error) {
+    return { ok: true, found: data != null, status: data?.status ?? null }
+  }
+  if (!isMissingColumnError(error)) {
+    return { ok: false, error }
+  }
+  const legacy = await client
+    .from('stripe_webhook_events')
+    .select('stripe_event_id')
+    .eq('stripe_event_id', eventId)
+    .maybeSingle()
+  if (legacy.error) {
+    return { ok: false, error: legacy.error }
+  }
+  return { ok: true, found: legacy.data != null, status: 'processed' }
+}
 
 // Surface an unknown-price anomaly without leaking PII.
 function reportUnknownPrice(
@@ -86,30 +176,47 @@ export async function POST(request: Request): Promise<NextResponse> {
   }
 
   const serviceClient = createServiceClient()
+  const ledgerClient = asStripeWebhookEventsClient(serviceClient)
 
-  // SECURITY INVARIANT 4: idempotency — record COMPLETION, not receipt.
-  // The stripe_webhook_events ledger holds only events we have FINISHED
-  // processing. We pre-check it to short-circuit true replays, process the
-  // event, and record the row ONLY after success. If processing throws we do
-  // NOT record the event and return a non-2xx so Stripe re-delivers and the
-  // retry actually re-drives processing (previously the row was inserted
-  // before processing, so a single transient failure de-duped the event away
-  // forever — a paid customer could end up with no subscription row).
-  const { data: alreadyProcessed, error: seenErr } = await serviceClient
-    .from('stripe_webhook_events')
-    .select('stripe_event_id')
-    .eq('stripe_event_id', event.id)
-    .maybeSingle()
-
-  if (seenErr) {
-    Sentry.captureException(seenErr, {
+  // SECURITY INVARIANT 4: idempotency + status ledger. Short-circuit ONLY
+  // when a row exists AND (status is null OR status === 'processed') — a
+  // 'received' or 'error' row must fall through and re-drive processing.
+  // Getting this wrong reintroduces the exact bug this invariant was
+  // written to fix: "a single transient failure de-duped the event away
+  // forever — a paid customer could end up with no subscription row."
+  const seen = await readLedgerSeenStatus(ledgerClient, event.id)
+  if (!seen.ok) {
+    Sentry.captureException(seen.error, {
       tags: { layer: 'stripe', handler: 'webhook', event_type: event.type },
     })
     return NextResponse.json({ error: 'Internal error' }, { status: 500 })
   }
-  if (alreadyProcessed) {
+  if (seen.found && (seen.status === null || seen.status === 'processed')) {
     // Already processed to completion — idempotent replay.
     return NextResponse.json({ received: true })
+  }
+
+  // Up-front 'received' stamp, placed AFTER the short-circuit.
+  // `ignoreDuplicates: true` is DO NOTHING so an existing 'processed' row
+  // (from a concurrent delivery that just finished) is never downgraded.
+  // Best-effort: never blocks processing or changes the HTTP response.
+  {
+    const { error } = await ledgerClient.from('stripe_webhook_events').upsert(
+      { stripe_event_id: event.id, event_type: event.type, status: 'received' },
+      { onConflict: 'stripe_event_id', ignoreDuplicates: true },
+    )
+    if (error && !isMissingColumnError(error)) {
+      Sentry.captureException(error, {
+        tags: {
+          layer: 'stripe',
+          handler: 'webhook',
+          event_type: event.type,
+          subop: 'stamp-received',
+        },
+      })
+    }
+    // isMissingColumnError → skip silently; pre-migration behaviour falls
+    // back to record-on-completion only, same as before this change.
   }
 
   try {
@@ -118,26 +225,81 @@ export async function POST(request: Request): Promise<NextResponse> {
     Sentry.captureException(err, {
       tags: { layer: 'stripe', handler: 'webhook', event_type: event.type },
     })
-    // Do NOT record the event — return 500 so Stripe retries and re-drives it.
+    // Best-effort 'error' stamp — never the underlying error's message
+    // text (the Stripe SDK can echo customer emails / payload fragments
+    // there, and this row is long-lived). Wrapped so a ledger-write
+    // failure can't mask the real 500; Stripe must still re-deliver
+    // either way.
+    try {
+      const errorDetail = `${err instanceof Error ? err.name : 'UnknownError'}: ${event.type}`
+      const { error: stampErr } = await ledgerClient.from('stripe_webhook_events').upsert(
+        {
+          stripe_event_id: event.id,
+          event_type: event.type,
+          status: 'error',
+          error_detail: errorDetail,
+        },
+        { onConflict: 'stripe_event_id', ignoreDuplicates: false },
+      )
+      if (stampErr && !isMissingColumnError(stampErr)) {
+        Sentry.captureException(stampErr, {
+          tags: {
+            layer: 'stripe',
+            handler: 'webhook',
+            event_type: event.type,
+            subop: 'stamp-error',
+          },
+        })
+      }
+    } catch (stampCatchErr) {
+      Sentry.captureException(stampCatchErr, {
+        tags: {
+          layer: 'stripe',
+          handler: 'webhook',
+          event_type: event.type,
+          subop: 'stamp-error',
+        },
+      })
+    }
+    // Do NOT stamp 'processed' — return 500 so Stripe retries and re-drives it.
     return NextResponse.json({ error: 'Processing failed' }, { status: 500 })
   }
 
-  // Processing succeeded — record completion. ignoreDuplicates covers the rare
-  // concurrent-duplicate delivery (both pass the pre-check); the handlers are
-  // idempotent upserts, so a double-process is harmless.
-  const { error: recordErr } = await serviceClient
-    .from('stripe_webhook_events')
-    .upsert(
-      { stripe_event_id: event.id, event_type: event.type },
-      { onConflict: 'stripe_event_id', ignoreDuplicates: true },
+  // Processing succeeded — upgrade the row to 'processed'. ignoreDuplicates
+  // is false (DO UPDATE) so this upgrades the 'received' row stamped above.
+  {
+    const { error } = await ledgerClient.from('stripe_webhook_events').upsert(
+      {
+        stripe_event_id: event.id,
+        event_type: event.type,
+        status: 'processed',
+        processed_at: new Date().toISOString(),
+        error_detail: null,
+      },
+      { onConflict: 'stripe_event_id', ignoreDuplicates: false },
     )
-
-  if (recordErr) {
-    // Processing already succeeded; failing to record only risks a harmless
-    // idempotent reprocess on a future retry. Log and still return 200.
-    Sentry.captureException(recordErr, {
-      tags: { layer: 'stripe', handler: 'webhook', event_type: event.type },
-    })
+    if (error) {
+      if (isMissingColumnError(error)) {
+        // Pre-migration: retry the legacy shape so the idempotency table
+        // keeps working exactly as it did before this change.
+        const { error: legacyErr } = await ledgerClient.from('stripe_webhook_events').upsert(
+          { stripe_event_id: event.id, event_type: event.type },
+          { onConflict: 'stripe_event_id', ignoreDuplicates: true },
+        )
+        if (legacyErr) {
+          Sentry.captureException(legacyErr, {
+            tags: { layer: 'stripe', handler: 'webhook', event_type: event.type },
+          })
+        }
+      } else {
+        // Processing already succeeded; failing to record only risks a
+        // harmless idempotent reprocess on a future retry. Log and still
+        // return 200.
+        Sentry.captureException(error, {
+          tags: { layer: 'stripe', handler: 'webhook', event_type: event.type },
+        })
+      }
+    }
   }
 
   return NextResponse.json({ received: true })

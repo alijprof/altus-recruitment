@@ -5,6 +5,7 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 
 import type { Database, Enums, Tables, TablesInsert } from '@/types/database'
 
+import { listLatestMatchScoresForPairs } from './ai-summaries'
 import {
   PIPELINE_STAGES,
   type ApplicationStage,
@@ -75,7 +76,38 @@ function shapeCard(row: JoinedApplicationRow, now: number): PipelineCardData {
     // Review fix H2: surface decline_reason so the per-job ApplicationsList
     // can render "(Withdrew)" / "(Position filled)" beside terminal rows.
     decline_reason: row.decline_reason,
+    // SF-3: defaulted null here; enrichWithMatchScores fills these in for
+    // callers that opt in (listApplicationsForJob, listAllApplicationsByStage).
+    match_score: null,
+    match_note: null,
   }
+}
+
+/**
+ * SF-3 (Steele Charles feature review 2026-07-31, Batch 2 Task 1 Step 5):
+ * merge cached Sonnet match scores onto already-shaped pipeline cards.
+ * Best-effort — if the enrichment query fails, returns the cards
+ * unenriched rather than failing the whole list (a missing badge is a
+ * degraded UX, not a broken page).
+ */
+async function enrichWithMatchScores(
+  supabase: SupabaseClient<Database>,
+  cards: PipelineCardData[],
+): Promise<PipelineCardData[]> {
+  const pairs = cards
+    .filter((c) => c.job_id !== null)
+    .map((c) => ({ candidateId: c.candidate_id, jobId: c.job_id as string }))
+  if (pairs.length === 0) return cards
+
+  const enrichment = await listLatestMatchScoresForPairs(supabase, pairs)
+  if (!enrichment.ok) return cards
+
+  return cards.map((c) => {
+    if (!c.job_id) return c
+    const match = enrichment.data.get(`${c.candidate_id}:${c.job_id}`)
+    if (!match) return c
+    return { ...c, match_score: match.score, match_note: match.note }
+  })
 }
 
 // ---------------------------------------------------------------------------
@@ -144,7 +176,7 @@ export async function listApplicationsForJob(
 
   const now = Date.now()
   const rows = ((data ?? []) as unknown as JoinedApplicationRow[]).map((r) => shapeCard(r, now))
-  return { ok: true, data: rows }
+  return { ok: true, data: await enrichWithMatchScores(supabase, rows) }
 }
 
 function emptyGrouping(): GroupedByStage {
@@ -243,7 +275,8 @@ export async function listAllApplicationsByStage(
 
   const now = Date.now()
   const cards = ((data ?? []) as unknown as JoinedApplicationRow[]).map((r) => shapeCard(r, now))
-  return { ok: true, data: groupByStage(cards) }
+  const enrichedCards = await enrichWithMatchScores(supabase, cards)
+  return { ok: true, data: groupByStage(enrichedCards) }
 }
 
 // ---------------------------------------------------------------------------
@@ -254,6 +287,11 @@ export type CreateApplicationInput = {
   jobId: string
   candidateId: string
   applicationType?: Enums<'application_type'>
+  // Audit §4.9 (M-6b parity): attribute the add-to-job action to the
+  // recruiter who performed it, matching the shortlist and float actions
+  // (which already stamp owner_user_id). Feeds coalesce(owner_user_id,
+  // created_by) in the buyer-value RPCs.
+  ownerUserId?: string | null
 }
 
 /**
@@ -274,6 +312,7 @@ export async function createApplication(
     job_id: input.jobId,
     candidate_id: input.candidateId,
     application_type: input.applicationType ?? ('standard' as Enums<'application_type'>),
+    ...(input.ownerUserId ? { owner_user_id: input.ownerUserId } : {}),
   } as unknown as TablesInsert<'applications'>
 
   const { data, error } = await supabase.from('applications').insert(payload).select('*').single()

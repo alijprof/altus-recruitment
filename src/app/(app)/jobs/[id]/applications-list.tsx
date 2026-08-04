@@ -1,5 +1,6 @@
 import Link from 'next/link'
 
+import { MatchScoreBadge } from '@/components/app/match-score-badge'
 import { Badge } from '@/components/ui/badge'
 import {
   Table,
@@ -59,6 +60,9 @@ export function ApplicationsList({ rows, jobId }: ApplicationsListProps) {
               Stage
             </TableHead>
             <TableHead className="text-muted-foreground text-xs font-normal">
+              Match
+            </TableHead>
+            <TableHead className="text-muted-foreground text-xs font-normal">
               Days in stage
             </TableHead>
             <TableHead className="text-muted-foreground text-xs font-normal">
@@ -111,6 +115,13 @@ export function ApplicationsList({ rows, jobId }: ApplicationsListProps) {
                       ({formatDeclineReason(row.decline_reason)})
                     </span>
                   ) : null}
+                </TableCell>
+                <TableCell title={row.match_note ?? undefined}>
+                  {row.match_score != null ? (
+                    <MatchScoreBadge score={row.match_score} />
+                  ) : (
+                    <span className="text-muted-foreground text-xs">—</span>
+                  )}
                 </TableCell>
                 <TableCell className="text-muted-foreground text-sm font-normal">
                   {row.days_in_stage}

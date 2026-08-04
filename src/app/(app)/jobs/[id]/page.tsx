@@ -4,6 +4,7 @@ import { ChevronLeft } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
 import { listApplicationsForJob } from '@/lib/db/applications'
+import { recordViewAudit } from '@/lib/db/audit'
 import { listJobAdsForJob } from '@/lib/db/job-ads'
 import { getJob } from '@/lib/db/jobs'
 import { createClient as createSupabaseClient } from '@/lib/supabase/server'
@@ -31,6 +32,11 @@ export default async function JobDetailPage({
     )
   }
   const job = jobResult.data
+
+  // Audit §4.11 — detail-view audit ONLY here (NOT inside getJob, which is
+  // also called from list/edit/server-action contexts that would pollute
+  // the log). Mirrors the candidates convention.
+  await recordViewAudit(supabase, 'job', id)
 
   const applicationsResult = await listApplicationsForJob(supabase, id)
   const applications = applicationsResult.ok ? applicationsResult.data : []

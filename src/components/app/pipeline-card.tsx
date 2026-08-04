@@ -4,6 +4,7 @@ import { useSortable } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 import { Loader2, MoreHorizontal } from 'lucide-react'
 
+import { MatchScoreBadge } from '@/components/app/match-score-badge'
 import { Button } from '@/components/ui/button'
 import {
   DropdownMenu,
@@ -144,22 +145,29 @@ export function PipelineCard({
       </div>
 
       <div className="mt-2 flex items-center justify-between text-xs font-normal">
-        <span
-          className={cn(
-            'inline-flex items-center gap-1 rounded-full px-2 py-0.5',
-            isStale
-              ? 'bg-amber-500/10 text-amber-700 dark:text-amber-300'
-              : 'bg-muted text-muted-foreground',
-          )}
-        >
-          {isStale ? (
-            <span
-              aria-hidden="true"
-              className="size-1.5 rounded-full bg-amber-500"
-            />
+        <div className="flex items-center gap-1.5">
+          <span
+            className={cn(
+              'inline-flex items-center gap-1 rounded-full px-2 py-0.5',
+              isStale
+                ? 'bg-amber-500/10 text-amber-700 dark:text-amber-300'
+                : 'bg-muted text-muted-foreground',
+            )}
+          >
+            {isStale ? (
+              <span
+                aria-hidden="true"
+                className="size-1.5 rounded-full bg-amber-500"
+              />
+            ) : null}
+            {card.days_in_stage}d in stage
+          </span>
+          {card.match_score != null ? (
+            <span title={card.match_note ?? undefined}>
+              <MatchScoreBadge score={card.match_score} />
+            </span>
           ) : null}
-          {card.days_in_stage}d in stage
-        </span>
+        </div>
         {isPending ? (
           <span className="text-muted-foreground inline-flex items-center gap-1">
             <Loader2 className="size-3 animate-spin" aria-hidden="true" />

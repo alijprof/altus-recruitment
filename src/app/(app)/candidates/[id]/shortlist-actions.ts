@@ -4,6 +4,7 @@ import * as Sentry from '@sentry/nextjs'
 import { revalidatePath } from 'next/cache'
 import { z } from 'zod'
 
+import { enqueueApplicationMatchScore } from '@/lib/inngest/enqueue-match-score'
 import { ENTITLEMENT_BLOCKED_MESSAGE, requireEntitledOrg } from '@/lib/stripe/require-entitlement'
 import { createClient as createSupabaseClient } from '@/lib/supabase/server'
 import type { TablesInsert } from '@/types/database'
@@ -63,7 +64,7 @@ export async function convertShortlistToApplicationAction(
   // cheap defence in depth).
   const { data: app, error: readErr } = await supabase
     .from('applications')
-    .select('id, application_type, job_id, candidate_id')
+    .select('id, application_type, job_id, candidate_id, organization_id')
     .eq('id', parsed.data.applicationId)
     .maybeSingle()
   if (readErr || !app) {
@@ -94,6 +95,18 @@ export async function convertShortlistToApplicationAction(
     })
     return { ok: false, error: 'Promotion failed.' }
   }
+
+  // SF-3: fire the cached-match-score job now that this pair is a
+  // standard application — the shortlist-add path already fired once, but
+  // idempotency is handled inside the Inngest function, so a second event
+  // here is a safe cache-hit no-op, not a duplicate spend.
+  await enqueueApplicationMatchScore({
+    organizationId: app.organization_id,
+    applicationId: parsed.data.applicationId,
+    candidateId: app.candidate_id,
+    jobId: app.job_id,
+    userId: userData.user.id,
+  })
 
   // Activity log per D3-16. The activities table uses entity_type +
   // entity_id (see 20260518201900_move_application_function.sql for the

@@ -6,6 +6,7 @@ import { redirect } from 'next/navigation'
 import { z } from 'zod'
 
 import { createApplication, deleteApplication, moveApplication } from '@/lib/db/applications'
+import { enqueueApplicationMatchScore } from '@/lib/inngest/enqueue-match-score'
 import { ENTITLEMENT_BLOCKED_MESSAGE, requireEntitledOrg } from '@/lib/stripe/require-entitlement'
 import { createClient as createSupabaseClient } from '@/lib/supabase/server'
 import type { Enums } from '@/types/database'
@@ -38,9 +39,16 @@ export async function addCandidateToJobAction(rawInput: unknown): Promise<AddCan
   }
 
   const supabase = await createSupabaseClient()
+  // Read once — reused below both for the SF-3 match-score enqueue and for
+  // owner_user_id attribution (audit §4.9 — matches the shortlist and
+  // float actions, which already stamp owner_user_id).
+  const { data: userData } = await supabase.auth.getUser()
+  const userId = userData.user?.id ?? null
+
   const result = await createApplication(supabase, {
     jobId: parsed.data.jobId,
     candidateId: parsed.data.candidateId,
+    ownerUserId: userId,
   })
 
   if (!result.ok) {
@@ -66,6 +74,19 @@ export async function addCandidateToJobAction(rawInput: unknown): Promise<AddCan
 
   revalidatePath(`/jobs/${parsed.data.jobId}`)
   revalidatePath(`/jobs/${parsed.data.jobId}/pipeline`)
+
+  // SF-3: fire the cached-match-score job for this new candidate x job
+  // pair. Never blocks or fails "add candidate to job" —
+  // enqueueApplicationMatchScore swallows and Sentry-captures any
+  // inngest.send failure internally.
+  await enqueueApplicationMatchScore({
+    organizationId: result.data.organization_id,
+    applicationId: result.data.id,
+    candidateId: result.data.candidate_id,
+    jobId: result.data.job_id,
+    userId,
+  })
+
   return { ok: true, applicationId: result.data.id }
 }
 

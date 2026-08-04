@@ -3,6 +3,7 @@ import { notFound } from 'next/navigation'
 import { ChevronLeft, ExternalLink } from 'lucide-react'
 
 import { Badge } from '@/components/ui/badge'
+import { recordViewAudit } from '@/lib/db/audit'
 import { getClient, getClientTimeline } from '@/lib/db/clients'
 import { listContactsForCompany } from '@/lib/db/contacts'
 import { listJobsForCompany } from '@/lib/db/jobs'
@@ -28,6 +29,11 @@ export default async function ClientDetailPage({
     )
   }
   const client = clientResult.data
+
+  // Audit §4.11 — detail-view audit ONLY here (NOT inside getClient, which
+  // is also called from list/edit/server-action contexts). `company`
+  // matches the table name, which is what the audit_log index is keyed on.
+  await recordViewAudit(supabase, 'company', id)
 
   // Pre-fetch all four tabs' data so the client component receives them as
   // props (Plan 3 chooses props-down over Suspense for simplicity).

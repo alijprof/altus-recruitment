@@ -6,11 +6,17 @@
  * Covers the five contract cases:
  *   1. bad signature → 400, nothing processed, nothing recorded
  *   2. duplicate event → 200 no-op (no re-processing, no second ledger write)
- *   3. handler throw → 500 AND no ledger write (Stripe must re-deliver)
+ *   3. handler throw → 500, ledger stamped received then error, NEVER processed
  *   4. unknown price → skip the write (never guess a plan), still 200 + ledger
  *   5. customer.subscription.deleted → local row flipped to 'cancelled'
  * plus the comp-override contract: only checkout.session.completed passes
  * allowOverrideComp.
+ *
+ * Steele Charles feature review 2026-07-31 Batch 2 Task 3 (audit §4.10)
+ * added a status ledger (SECURITY INVARIANT 4 revised): a 'received' or
+ * 'error' row must NOT short-circuit — only 'processed' (or legacy NULL)
+ * does. Additional cases below cover that contract plus the pre-migration
+ * PGRST204 degradation.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest'
@@ -97,12 +103,20 @@ const mockCreateServiceClient = createServiceClient as Mock
 // Fake service client covering the two chains the route uses:
 //   .from('stripe_webhook_events').select().eq().maybeSingle()  (seen check)
 //   .from('stripe_webhook_events').upsert(...)                  (ledger write)
-function makeServiceClient(opts?: { alreadyProcessed?: boolean }) {
-  const ledgerUpsert = vi.fn(async () => ({ error: null }))
-  const maybeSingle = vi.fn(async () => ({
-    data: opts?.alreadyProcessed ? { stripe_event_id: 'evt_1' } : null,
-    error: null,
-  }))
+//
+// `alreadyProcessed` models a row whose status is 'processed' (the only
+// status that short-circuits). Pass `seenStatus` directly for the
+// 'received' / 'error' non-short-circuit cases.
+function makeServiceClient(opts?: { alreadyProcessed?: boolean; seenStatus?: string | null }) {
+  const ledgerUpsert = vi.fn(
+    async (_row: Record<string, unknown>, _upsertOpts?: unknown) => ({ error: null }),
+  )
+  const seenData = opts?.alreadyProcessed
+    ? { stripe_event_id: 'evt_1', status: 'processed' }
+    : opts?.seenStatus !== undefined
+      ? { stripe_event_id: 'evt_1', status: opts.seenStatus }
+      : null
+  const maybeSingle = vi.fn(async () => ({ data: seenData, error: null }))
   const client = {
     from: vi.fn(() => ({
       select: vi.fn(() => ({ eq: vi.fn(() => ({ maybeSingle })) })),
@@ -192,7 +206,7 @@ describe('stripe webhook — idempotency ledger', () => {
     expect(ledgerUpsert).not.toHaveBeenCalled()
   })
 
-  it('handler throw → 500 and NO ledger write, so Stripe re-delivers', async () => {
+  it('handler throw → 500, ledger stamped received then error, NEVER processed', async () => {
     const { client, ledgerUpsert } = makeServiceClient()
     mockCreateServiceClient.mockReturnValue(client)
     constructEvent.mockReturnValue(
@@ -203,10 +217,17 @@ describe('stripe webhook — idempotency ledger', () => {
     const res = await POST(makeRequest())
 
     expect(res.status).toBe(500)
-    expect(ledgerUpsert).not.toHaveBeenCalled()
+    expect(ledgerUpsert).toHaveBeenCalledTimes(2)
+    const statuses = ledgerUpsert.mock.calls.map(
+      (c) => (c[0] as { status?: string }).status,
+    )
+    expect(statuses).toEqual(['received', 'error'])
+    expect(statuses).not.toContain('processed')
+    const errorCall = ledgerUpsert.mock.calls[1]![0] as { error_detail?: string }
+    expect(errorCall.error_detail).toBe('Error: customer.subscription.deleted')
   })
 
-  it('successful processing records the event id in the ledger', async () => {
+  it('successful processing stamps received then processed, with a processed_at', async () => {
     const { client, ledgerUpsert } = makeServiceClient()
     mockCreateServiceClient.mockReturnValue(client)
     constructEvent.mockReturnValue(
@@ -216,10 +237,77 @@ describe('stripe webhook — idempotency ledger', () => {
     const res = await POST(makeRequest())
 
     expect(res.status).toBe(200)
-    expect(ledgerUpsert).toHaveBeenCalledWith(
-      { stripe_event_id: 'evt_1', event_type: 'customer.subscription.updated' },
-      { onConflict: 'stripe_event_id', ignoreDuplicates: true },
+    expect(ledgerUpsert).toHaveBeenCalledTimes(2)
+    expect(ledgerUpsert.mock.calls[0]![0]).toMatchObject({
+      stripe_event_id: 'evt_1',
+      event_type: 'customer.subscription.updated',
+      status: 'received',
+    })
+    const processedCall = ledgerUpsert.mock.calls[1]![0] as {
+      status?: string
+      processed_at?: string
+      error_detail?: string | null
+    }
+    expect(processedCall.status).toBe('processed')
+    expect(typeof processedCall.processed_at).toBe('string')
+    expect(processedCall.error_detail).toBeNull()
+  })
+
+  it.each(['received', 'error'])(
+    'a prior "%s" row does NOT short-circuit — the handler re-runs and returns 200',
+    async (priorStatus) => {
+      const { client, ledgerUpsert } = makeServiceClient({ seenStatus: priorStatus })
+      mockCreateServiceClient.mockReturnValue(client)
+      constructEvent.mockReturnValue(
+        makeEvent('customer.subscription.updated', makeStripeSubscription()),
+      )
+
+      const res = await POST(makeRequest())
+
+      expect(res.status).toBe(200)
+      expect(mockUpsert).toHaveBeenCalledTimes(1) // handler DID run
+      expect(ledgerUpsert).toHaveBeenCalled() // received (again) + processed stamps
+    },
+  )
+
+  it('a PGRST204 (missing status column) degrades to the legacy shape and still returns 200', async () => {
+    const PGRST204 = { code: 'PGRST204', message: 'column not found' }
+    const maybeSingle = vi
+      .fn()
+      // 1st call: seen-check with the status column → missing-column error.
+      .mockResolvedValueOnce({ data: null, error: PGRST204 })
+      // 2nd call: legacy fallback select (stripe_event_id only) → no row found.
+      .mockResolvedValueOnce({ data: null, error: null })
+    const ledgerUpsert = vi
+      .fn()
+      // 1st upsert: up-front 'received' stamp → missing-column error, skipped silently.
+      .mockResolvedValueOnce({ error: PGRST204 })
+      // 2nd upsert: 'processed' stamp with new columns → missing-column error.
+      .mockResolvedValueOnce({ error: PGRST204 })
+      // 3rd upsert: legacy-shape retry → succeeds.
+      .mockResolvedValueOnce({ error: null })
+    const client = {
+      from: vi.fn(() => ({
+        select: vi.fn(() => ({ eq: vi.fn(() => ({ maybeSingle })) })),
+        upsert: ledgerUpsert,
+      })),
+    }
+    mockCreateServiceClient.mockReturnValue(client)
+    constructEvent.mockReturnValue(
+      makeEvent('customer.subscription.updated', makeStripeSubscription()),
     )
+
+    const res = await POST(makeRequest())
+
+    expect(res.status).toBe(200)
+    expect(mockUpsert).toHaveBeenCalledTimes(1) // handler still ran
+    expect(ledgerUpsert).toHaveBeenCalledTimes(3)
+    expect(ledgerUpsert.mock.calls[2]![0]).toEqual({
+      stripe_event_id: 'evt_1',
+      event_type: 'customer.subscription.updated',
+    })
+    // Missing-column errors are expected pre-migration degradation, not faults.
+    expect(Sentry.captureException).not.toHaveBeenCalled()
   })
 })
 

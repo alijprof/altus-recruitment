@@ -4,6 +4,7 @@ import { useState, useTransition } from 'react'
 import { toast } from 'sonner'
 
 import { DeclineModal } from '@/components/app/decline-modal'
+import { MatchScoreBadge } from '@/components/app/match-score-badge'
 import { PlacementModal } from '@/components/app/placement-modal'
 import {
   Accordion,
@@ -243,8 +244,15 @@ function MobileCardRow({ card, onMoveTo, onReject, onRemove }: MobileCardRowProp
               {card.current_company ?? ''}
             </div>
           ) : null}
-          <div className="text-muted-foreground mt-1 text-xs font-normal">
-            {card.days_in_stage}d in stage
+          <div className="mt-1 flex items-center gap-1.5">
+            <span className="text-muted-foreground text-xs font-normal">
+              {card.days_in_stage}d in stage
+            </span>
+            {card.match_score != null ? (
+              <span title={card.match_note ?? undefined}>
+                <MatchScoreBadge score={card.match_score} />
+              </span>
+            ) : null}
           </div>
         </button>
       </SheetTrigger>

@@ -58,6 +58,7 @@ export type MatchSummaryRow = {
 // are pinned on the terminal `maybeSingle` / `single` / `limit` calls.
 type SelectChain<T> = {
   eq: (col: string, val: unknown) => SelectChain<T>
+  in: (col: string, vals: unknown[]) => SelectChain<T>
   order: (col: string, opts: { ascending: boolean }) => SelectChain<T>
   limit: (n: number) => Promise<{ data: T[] | null; error: unknown }>
   maybeSingle: () => Promise<{ data: T | null; error: unknown }>
@@ -115,9 +116,13 @@ export async function getMatchSummary(
  * Insert (or replace) a match summary. Uses a plain insert — the unique
  * constraint on (organization_id, kind, candidate_id, job_id,
  * candidate_embedding_version, job_embedding_version) makes duplicate
- * inserts a no-op at the DB level. Caller should treat a unique-violation
- * error as "cache already populated by a concurrent worker" rather than a
- * real failure. Plan 2 wires this into the precompute Inngest function.
+ * inserts a no-op at the DB level. A 23505 unique-violation maps to code
+ * `'duplicate'` and is NOT logged to Sentry — it means a concurrent worker
+ * already populated the cache, which is the desired end state, not a
+ * fault (mirrors createApplication's 23505 handling in
+ * src/lib/db/applications.ts:287-290). Every other insert error maps to
+ * `'internal'` and IS captured. Wired into precompute-matches-for-job.ts,
+ * matches/actions.ts and score-application-match.ts.
  *
  * `organizationId` is REQUIRED and must be the parent job's
  * already-verified org. Under the service-role client (no session) the
@@ -155,6 +160,13 @@ export async function upsertMatchSummary(
     .select('id')
     .single()
   if (error || !data) {
+    // 23505 = a concurrent worker already inserted the exact same identity
+    // tuple — the cache is populated, which is success, not a fault. Do
+    // NOT log it to Sentry as an exception (mirrors createApplication).
+    const pgErr = error as { code?: string } | null
+    if (pgErr?.code === '23505') {
+      return { ok: false, code: 'duplicate' }
+    }
     Sentry.captureException(error, {
       tags: { layer: 'db', helper: 'upsertMatchSummary' },
     })
@@ -186,6 +198,65 @@ export async function listMatchSummariesForJob(
     return { ok: false, code: 'internal' }
   }
   return { ok: true, data: data ?? [] }
+}
+
+/**
+ * Batch cache-read for a set of (candidateId, jobId) pairs — SF-3 (Steele
+ * Charles feature review 2026-07-31, Batch 2 Task 1 Step 4a). Used by
+ * `listApplicationsForJob` / `listAllApplicationsByStage` in
+ * src/lib/db/applications.ts to enrich pipeline cards with the cached
+ * match score, in ONE round-trip instead of one query per row.
+ *
+ * Returns an empty Map without issuing a query when `pairs` is empty.
+ *
+ * Postgres has no native "match one of these tuples" filter over
+ * PostgREST, so this issues a single query with two separate `.in()`
+ * clauses (candidate_id IN [...], job_id IN [...]) — which is a
+ * CROSS-PRODUCT over the two id sets, not just the requested pairs. We
+ * filter client-side to exactly the requested pairs before returning. This
+ * over-fetch is acceptable at anchor scale (dozens of rows per job, not
+ * thousands) — flag for an RPC if pair counts grow materially.
+ *
+ * Keeps only the NEWEST row per pair (the `.order('created_at', {
+ * ascending: false })` means the first row seen for a given key is the
+ * newest — later duplicates for the same pair are skipped).
+ */
+export async function listLatestMatchScoresForPairs(
+  supabase: SupabaseClient<Database>,
+  pairs: Array<{ candidateId: string; jobId: string }>,
+): Promise<DbResult<Map<string, { score: number; note: string | null }>>> {
+  if (pairs.length === 0) {
+    return { ok: true, data: new Map() }
+  }
+
+  const candidateIds = Array.from(new Set(pairs.map((p) => p.candidateId)))
+  const jobIds = Array.from(new Set(pairs.map((p) => p.jobId)))
+
+  const { data, error } = await asAiSummariesClient(supabase)
+    .from('ai_summaries')
+    .select('candidate_id, job_id, content, created_at')
+    .eq('kind', 'match_score')
+    .in('candidate_id', candidateIds)
+    .in('job_id', jobIds)
+    .order('created_at', { ascending: false })
+
+  if (error) {
+    Sentry.captureException(error, {
+      tags: { layer: 'db', helper: 'listLatestMatchScoresForPairs' },
+    })
+    return { ok: false, code: 'internal' }
+  }
+
+  const wantedPairs = new Set(pairs.map((p) => `${p.candidateId}:${p.jobId}`))
+  const out = new Map<string, { score: number; note: string | null }>()
+  for (const row of data ?? []) {
+    if (!row.candidate_id || !row.job_id) continue
+    const key = `${row.candidate_id}:${row.job_id}`
+    if (!wantedPairs.has(key)) continue // cross-product row outside the requested pairs
+    if (out.has(key)) continue // already kept the newest (rows arrive newest-first)
+    out.set(key, { score: row.content.score, note: row.content.strengths[0] ?? null })
+  }
+  return { ok: true, data: out }
 }
 
 // ---------------------------------------------------------------------------

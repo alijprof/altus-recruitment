@@ -4,6 +4,7 @@ import * as Sentry from '@sentry/nextjs'
 import { revalidatePath } from 'next/cache'
 import { z } from 'zod'
 
+import { enqueueApplicationMatchScore } from '@/lib/inngest/enqueue-match-score'
 import { ENTITLEMENT_BLOCKED_MESSAGE, requireEntitledOrg } from '@/lib/stripe/require-entitlement'
 import { createClient as createSupabaseClient } from '@/lib/supabase/server'
 import type { Enums, TablesInsert } from '@/types/database'
@@ -73,7 +74,7 @@ export async function addToShortlistAction(
   const { data, error } = await supabase
     .from('applications')
     .insert(payload)
-    .select('id')
+    .select('id, organization_id, candidate_id, job_id')
     .single()
 
   if (error) {
@@ -98,6 +99,19 @@ export async function addToShortlistAction(
   // D3-17 invariant: the pipeline kanban filter excludes shortlist rows,
   // so the pipeline view won't change — but revalidate anyway in case
   // the recruiter has both surfaces open simultaneously.
+
+  // SF-3: fire the cached-match-score job for this new pair. Shortlist
+  // rows are still application_type='shortlist', not filtered by the
+  // pipeline kanban invariant above — the recruiter still benefits from
+  // seeing a score once the row is promoted to a standard application.
+  await enqueueApplicationMatchScore({
+    organizationId: data.organization_id,
+    applicationId: data.id,
+    candidateId: data.candidate_id,
+    jobId: data.job_id,
+    userId: userData.user.id,
+  })
+
   return { ok: true, applicationId: data.id }
 }
 

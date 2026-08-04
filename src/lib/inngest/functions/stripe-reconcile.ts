@@ -11,6 +11,41 @@ import type { LocalSubscriptionRow, StripeSubSnapshot } from '@/lib/stripe/recon
 import { assertStripe, stripe } from '@/lib/stripe/client'
 import { createServiceClient } from '@/lib/supabase/service'
 
+// Duplicated (not imported) from src/app/api/stripe/webhook/route.ts —
+// that file is a Next.js route handler (`export const runtime = 'nodejs'`)
+// and importing it here would pull route-handler bundling concerns into
+// the Inngest function graph. Same contract: true when a PostgREST error
+// indicates the referenced column doesn't exist yet ('PGRST204' schema-
+// cache write miss, or '42703' Postgres undefined_column). Audit §4.10.
+function isMissingColumnError(err: unknown): boolean {
+  if (err === null || typeof err !== 'object') return false
+  const code = (err as { code?: string }).code
+  return code === 'PGRST204' || code === '42703'
+}
+
+type StuckWebhookEventRow = {
+  stripe_event_id: string
+  event_type: string | null
+  status: string | null
+  created_at: string
+}
+
+type StripeWebhookEventsSweepClient = {
+  from: (table: 'stripe_webhook_events') => {
+    select: (cols: string) => {
+      in: (
+        col: string,
+        vals: string[],
+      ) => {
+        lt: (
+          col: string,
+          val: string,
+        ) => Promise<{ data: StuckWebhookEventRow[] | null; error: unknown }>
+      }
+    }
+  }
+}
+
 // ---------------------------------------------------------------------------
 // stripe-reconcile — daily Stripe ↔ local subscriptions reconciliation
 // (audit MAJOR-6).
@@ -242,9 +277,59 @@ export const stripeReconcile = inngest.createFunction(
         }
       }
 
+      // 6. Stuck-webhook-event sweep (audit §4.10, Steele Charles feature
+      // review 2026-07-31 Batch 2 Task 3). A 'received' or 'error' row
+      // older than an hour means Stripe's retries haven't resolved it — a
+      // signing-key rotation, a code bug in a specific event-type handler,
+      // or a stuck queue. Loud is the deliverable here (standing "no
+      // safety net" handover item); we do NOT attempt to auto-reprocess.
+      let stuckEventsCount = 0
+      {
+        const sweepClient = serviceClient as unknown as StripeWebhookEventsSweepClient
+        const oneHourAgoIso = new Date(Date.now() - 60 * 60 * 1000).toISOString()
+        const { data: stuckRows, error: stuckErr } = await sweepClient
+          .from('stripe_webhook_events')
+          .select('stripe_event_id, event_type, status, created_at')
+          .in('status', ['received', 'error'])
+          .lt('created_at', oneHourAgoIso)
+
+        if (stuckErr) {
+          if (!isMissingColumnError(stuckErr)) {
+            Sentry.captureException(stuckErr, {
+              tags: {
+                phase: 'p5',
+                layer: 'inngest',
+                function: 'stripe-reconcile',
+                subop: 'stuck-events',
+              },
+            })
+          }
+          // isMissingColumnError → skip silently; the status migration
+          // (20260804130100_stripe_webhook_event_status.sql) isn't
+          // applied yet.
+        } else if (stuckRows && stuckRows.length > 0) {
+          stuckEventsCount = stuckRows.length
+          // Stripe event ids are not PII — event BODIES would be, but we
+          // only log ids, types, statuses and counts here.
+          Sentry.captureMessage('stripe_webhook_events_stuck', {
+            level: 'error',
+            tags: {
+              phase: 'p5',
+              layer: 'inngest',
+              function: 'stripe-reconcile',
+              subop: 'stuck-events',
+            },
+            extra: {
+              count: stuckEventsCount,
+              sample_event_ids: stuckRows.slice(0, 5).map((r) => r.stripe_event_id),
+            },
+          })
+        }
+      }
+
       Sentry.addBreadcrumb({
         category: 'inngest',
-        message: `stripe-reconcile: ${snapshots.length} Stripe subs, ${localRows.length} local rows, ${appliedCount}/${repairs.length} repairs applied, ${anomalies.length} anomalies`,
+        message: `stripe-reconcile: ${snapshots.length} Stripe subs, ${localRows.length} local rows, ${appliedCount}/${repairs.length} repairs applied, ${anomalies.length} anomalies, ${stuckEventsCount} stuck webhook events`,
         level: 'info',
       })
 
@@ -256,6 +341,7 @@ export const stripeReconcile = inngest.createFunction(
         skippedFresh: skippedFresh.length,
         anomalies: anomalies.length,
         repairFailures: repairFailures.length,
+        stuckWebhookEvents: stuckEventsCount,
         stripeListComplete,
       }
     })
