@@ -5,7 +5,7 @@ import { redirect } from 'next/navigation'
 import * as Sentry from '@sentry/nextjs'
 import { z } from 'zod'
 
-import { isUploadIncomplete } from '@/lib/cv/parse-messages'
+import { isUnretryableParseFailure, isUploadIncomplete } from '@/lib/cv/parse-messages'
 import { createActivity } from '@/lib/db/activities'
 import {
   createCandidateCV,
@@ -290,16 +290,22 @@ export async function retryParseAction(rawInput: unknown): Promise<ActionResult>
   }
   const cv = cvResult.data
 
-  // Review 2026-08-04 C2: a row whose upload never completed has NO storage
-  // object. Re-parsing it re-runs the identical download, fails identically,
-  // and used to replace the honest stored reason with generic copy. The UI
-  // withholds the retry button for this state (isUploadIncomplete branch in
-  // cv-review-panel.tsx); this is the server-side half of the same guard, so
-  // a direct action call can't destroy the message either.
-  if (isUploadIncomplete(cv.parse_error)) {
+  // Plan 06-07 T-06-27: the server-side half of the SAME shared-predicate
+  // guard cv-review-panel.tsx's FailedState gates its retry button on
+  // (isUnretryableParseFailure, src/lib/cv/parse-messages.ts) — a direct
+  // call to this action (bypassing the UI entirely) can't destroy an honest
+  // stored message or re-run a download/extract/parse that is guaranteed to
+  // fail identically, for ANY of the deterministically-doomed classes
+  // (no-text, upload-incomplete, damaged, password-protected, wrong-format,
+  // unsupported-format) — not just upload-incomplete, which is all this
+  // guard covered before this plan. Placed BEFORE the status reset below so
+  // the honest parse_error (and its parse_error_detail) is never cleared.
+  if (isUnretryableParseFailure(cv.parse_error)) {
     return {
       ok: false,
-      error: 'That upload never finished — please upload the CV file again.',
+      error: isUploadIncomplete(cv.parse_error)
+        ? 'That upload never finished — please upload the CV file again.'
+        : 'This file can’t be retried — see the reason on the candidate page and upload the file again.',
     }
   }
 
