@@ -58,3 +58,6 @@ chrome-extension/node_modules/
 # Internal security/audit reports — attack narratives + remediation
 # roadmaps. NEVER publish to the (public) repo.
 .planning/audits/
+
+# forensic replay output — regenerated per run, PII-free but never committed (Phase 6)
+tests/forensics/.out/
