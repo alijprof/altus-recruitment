@@ -43,17 +43,63 @@ function startsWithMagic(bytes: Uint8Array, magic: readonly number[]): boolean {
   return true
 }
 
+// Review 2026-08-09 CR-02. The extractor this module gates for is unpdf →
+// pdf.js, whose `checkHeader()` does NOT require `%PDF-` at offset 0: it
+// calls `find(stream, PDF_HEADER_SIGNATURE)`, whose default search limit is
+// 1024 bytes (verified in the bundled source,
+// node_modules/unpdf/dist/pdfjs.mjs: `function Uc(t,e,n=1024,s=!1)` called
+// as `Uc(e, X1)` with `X1 = new Uint8Array([37,80,68,70,45])` = "%PDF-").
+// pdf.js scans that window deliberately, because leading junk before the
+// header occurs in the wild: a UTF-8 BOM from a naive re-save, a mail
+// gateway preamble, concatenated output, some fax/scanner exports.
+//
+// A sniffer STRICTER than the parser it gates rejects files that parse
+// perfectly — including files already in a customer's back-book. So the
+// window is mirrored exactly: the signature must both start and fit within
+// the first PDF_HEADER_SEARCH_WINDOW bytes, which is what pdf.js's
+// `peekBytes(n)` + `r = a.length - i` bound gives.
+const PDF_HEADER_SEARCH_WINDOW = 1024
+
+function findMagicWithin(
+  bytes: Uint8Array,
+  magic: readonly number[],
+  windowBytes: number,
+): boolean {
+  const limit = Math.min(bytes.length, windowBytes) - magic.length
+  if (limit < 0) return false
+  outer: for (let i = 0; i <= limit; i++) {
+    for (let j = 0; j < magic.length; j++) {
+      if (bytes[i + j] !== magic[j]) continue outer
+    }
+    return true
+  }
+  return false
+}
+
 /**
  * Sniffs the raw byte signature of a CV upload. Never throws — a zero-byte
  * or otherwise too-short buffer simply falls through to 'unknown', because
- * every magic-number check above is bounds-checked against `bytes.length`
+ * every magic-number check below is bounds-checked against `bytes.length`
  * before it ever indexes into the array.
+ *
+ * Offset-0 signatures are resolved FIRST, and only then does the PDF header
+ * search widen to pdf.js's 1024-byte window. That ordering matters: a file
+ * whose first bytes are `PK\x03\x04` genuinely IS a zip, even in the freak
+ * case where the ASCII sequence `%PDF-` also appears inside its first KiB
+ * (a stored entry name, an embedded PDF). Searching the window first would
+ * reclassify such a DOCX as a PDF and have assertUploadableCV reject it as
+ * mislabelled — trading CR-02's false rejection for a new one. As written,
+ * the widened search can only ever turn a former 'unknown' into 'pdf'; no
+ * previously-classified file changes classification.
  */
 export function sniffFileType(bytes: Uint8Array): SniffedType {
   if (startsWithMagic(bytes, PDF_MAGIC)) return 'pdf'
   if (startsWithMagic(bytes, ZIP_MAGIC)) return 'zip'
   if (startsWithMagic(bytes, OLE2_MAGIC)) return 'ole2'
   if (startsWithMagic(bytes, RTF_MAGIC)) return 'rtf'
+  // Not a recognised container at offset 0 — a prefixed PDF is still a PDF
+  // to the parser downstream, so it must be one here too.
+  if (findMagicWithin(bytes, PDF_MAGIC, PDF_HEADER_SEARCH_WINDOW)) return 'pdf'
   return 'unknown'
 }
 

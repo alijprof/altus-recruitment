@@ -22,6 +22,32 @@
 // out. Only these two sequences are touched, and the lone surrogate becomes
 // U+FFFD rather than vanishing so the loss stays visible.
 //
+// WHY NUL IS DELETED WHILE A LONE SURROGATE IS REPLACED (review 2026-08-09
+// ME-01 — a deliberate, recorded decision, not an oversight):
+// The two are treated differently, and that asymmetry is a fair criticism.
+// Deleting a NUL can merge words: the documented real-world source is a PDF
+// ToUnicode CMap mapping a glyph to U+0000 (06-RESEARCH §Code Examples,
+// reproduced in hostile/hostile-pdf-tounicode-nul.pdf), so if the mapped
+// glyph is the SPACE in a name, `Jane<NUL>Doe` becomes `JaneDoe` and that is
+// what markCandidateFieldsFromCV writes to candidates.full_name. Replacing
+// NUL with U+FFFD (or with a space, which normaliseWhitespace would then
+// collapse) would keep the loss visible and is arguably the better rule.
+//
+// It is NOT changed here because the deleting behaviour is the pinned
+// contract of the layer-2 suite: tests/integration/cv-write-path.test.ts
+// asserts the STORED values `'JaneDoe'` (C1a), the key `badkey` (C1b) and
+// `'Texthere'` (C1c), read back from a real Postgres. That file is one of
+// three red-suite files kept byte-identical to its original RED commit —
+// that byte-identity is the evidence that no assertion was weakened after
+// the fix landed, and it is worth more than this preference. Changing the
+// substitution would require editing it, which is not a trade worth making
+// for a case that has never been observed in production (the forensic
+// replay of all 12 real failed rows found ZERO NULs in extracted text).
+//
+// To revisit: change the substitution AND the three C1 assertions in the
+// same commit, deliberately, with the red-suite freeze explicitly lifted
+// first. Do not change one without the other.
+//
 // WHY src/lib/text/ AND NOT src/lib/db/ (a deliberate deviation from
 // 06-RESEARCH.md, which suggested src/lib/db/postgres-safe-text.ts):
 // src/lib/ai/cv-extract.ts needs this too — the locked fix policy is defence
@@ -64,6 +90,28 @@ export function sanitiseText(s: string): string {
   if (hasNul) out = out.split(NUL).join('')
   if (hasLoneSurrogate) out = out.replace(LONE_SURROGATE_REPLACE, REPLACEMENT_CHAR)
   return out
+}
+
+/**
+ * Truncate to at most `maxChars` UTF-16 code units and return a string that
+ * is still legal for Postgres / PostgREST.
+ *
+ * Review 2026-08-09 ME-02. Every truncation in the pipeline runs DOWNSTREAM
+ * of sanitisation (sanitiseText happens inside cv-extract's
+ * normaliseWhitespace; the 60k slice in parse-cv.ts and the 30k slice in
+ * embed-text.ts happen after it). `String.prototype.slice` cuts on UTF-16
+ * code units, so a boundary landing between the two halves of a surrogate
+ * pair — an emoji, an astral-plane glyph — leaves a LONE surrogate on a
+ * string that was legal a moment earlier, and PostgREST answers PGRST102
+ * "Empty or invalid json". Sanitise-then-truncate makes the guarantee false
+ * rather than merely improbable; truncate-then-sanitise restores it.
+ *
+ * Cheap: sanitiseText returns the same reference when nothing needs
+ * changing, so the common path is one extra pair of scans and zero
+ * allocations.
+ */
+export function truncateLegal(s: string, maxChars: number): string {
+  return sanitiseText(s.length <= maxChars ? s : s.slice(0, maxChars))
 }
 
 /**

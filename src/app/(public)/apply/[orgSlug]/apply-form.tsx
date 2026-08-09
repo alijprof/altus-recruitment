@@ -196,8 +196,18 @@ export function ApplyForm({ orgSlug, orgName, consentText, contactEmail }: Apply
         orgSlug,
       })
       if (!confirmResult.ok) {
+        // Surface the SERVER's reason verbatim. confirmApplyAction computes
+        // an honest, actionable message for the cases it can name — most
+        // importantly the byte-level format sniff (plan 06-08), whose
+        // message tells the applicant to re-save as a real PDF/.docx and
+        // upload again. The old hardcoded copy here said the CV "uploaded"
+        // fine and to email the agency, which is the OPPOSITE of the truth
+        // for a rejected file and stalls the applicant on the wrong action.
+        // The generic copy survives only as a fallback for an empty
+        // message — never as a replacement for one the server supplied.
         toast.error(
-          `Your CV uploaded but we couldn’t confirm it. Email ${contactEmail} and we’ll sort it.`,
+          confirmResult.formError.trim() ||
+            `Your CV uploaded but we couldn’t confirm it. Email ${contactEmail} and we’ll sort it.`,
         )
         resetTurnstile()
         return

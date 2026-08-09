@@ -339,6 +339,34 @@ async function buildTier1(browser) {
   writeFileSync(join(TIER1_DIR, awkwardName), singleColumnPdf)
   record(1, `tier1/${awkwardName}`, { bytes: singleColumnPdf.length })
 
+  // --- t1-pdf-bom-prefixed.pdf / t1-pdf-junk-prefixed.pdf --------------
+  // Review 2026-08-09 CR-02. pdf.js's checkHeader() searches the first 1024
+  // bytes for "%PDF-" (not offset 0) precisely because leading junk before
+  // the header occurs in the wild: a UTF-8 BOM from a naive re-save, a mail
+  // gateway preamble, concatenated output. Both of these extract IDENTICALLY
+  // to t1-pdf-single-column.pdf (pdf.js moveStart()s the stream to the
+  // header, so every xref offset still resolves) — which is the whole point:
+  // they are files the pipeline has always parsed fine, and any sniffer
+  // stricter than the parser hard-rejects them.
+  //
+  // Both prefixes are FIXED byte sequences over an already-deterministic
+  // buffer, so these stay byte-stable and `pnpm fixtures:regen` stays
+  // idempotent.
+  const UTF8_BOM = Buffer.from([0xef, 0xbb, 0xbf])
+  const bomPrefixedPdf = Buffer.concat([UTF8_BOM, singleColumnPdf])
+  assertUnderCap(bomPrefixedPdf, 't1-pdf-bom-prefixed.pdf')
+  writeFileSync(join(TIER1_DIR, 't1-pdf-bom-prefixed.pdf'), bomPrefixedPdf)
+  record(1, 'tier1/t1-pdf-bom-prefixed.pdf', { bytes: bomPrefixedPdf.length })
+
+  const GATEWAY_PREAMBLE = Buffer.from(
+    '\r\n   MIME-Version: 1.0 (mail gateway preamble)\r\n',
+    'latin1',
+  )
+  const junkPrefixedPdf = Buffer.concat([GATEWAY_PREAMBLE, singleColumnPdf])
+  assertUnderCap(junkPrefixedPdf, 't1-pdf-junk-prefixed.pdf')
+  writeFileSync(join(TIER1_DIR, 't1-pdf-junk-prefixed.pdf'), junkPrefixedPdf)
+  record(1, 'tier1/t1-pdf-junk-prefixed.pdf', { bytes: junkPrefixedPdf.length })
+
   // --- t1-pdf-two-column.pdf ------------------------------------------
   const twoColumnHtml = `<!doctype html>
 <html><head><meta charset="utf-8"><style>
@@ -757,6 +785,22 @@ const TIER1_MANIFEST_DEFS = [
     minChars: 1200,
     mustContain: [zoe.name, employerA],
     why: 'Identical bytes to t1-pdf-single-column.pdf under an awkward filename — exercises slugifyFilename() in the recruiter upload action (src/app/(app)/candidates/[id]/actions.ts), not extraction itself.',
+  },
+  {
+    file: 't1-pdf-bom-prefixed.pdf',
+    mime: MIRROR_PDF_MIME,
+    declaredExtension: 'pdf',
+    minChars: 1200,
+    mustContain: [zoe.name, employerA],
+    why: "t1-pdf-single-column.pdf behind a 3-byte UTF-8 BOM — the shape a naive re-save produces. pdf.js's checkHeader() searches the first 1024 bytes for %PDF- and moveStart()s to it, so this extracts identically to the unprefixed original; it is here so sniffFileType() can never again be stricter than the parser it gates (review 2026-08-09 CR-02).",
+  },
+  {
+    file: 't1-pdf-junk-prefixed.pdf',
+    mime: MIRROR_PDF_MIME,
+    declaredExtension: 'pdf',
+    minChars: 1200,
+    mustContain: [zoe.name, employerA],
+    why: 't1-pdf-single-column.pdf behind a 45-byte mail-gateway preamble (CRLF + a MIME-Version line) — the other common real-world source of bytes before the PDF header. Extracts identically to the unprefixed original (review 2026-08-09 CR-02).',
   },
   {
     file: 't1-pdf-two-column.pdf',

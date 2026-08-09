@@ -3,8 +3,10 @@ import 'server-only'
 import * as Sentry from '@sentry/nextjs'
 import type { SupabaseClient } from '@supabase/supabase-js'
 
+import { sanitiseForPostgres } from '@/lib/text/postgres-safe-text'
 import type { Database, TablesInsert, TablesUpdate } from '@/types/database'
 
+import { failureDetail } from './failure-detail'
 import type { DbResult } from './types'
 
 // ---------------------------------------------------------------------------
@@ -173,9 +175,17 @@ export async function upsertCandidateFromLinkedIn(
       ...(profile.linkedin_url ? { source_detail: profile.linkedin_url } : {}),
     } as unknown as TablesUpdate<'candidates'>
 
+    // sanitiseForPostgres at the write boundary (review 2026-08-09 ME-03).
+    // These columns (headline / about / work_experience / education /
+    // skills) are the SAME candidates columns the CV pipeline writes, fed
+    // here from an extension-supplied JSON body. zod's z.string() in
+    // linkedin-ingest-schema.ts accepts a NUL and a lone surrogate without
+    // complaint, and either one turns this write into a deterministic
+    // 22P05 / PGRST102 that the popup only ever reports as a generic
+    // failure — the same shape as the 12 rows this phase exists to explain.
     const { data, error } = await supabase
       .from('candidates')
-      .update(patch)
+      .update(sanitiseForPostgres(patch))
       .eq('id', existing.id)
       .select('id')
       .single()
@@ -189,7 +199,11 @@ export async function upsertCandidateFromLinkedIn(
           subop: 'update',
         },
       })
-      return { ok: false, code: 'internal' }
+      return {
+        ok: false,
+        code: 'internal',
+        detail: failureDetail(error, 'candidates.update', Object.keys(patch)),
+      }
     }
     return { ok: true, data: { id: existing.id, created: false } }
   }
@@ -229,7 +243,8 @@ export async function upsertCandidateFromLinkedIn(
 
   const { data, error } = await supabase
     .from('candidates')
-    .insert(insertPayload)
+    // Same boundary as the update path above (review 2026-08-09 ME-03).
+    .insert(sanitiseForPostgres(insertPayload))
     .select('id')
     .single()
 
@@ -242,7 +257,11 @@ export async function upsertCandidateFromLinkedIn(
         subop: 'insert',
       },
     })
-    return { ok: false, code: 'internal' }
+    return {
+      ok: false,
+      code: 'internal',
+      detail: failureDetail(error, 'candidates.insert', Object.keys(insertPayload)),
+    }
   }
   return { ok: true, data: { id: data.id, created: true } }
 }

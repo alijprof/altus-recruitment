@@ -25,6 +25,7 @@ import { inngest } from '@/lib/inngest/client'
 import { readStatus } from '@/lib/observability/inngest'
 import { checkCap, CapExceededError } from '@/lib/stripe/cap-enforcement'
 import { createServiceClient } from '@/lib/supabase/service'
+import { truncateLegal } from '@/lib/text/postgres-safe-text'
 
 // Friendly message shown in the UI when parsing fails. Locked to the
 // UI-SPEC §Error States literal so the panel renders the exact copy.
@@ -293,7 +294,12 @@ export const parseCVOnUpload = inngest.createFunction(
         const bytes = Buffer.from(base64Buffer, 'base64')
         try {
           const extracted = await extractTextFromBuffer(bytes, mime_type)
-          return extracted.slice(0, MAX_CV_TEXT_CHARS)
+          // truncateLegal, not a bare .slice: the extractor already
+          // sanitised, but slicing on UTF-16 code units can CUT A SURROGATE
+          // PAIR IN HALF at exactly 60,000 and re-introduce a lone
+          // surrogate downstream of the sanitiser (review 2026-08-09
+          // ME-02). Truncate, then re-sanitise.
+          return truncateLegal(extracted, MAX_CV_TEXT_CHARS)
         } catch (err) {
           // Plan 06-07: classify FIRST. classifyExtractionError maps the
           // verified Tier-2 library-error shapes (corrupt/truncated PDF,
