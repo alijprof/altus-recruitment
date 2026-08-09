@@ -28,7 +28,7 @@
 
 import { describe, expect, it } from 'vitest'
 
-import { sanitiseForPostgres, sanitiseText } from '@/lib/text/postgres-safe-text'
+import { sanitiseForPostgres, sanitiseText, truncateLegal } from '@/lib/text/postgres-safe-text'
 
 // --- The two illegal sequences ---------------------------------------------
 const NUL = String.fromCharCode(0x00)
@@ -43,6 +43,11 @@ const BOM = String.fromCharCode(0xfeff)
 const NBSP = String.fromCharCode(0x00a0)
 const SOH = String.fromCharCode(0x01) // U+0001 — legal in Postgres text
 const UNIT_SEP = String.fromCharCode(0x1f) // U+001F — legal in Postgres text
+// A non-global probe for "does this string contain a lone surrogate" — the
+// module's own detection regex, restated here so the truncation tests below
+// assert against an independent copy rather than the implementation's.
+const LONE_SURROGATE_PROBE =
+  /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/
 const THUMBS_UP = String.fromCodePoint(0x1f44d)
 const WOMAN = String.fromCodePoint(0x1f469)
 const LAPTOP = String.fromCodePoint(0x1f4bb)
@@ -185,5 +190,60 @@ describe('sanitiseForPostgres — non-string values', () => {
     const out = sanitiseForPostgres({ created_at: date, name: `Jane${NUL}Doe` })
     expect(out.created_at).toBeInstanceOf(Date)
     expect(out.name).toBe('JaneDoe')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Review 2026-08-09 ME-02: truncation happens DOWNSTREAM of sanitisation
+// (cv-extract sanitises inside normaliseWhitespace; parse-cv.ts then slices
+// to 60,000 chars and embed-text.ts to 30,000). String.prototype.slice cuts
+// on UTF-16 code units, so a boundary landing inside a surrogate pair
+// re-introduces a lone surrogate on a string that was legal a moment
+// earlier — PGRST102, the exact class this phase exists to close.
+// ---------------------------------------------------------------------------
+describe('truncateLegal — truncation cannot re-introduce a lone surrogate', () => {
+  it('a bare .slice() DOES split a surrogate pair (the premise this fix rests on)', () => {
+    // 9 chars, then an emoji occupying code units 9 and 10.
+    const text = `123456789${THUMBS_UP}tail`
+    const naive = text.slice(0, 10)
+    expect(naive.length).toBe(10)
+    // The last code unit is the HIGH half, with no partner.
+    expect(naive.charCodeAt(9)).toBe(0xd83d)
+    expect(LONE_SURROGATE_PROBE.test(naive)).toBe(true)
+  })
+
+  it('truncateLegal replaces the split half with U+FFFD instead of emitting it', () => {
+    const text = `123456789${THUMBS_UP}tail`
+    const out = truncateLegal(text, 10)
+    expect(out).toBe(`123456789${FFFD}`)
+    expect(LONE_SURROGATE_PROBE.test(out)).toBe(false)
+  })
+
+  it('leaves the pair intact when the boundary falls cleanly after it', () => {
+    const text = `123456789${THUMBS_UP}tail`
+    expect(truncateLegal(text, 11)).toBe(`123456789${THUMBS_UP}`)
+  })
+
+  it('returns an already-legal short string unchanged, by reference', () => {
+    const text = `Zoe ${THUMBS_UP} Doe`
+    expect(truncateLegal(text, 60_000)).toBe(text)
+  })
+
+  it('still removes a NUL that survives inside the retained slice', () => {
+    expect(truncateLegal(`ab${NUL}cd`, 4)).toBe('abc')
+  })
+
+  it('handles a boundary at 0 and at exactly the string length', () => {
+    expect(truncateLegal(THUMBS_UP, 0)).toBe('')
+    expect(truncateLegal('abc', 3)).toBe('abc')
+  })
+
+  it("is legal at parse-cv.ts's real 60,000-char boundary landing mid-pair", () => {
+    // Pad to 59,999 so the emoji straddles index 60,000 exactly.
+    const padded = 'x'.repeat(59_999) + THUMBS_UP + 'more'
+    const out = truncateLegal(padded, 60_000)
+    expect(out.length).toBe(60_000)
+    expect(LONE_SURROGATE_PROBE.test(out)).toBe(false)
+    expect(out.endsWith(FFFD)).toBe(true)
   })
 })

@@ -93,6 +93,28 @@ export function sanitiseText(s: string): string {
 }
 
 /**
+ * Truncate to at most `maxChars` UTF-16 code units and return a string that
+ * is still legal for Postgres / PostgREST.
+ *
+ * Review 2026-08-09 ME-02. Every truncation in the pipeline runs DOWNSTREAM
+ * of sanitisation (sanitiseText happens inside cv-extract's
+ * normaliseWhitespace; the 60k slice in parse-cv.ts and the 30k slice in
+ * embed-text.ts happen after it). `String.prototype.slice` cuts on UTF-16
+ * code units, so a boundary landing between the two halves of a surrogate
+ * pair — an emoji, an astral-plane glyph — leaves a LONE surrogate on a
+ * string that was legal a moment earlier, and PostgREST answers PGRST102
+ * "Empty or invalid json". Sanitise-then-truncate makes the guarantee false
+ * rather than merely improbable; truncate-then-sanitise restores it.
+ *
+ * Cheap: sanitiseText returns the same reference when nothing needs
+ * changing, so the common path is one extra pair of scans and zero
+ * allocations.
+ */
+export function truncateLegal(s: string, maxChars: number): string {
+  return sanitiseText(s.length <= maxChars ? s : s.slice(0, maxChars))
+}
+
+/**
  * Plain objects (and null-prototype objects) are the only ones we may
  * rebuild. A Date, a Uint8Array, a Map — anything with its own prototype —
  * must pass through untouched: `Object.entries(new Date())` is `[]`, so

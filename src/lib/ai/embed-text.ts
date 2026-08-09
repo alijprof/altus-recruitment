@@ -1,5 +1,7 @@
 import 'server-only'
 
+import { truncateLegal } from '@/lib/text/postgres-safe-text'
+
 import type { Tables } from '@/types/database'
 
 // ---------------------------------------------------------------------------
@@ -61,7 +63,10 @@ export function candidateEmbeddingText(c: CandidateEmbedFields, cvText: string |
 
   let out = parts.join(' ')
   if (cvText != null && cvText.length > 0) {
-    out += `\n\n---\n\n${cvText.slice(0, MAX_CV_CHARS_FOR_EMBED)}`
+    // truncateLegal, not a bare .slice: cutting on UTF-16 code units at
+    // exactly 30,000 can split a surrogate pair and put a LONE surrogate in
+    // the JSON body sent to Voyage (review 2026-08-09 ME-02).
+    out += `\n\n---\n\n${truncateLegal(cvText, MAX_CV_CHARS_FOR_EMBED)}`
   }
   return out.trim()
 }
