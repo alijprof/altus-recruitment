@@ -3,12 +3,12 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: Milestone complete — awaiting next milestone
-last_updated: "2026-08-09T19:39:11.680Z"
+last_updated: "2026-08-09T20:11:51.650Z"
 progress:
   total_phases: 1
   completed_phases: 0
   total_plans: 10
-  completed_plans: 2
+  completed_plans: 4
   percent: 0
 ---
 
@@ -116,9 +116,13 @@ Items acknowledged and deferred at milestone close on 2026-06-12. All 21 quick t
 | Phase | Plan | Duration | Notes |
 |-------|------|----------|-------|
 | Phase 06 P03 | 55min | 2 tasks | 22 files |
+| Phase 06 P05 | 30min | 3 tasks | 5 files |
 
 ## Decisions
 
 - [Phase 06]: 06-03: pinned Chromium PDF /CreationDate+/ModDate and jszip per-entry mtimes (incl. auto-created folders) to a fixed date so pnpm fixtures:regen is byte-for-byte idempotent
 - [Phase 06]: 06-03: encrypted-PDF fixture uses deterministic pseudo-random O/U values instead of a real RC4/MD5 password derivation — empirically confirmed pdf.js throws PasswordException identically either way
 - [Phase 06]: 06-03: unpdf/pdf.js can neuter the ArrayBuffer it is handed — every self-check now defensively copies bytes before extraction rather than passing a live view still needed elsewhere
+- [Phase 06]: 06-05: resolved local Supabase creds via node_modules/.bin/supabase directly (pnpm not on bare PATH in this env)
+- [Phase 06]: 06-05: C1/C2 (Unicode illegalities) target updateCandidateCVParse's extracted_data jsonb; C3/C4/C5 target markCandidateFieldsFromCV's typed candidates columns — matches which real Postgres column each verified-matrix row actually writes to
+- [Phase 06]: 06-05: BAD-ENUM is the one test where result.ok===false is the PERMANENT expected outcome — proves DbResult.detail will carry the SQLSTATE + column once 06-06/06-07 land
