@@ -306,16 +306,32 @@ export type ParsedCV = {
   confidence_per_field: Record<string, 'high' | 'medium' | 'low'>
 }
 
-export async function parseCV(args: {
+export type ParseCVDetailed = {
+  parsed: unknown // RAW tool input — deliberately NOT cast to ParsedCV
+  stopReason: string | null
+  inputTokens: number
+  outputTokens: number
+}
+
+/**
+ * `purpose` lets out-of-band diagnostics (e.g. the plan 06-02 forensic
+ * replay) bill and label their Claude calls separately from real recruiter
+ * parses, WITHOUT duplicating the tool schema / model / max_tokens here.
+ * Callers passing a custom `purpose` MUST pass an `organizationId` they are
+ * entitled to bill — this function does not enforce that; the caller's
+ * guard rails do (see tests/forensics/cv-parse-replay.forensic.ts).
+ */
+export async function parseCVDetailed(args: {
   cvText: string
   organizationId: string
   userId?: string | null
-}): Promise<ParsedCV> {
+  purpose?: string
+}): Promise<ParseCVDetailed> {
   const response = await runWithLogging({
     model: 'claude-haiku-4-5-20251001',
     organizationId: args.organizationId,
     userId: args.userId,
-    purpose: 'cv_parse',
+    purpose: args.purpose ?? 'cv_parse',
     request: {
       max_tokens: 2048,
       tools: [cvParseTool],
@@ -334,5 +350,22 @@ export async function parseCV(args: {
   if (!toolUse || toolUse.type !== 'tool_use') {
     throw new Error('Claude did not return tool_use block')
   }
-  return toolUse.input as ParsedCV
+  return {
+    parsed: toolUse.input,
+    stopReason: response.stop_reason ?? null,
+    inputTokens: response.usage.input_tokens,
+    outputTokens: response.usage.output_tokens,
+  }
+}
+
+export async function parseCV(args: {
+  cvText: string
+  organizationId: string
+  userId?: string | null
+}): Promise<ParsedCV> {
+  const d = await parseCVDetailed(args)
+  // KNOWN-DEFECTIVE BOUNDARY: trusts Claude's tool-use output shape with no
+  // runtime validation. Plan 06-06 replaces this `as` cast with a zod
+  // coercion boundary (06-RESEARCH.md Pattern 2) — do not "fix" it here.
+  return d.parsed as ParsedCV
 }
