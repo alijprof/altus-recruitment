@@ -56,6 +56,22 @@ findings:
   warning: 12
 status: issues_found
 verdict: FIX-FIRST
+rereview:
+  reviewed: 2026-08-09T23:30:00Z
+  diff: ecb9b75..5374c13
+  commits: 10
+  blockers_closed: 4
+  blockers_open: 0
+  mediums_closed: 2
+  mediums_documented_decision: 1
+  new_findings:
+    high: 1
+    medium: 2
+    low: 3
+    info: 2
+    total: 8
+  status: issues_found
+  verdict: SHIP (product code) / FIX-FIRST (smoke spec, before it is ever run)
 ---
 
 # Phase 6: CV Intake Battle-Test & Hardening — Code Review
@@ -791,6 +807,307 @@ Recorded so the negative results are auditable, not assumed.
 
 ---
 
-_Reviewed: 2026-08-09_
+# Re-review (delta) — `ecb9b75..5374c13`
+
+**Re-reviewed:** 2026-08-09
+**Scope:** 10 fix commits + the separately-authored
+`tests/smoke/authed/cv-intake.smoke.ts`, merged at `5374c13`
+**Fix report:** `06-FIXES.md`
+**Verdict:** **SHIP the product code** — all 4 blockers independently
+verified closed, no new blocker in `src/`. **One blocking precondition on
+the pre-smoke step (RR-01)** before `pnpm smoke:auth` is ever pointed at
+production.
+
+## Blocker verification — all 4 closed
+
+Every closure was re-derived from the code and from live execution, not
+accepted from `06-FIXES.md`.
+
+### CR-01 — CLOSED
+`apply-form.tsx:199-210` now renders `confirmResult.formError.trim() || <generic>`.
+The generic copy survives only for an empty message. The new
+`tests/unit/app/apply/apply-form-confirm-message.test.tsx` drives the **real**
+component to the toast boundary and — the part that matters — asserts the
+*absence* of the old falsehood (`not.toMatch(/uploaded but we couldn/i)`,
+`not.toContain(CONTACT_EMAIL)`) for the wrong-format case, plus the
+whitespace-only fallback. This is a genuine behavioural pin, not a
+restatement. Residual nits: RR-04, RR-05 below.
+
+### CR-02 — CLOSED, and the ordering claim holds under adversarial test
+The fix mirrors pdf.js exactly (`findMagicWithin`, `PDF_HEADER_SEARCH_WINDOW = 1024`)
+and resolves offset-0 signatures **first**. I did not take the ordering claim
+on faith — I executed the real `sniffFileType` against constructed hostile
+inputs:
+
+| probe | result | required |
+|---|---|---|
+| `tier1/t1-pdf-bom-prefixed.pdf` (`EF BB BF 25 50 44 46 2D`) | `pdf`, accepted | pdf |
+| `tier1/t1-pdf-junk-prefixed.pdf` (`\r\n   MIM…` preamble) | `pdf`, accepted | pdf |
+| **real `t1-docx-simple.docx` with `%PDF-` injected at offset 400** | **`zip`** | zip |
+| synthetic `PK\x03\x04` + `%PDF-1.7` at offset 8 | `zip` | zip |
+| `{\rtf1` + `%PDF-` inside | `rtf` | rtf |
+| `%PDF-` starting at offset **1019** | `pdf` | pdf |
+| `%PDF-` starting at offset **1020** | `unknown` | unknown |
+
+So: **no, a legitimate DOCX containing `%PDF-` can never be reclassified.**
+A DOCX always begins `PK\x03\x04`, which short-circuits at step 2, three
+steps before the widened search runs. The invariant *"the widened search can
+only turn a former `'unknown'` into `'pdf'`"* is structurally true — steps
+1-4 are byte-identical to the pre-fix implementation and all short-circuit.
+The 1019/1020 boundary matches pdf.js's `peekBytes(1024)` + `r = a.length - i`
+bound precisely, so the sniffer is now **exactly as permissive as the parser
+it gates** for PDFs, which is the correct invariant. My original failure
+scenario (BOM/junk-prefixed PDF blocked at upload, and dead-ended
+un-retryably on the apply path) is fully closed on both paths.
+
+### HI-01 — CLOSED (verified by execution)
+`globalSetup: ['./tests/integration/require-stack.setup.ts']`. Placing it in
+the runner rather than in the frozen suite is the right call.
+
+```
+$ npx vitest run --config vitest.integration.config.ts      → EXIT 1  (was: exit 0, 22 skipped)
+$ CI_SKIP_INTEGRATION=1 npx vitest run --config …           → EXIT 0, 25 skipped, loud warning
+```
+
+### HI-02 — CLOSED (verified by execution)
+`.claude/**` excluded in all three vitest configs and `.claude/` gitignored.
+
+```
+$ npx vitest run   → Test Files 67 passed | 4 skipped (71);  Tests 780 passed | 28 todo;  EXIT 0
+```
+(was: 3 failed / 1510 passed / exit 1). Both halves of the finding closed —
+the red gate and the public-repo exposure.
+
+### ME-02 — CLOSED
+`truncateLegal(s, max) = sanitiseText(slice)` — truncate-then-sanitise, wired
+at both sites (`parse-cv.ts:302`, `embed-text.ts:69`). Correct: a pair split
+by the cut becomes U+FFFD rather than a lone surrogate, and the
+same-reference fast path is preserved.
+
+### ME-03 — CLOSED
+`sanitiseForPostgres` now guards all three sibling boundaries
+(`candidates.ts:381`, `candidates-linkedin.ts:188` and `:247`), and
+`failure-detail.ts` gives all of them a PII-free root cause. The layer-2
+deferral for `upsertCandidateFromLinkedIn` is legitimate and **empirically
+demonstrated**, not asserted: its insert relies on the `candidates_set_org`
+trigger reading `auth.uid()`, which a service-role harness has none of, so
+the write raises `P0001` for any caller. The unit-level pin plus transitive
+layer-2 coverage via `createCandidate` (same columns) is a reasonable stop.
+Nice detail: the `P0001 (candidates.insert: …)` diagnosis quoted in the fix
+report is the ME-03 `detail` widening paying for itself on its first use.
+
+### ME-01 — DOCUMENTED DECISION, accepted
+Deletion is kept because the frozen layer-2 contract pins the stored values
+(`'JaneDoe'`, key `badkey`, `'Texthere'`). Correct precedence — silently
+changing behaviour under a frozen assertion would be worse than the
+asymmetry. The header now records the failure it can cause, why it stands,
+and the exact conditions for revisiting (change the substitution **and** the
+three C1 assertions in one commit, freeze lifted first). That is the right
+shape for a knowingly-accepted trade-off.
+
+---
+
+## New findings from the fix commits and the smoke spec
+
+### RR-01 (BLOCKER on running the smoke — HIGH): `cv-intake.smoke.ts` has no technical org guard, writes+deletes, and defaults to live production
+
+**File:** `tests/smoke/authed/cv-intake.smoke.ts:22-24, 33-34, 118-137`
+
+**Issue:** The spec's own header states it *"must run ONLY against the
+FOUNDER'S OWN org (never a customer org)"* — matching 06-CONTEXT.md's Layer-3
+decision and MEMORY's ⛔ production-live rule. The only enforcement is:
+
+```ts
+if (!existsSync(STORAGE_STATE) || statSync(STORAGE_STATE).size < 10) { throw … }
+```
+
+That checks a **file exists**, not **which org it belongs to**. I confirmed
+there is no org assertion in `tests/smoke/authed/global-setup.ts` either
+(grep for `org|founder|altus` returns nothing), and none in
+`playwright.smoke-auth.config.ts`. The "founder's own org" rule is a comment
+and a README line — a procedural control on a spec that:
+
+- **writes** (creates a candidate, uploads 4 CVs, drives real Haiku spend),
+- **deletes** (candidate + cascaded CV rows + Storage objects),
+- defaults `BASE_URL` to `https://altusrecruit.com` — **live production**,
+- reuses the **shared** `tests/smoke/.auth/prod.json` session that the
+  read-only Layer A2 spec also consumes.
+
+**Failure scenario:** the founder captures a session for a customer org to
+reproduce a customer-reported bug (an entirely normal thing to do — the
+Steele Charles investigation that started this phase is exactly that shape),
+then later runs `pnpm smoke:auth`. The write-capable spec silently runs
+against **the customer's live org**: creates a scratch candidate, burns
+Haiku, and issues deletes. Nothing in code stops it.
+
+**Fix:** fail closed on an explicit expected org before the first write.
+
+```ts
+const EXPECTED_ORG = process.env.SMOKE_EXPECTED_ORG
+test.beforeAll(async () => {
+  ...
+  if (!EXPECTED_ORG) {
+    throw new Error(
+      'cv-intake.smoke.ts WRITES and DELETES. Set SMOKE_EXPECTED_ORG to the ' +
+        "founder's org name so this spec can prove which tenant it is in.",
+    )
+  }
+  await page.goto('/candidates')
+  await expect(
+    page.getByTestId('topnav-org'),
+    `refusing to write: signed-in org is not "${EXPECTED_ORG}"`,
+  ).toHaveText(EXPECTED_ORG)
+})
+```
+
+Until that lands, this spec should not be pointed at production.
+
+### RR-02 (WARNING — MEDIUM): the smoke's scratch candidate can be orphaned before it is tracked
+
+**File:** `tests/smoke/authed/cv-intake.smoke.ts:167-178`
+
+**Issue:** the candidate row exists server-side the moment the redirect
+lands, but `createdCandidates.push(...)` happens *after*
+`page.waitForURL(...)`, a regex match and an `expect(match).not.toBeNull()`.
+If any of those throws, the candidate is never tracked and `afterAll` cannot
+delete it — residue in the (live) org, which the file itself calls "a bug".
+
+**Fix:** track by name **before** the create click, and clean up by search:
+
+```ts
+createdCandidates.push({ id: '', name: candidateName })   // track first
+await page.getByRole('button', { name: 'Add candidate' }).click()
+...
+createdCandidates[createdCandidates.length - 1]!.id = match![1]!
+```
+and make `afterAll` resolve an untracked id via `/candidates?q=<name>`.
+
+### RR-03 (WARNING — MEDIUM): unscoped `getByRole('alert')` can match a toast, not the CV panel
+
+**File:** `tests/smoke/authed/cv-intake.smoke.ts:66-71, 253-259`
+
+**Issue:** `waitForParseOutcome` treats *any* `role="alert"` on the page as
+"parse failed", and the damaged-file test asserts
+`alert.getByRole('button')).toHaveCount(0)` on the same unscoped locator. A
+sonner error toast (e.g. a transient refresh failure) satisfies both: the
+Tier-1 tests would report a spurious `failed`, and the no-retry-button
+assertion could pass **vacuously** against a toast that has no buttons —
+exactly the kind of green-that-proves-nothing this review keeps flagging.
+The file already knows the panel is the page's only `<aside>`
+(`cvSidebarSnapshot`, verified: `candidates/[id]/page.tsx:391` is the sole
+`<aside>`).
+
+**Fix:** scope both:
+
+```ts
+const panel = page.locator('aside')
+const failed = panel.getByRole('alert')
+...
+await expect(panel.getByRole('alert').getByRole('button')).toHaveCount(0)
+```
+
+### RR-04 (WARNING — LOW): `confirmResult.formError.trim()` has no optional chain
+**File:** `src/app/(public)/apply/[orgSlug]/apply-form.tsx:207`.
+`ConfirmApplyResult` types `formError` as a required `string` and I traced
+every `return { ok:false, … }` in `confirmApplyAction` — all five supply a
+non-empty literal, so this cannot throw today. But if a future edit ever
+returns `{ ok:false }`, `.trim()` throws a `TypeError` **inside**
+`startTransition`, with no catch anywhere on the path: the applicant would
+get *no* toast, no navigation, and an un-reset turnstile — strictly worse
+than the bug this fixed. One character closes it: `confirmResult.formError?.trim() || …`.
+
+### RR-05 (WARNING — LOW): the generic copy is now replaced rather than augmented
+**File:** `src/app/(public)/apply/[orgSlug]/apply-form.tsx:207-210`.
+Correct and important for `CV_WRONG_FORMAT_MESSAGE`. But `'CV record not
+found.'` is now shown alone, where it previously carried the agency's contact
+email — and that is the one case where emailing *is* the right next action,
+and the applicant otherwise has none.
+**Fix:** append rather than replace for the non-actionable classes, e.g.
+`${formError} If this keeps happening, email ${contactEmail}.`
+
+### RR-06 (WARNING — LOW): two new `prettier --check` failures
+`src/app/(public)/apply/[orgSlug]/apply-form.tsx` and
+`src/lib/db/candidates-linkedin.ts` now fail `prettier --check`; neither did
+at `ecb9b75`. LO-03's count grows from 6 files to 8 (3 of them inside this
+fix diff). Still not caught by any gate — `pnpm lint` passes because ESLint
+delegates formatting to Prettier and nothing runs Prettier.
+
+### RR-07 (INFO): residual sniffer/parser asymmetry for DOCX (not PDF)
+`sniffFileType` still requires `PK\x03\x04` at offset 0, while jszip/mammoth
+read the central directory from the **end** and can therefore open a
+prefixed (e.g. self-extracting) zip that the sniffer calls `'unknown'`. PDF
+parity is now exact; this DOCX case is vanishingly rare compared with
+prefixed PDFs (which pdf.js explicitly codes for), so it is recorded for
+completeness rather than as an action.
+
+### RR-08 (INFO): `'unknown'` still rejects on the apply path
+My original *additional* suggestion — treat `'unknown'` as INCONCLUSIVE on
+the bounded apply-path read — was explicitly out of the fixer's locked scope
+and remains open. Risk is materially lower now that prefixed PDFs classify
+correctly, but ME-05's empty/short-read case still routes through this
+branch. Carried forward with ME-05.
+
+---
+
+## CLEAN list — re-verified at `5374c13`, no regressions
+
+- **Frozen red-suite files are byte-identical at the merge commit**, compared
+  by **blob hash**, not diff:
+  `tests/integration/cv-write-path.test.ts` → `20dd465b8d1fcc74e02453d675b7de04e55878d4`,
+  `tests/unit/lib/ai/cv-extract-corpus.test.ts` → `d9dc262496ad73c988a928a65c08ff55c524933c`,
+  `tests/unit/lib/ai/cv-parse-truncation.test.ts` → `3cfbba4a1b8dbb685d58321146731f4cdeb1c39d`
+  — each identical to its original RED commit (`30c6782`, `510f5b1`,
+  `feb9d28`). The red→green conversion remains provably assertion-free of edits.
+- **No `err.message` in any `detail` string** — grepped every `detail:` site
+  across `src/lib/db/*.ts` and `parse-cv.ts`; `failure-detail.ts` reads only
+  `error.code` plus hard-coded labels. PII contract intact through the lift.
+- **Forensic replay is still write-free** — zero `.insert/.update/.upsert/.delete/.rpc`.
+- **AI cap backstop untouched** — `cap-enforcement.ts` unchanged; the
+  entitlement + £-ceiling gates still run for every purpose.
+- **Server-only boundaries intact** — none of `failure-detail.ts`,
+  `postgres-safe-text.ts`, `file-signature.ts`, `parse-messages.ts` imports
+  `server-only`, and no `'use client'` component imports any of them.
+- **Defence-in-depth still two-layered** — `cv-extract.ts:37` still
+  sanitises pre-Claude; the two DB-boundary sanitisers are both still in place.
+- **Byte scan of all 19 changed text files**: no raw control bytes, no
+  invalid UTF-8, no stray U+FFFD.
+- **`pnpm smoke` (anonymous Layer A) cannot run the write-capable spec** —
+  `playwright.smoke.config.ts` carries `testIgnore: /authed\//`. Verified.
+- **Smoke cleanup leaves no Storage residue** — `deleteCandidateAction`
+  captures `candidate_cvs.storage_path` and `voice_notes.audio_storage_path`
+  *before* the cascade and removes the objects, so deleting the scratch
+  candidate does clear its uploaded CVs.
+- **New layer-2 test is tenant-isolated** — `candidate-write-siblings.test.ts`
+  seeds its own org via `getHarness()`, scopes every insert to
+  `harness.orgId`, and tears down.
+- **Gates re-run by me at `5374c13`:** `tsc --noEmit` clean; `eslint src tests`
+  0 errors / 22 warnings (all pre-existing `_`-prefixed params); `vitest run`
+  780 passed / 0 failed.
+
+---
+
+## Remaining open items for the founder (unchanged, not in the fix scope)
+
+ME-04 (10 MiB buffered before auth in `uploadCVAction`), ME-05 (empty
+head-read treated as a contradiction), ME-06 (`seniority_level` case
+variants dropped), LO-01, LO-02, LO-03/RR-06, LO-04, LO-05, LO-06,
+IN-01, IN-02, **IN-03 (the `parse_error_detail` migration is still a FILE
+ONLY — push it, or the phase's headline observability win stores nothing in
+production)**, plus RR-02 … RR-08.
+
+## Ship conditions
+
+1. **RR-01 before any `pnpm smoke:auth` run against production.** The
+   HARD RULE #1 pre-smoke is the next step, and it is the one artefact with
+   an unguarded tenant target.
+2. Everything else can ship. The product code in `src/` is sound: 4 blockers
+   closed, 2 mediums closed, 1 medium consciously and correctly deferred,
+   and no new defect in `src/` beyond two one-line nits (RR-04, RR-05) and a
+   formatting regression (RR-06).
+
+---
+
+_Reviewed: 2026-08-09 (initial, `d01bdc1..ecb9b75`)_
+_Re-reviewed: 2026-08-09 (delta, `ecb9b75..5374c13`)_
 _Reviewer: Claude (gsd-code-reviewer)_
 _Depth: deep_
