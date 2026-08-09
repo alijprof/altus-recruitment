@@ -9,6 +9,7 @@ pinned to a throwaway database.
 |-------|---------|--------|------|--------------|---------------|
 | **A — Production health smoke** | `pnpm smoke` | deployed URL (default: live prod) | none (anonymous) | **No** | No |
 | **A2 — Authenticated read-only smoke** | `pnpm smoke:auth` | deployed URL (default: live prod) | real user (magic-link relay) | **No** (read-only) | No |
+| **A3 — Authenticated CV-intake smoke** | `pnpm smoke:auth` (same config, new spec file) | deployed URL (default: live prod) | real user (magic-link relay) | **Yes** — one scratch candidate + its CVs, deleted in `afterAll` | No |
 | **B — Local golden path** | `pnpm test:e2e` | local `pnpm dev` | seed owner (password) | **Yes** | Yes |
 
 ---
@@ -80,6 +81,52 @@ pnpm smoke:auth
 The captured session lives at `tests/smoke/.auth/prod.json` and is **gitignored**
 (it holds live tokens — never commit it). Supabase refresh tokens keep it usable
 for repeat runs until they expire; re-run the relay to refresh.
+
+---
+
+## Layer A3 — authenticated CV-intake smoke (`tests/smoke/authed/cv-intake.smoke.ts`)
+
+The project's mandatory AI-driven browser-automation pre-smoke for the CV
+intake path (see `CLAUDE.md` → "HARD RULE #1"). It reuses the exact same
+`pnpm smoke:auth` command, config, and captured session as Layer A2 — the new
+spec file is picked up automatically by `playwright.smoke-auth.config.ts`'s
+`testMatch: /.*\.smoke\.ts/`, with zero config changes.
+
+Unlike Layer A2, this spec **writes real data** — it is the one deliberate
+exception to "Layer A/A2 never write." It exercises the honest-message
+contract end to end, through the real recruiter UI, against a real deployment:
+
+- Creates **one scratch candidate** with a recognisable synthetic name
+  (`GSD Phase06 Smoke <timestamp>`).
+- Uploads three Tier-1 fixtures from `tests/fixtures/cv-corpus/` (PDF, DOCX,
+  and a unicode-battery PDF) and asserts each one reaches "Parsing complete"
+  with real populated fields in "Review extracted data" — not a green status
+  over an empty profile. These three uploads drive real Haiku calls (a few
+  pence of AI cost in the signed-in org).
+- Uploads three Tier-2 fixtures (wrong-extension, an unsupported type, and a
+  damaged/truncated PDF) and asserts the honest, type-specific refusal for
+  each: the two immediate-reject cases never create a CV row or enter the
+  in-progress state; the damaged-file case enters the in-progress state, then
+  fails with a message naming the damage and **no retry control** (queried by
+  accessible role/name, never CSS — retrying identically-damaged bytes cannot
+  possibly succeed).
+- Tracks `pageerror` across the whole run, same as Layer A2.
+- `afterAll` **deletes every scratch candidate it created**, then re-asserts
+  (via a fresh search) that each one is actually gone. A run that leaves
+  residue in the signed-in org is treated as a bug in the spec itself.
+
+**Write-and-clean-up contract:** this spec is safe to run repeatedly against
+any deployment ONLY because every write it makes is scoped to candidates it
+creates itself and named for exactly that purpose, and cleanup is asserted,
+not just attempted. It must be run signed in as the **founder's own org**
+(never a customer org) — the same session capture as Layer A2 determines
+this, so capture a session for the founder's account before running it.
+
+```bash
+# Reuses Layer A2's session capture — see above if tests/smoke/.auth/prod.json
+# is missing or stale; the spec fails fast with an actionable message either way.
+SMOKE_BASE_URL=https://<preview-or-prod>.example.com pnpm smoke:auth
+```
 
 ---
 
