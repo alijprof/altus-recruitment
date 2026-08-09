@@ -36,6 +36,17 @@ Full phase details: [milestones/v1.0-ROADMAP.md](milestones/v1.0-ROADMAP.md)
 | 4. Voice, Marketing & Reporting | v1.0 | 7/7 | Complete | 2026-06-10 |
 | 5. SaaS Shell | v1.0 | 6/6 | Complete | 2026-06-04 |
 
+### Phase 6: CV Intake Battle-Test & Hardening — root-cause the 12 real-world parse failures from the customer's 5-6 Aug bulk upload (post-Claude write-stage), build a permanent multi-format fixture corpus + regression harness, fix every reproducible failure class, and guarantee every upload parses or fails immediately with an honest actionable message
+
+**Goal:** [To be planned]
+**Requirements**: TBD
+**Depends on:** Phase 5
+**Plans:** 0 plans
+
+Plans:
+
+- [ ] TBD (run /gsd:plan-phase 6 to break down)
+
 ---
 
 *Roadmap created: 2026-05-17*

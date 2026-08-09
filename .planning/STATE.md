@@ -104,3 +104,7 @@ Items acknowledged and deferred at milestone close on 2026-06-12. All 21 quick t
 ---
 
 *State refreshed at v1.0 milestone close. Full milestone history: .planning/MILESTONES.md*
+
+## Accumulated Context
+### Roadmap Evolution
+- Phase 6 added (2026-08-09): CV Intake Battle-Test & Hardening — driven by customer feedback (12 parse failures in the 5-6 Aug 73-CV bulk upload; telemetry proves all failures are post-Claude write-stage)
