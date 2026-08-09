@@ -98,7 +98,9 @@ function trackPageErrors(page: Page): string[] {
 async function uploadAndAwaitPending(page: Page, fixtureRelativePath: string) {
   await page.getByLabel('CV file').setInputFiles(`${FIXTURE_ROOT}/${fixtureRelativePath}`)
   await page.getByRole('button', { name: 'Upload CV' }).click()
-  await expect(page.getByText('Parsing…')).toBeVisible({ timeout: 20_000 })
+  await expect(page.locator('main').getByText('Parsing…', { exact: true })).toBeVisible({
+    timeout: 20_000,
+  })
 }
 
 /** Polls the CV panel until it leaves the in-progress state, either way. */
@@ -146,7 +148,16 @@ async function assertProfilePopulated(page: Page, mustContainAny?: string[]) {
  * only `<aside>` on the candidate detail page. Used to prove an immediate
  * reject never touched it (no row created, no state change of any kind). */
 async function cvSidebarSnapshot(page: Page): Promise<string> {
-  return (await page.locator('aside').innerText()).trim()
+  const raw = (await page.locator('aside').innerText()).trim()
+  // Normalise away FILE-PICKER state lines: after a server-side rejection the
+  // chosen file legitimately stays selected ("Ready to upload …"), and the
+  // idle helper copy takes its place otherwise. Neither is row/status state —
+  // the invariant this snapshot protects is that no CV ROW or parse status
+  // appears/disappears on an immediate reject.
+  return raw
+    .split('\n')
+    .filter((line) => !/^Ready to upload /.test(line) && !/^PDF or DOCX, up to /.test(line))
+    .join('\n')
 }
 
 type ScratchCandidate = { id: string; name: string }
@@ -202,21 +213,47 @@ test.describe.serial('@smoke-auth cv-intake', () => {
   test.afterAll(async () => {
     if (!page) return
     try {
-      for (const candidate of createdCandidates) {
-        await page.goto(`/candidates/${candidate.id}`)
+      // The tracked loop is subsumed by the prefix sweep below — one robust
+      // path instead of two. (An earlier version one-shot-`count()`ed the
+      // Delete button straight after goto; the page hydrates after 'load',
+      // so the check was always 0 and every delete was silently skipped.)
+      //
+      // Sweep-delete ANY row matching the scratch prefix — including orphans
+      // from a prior aborted run that never made it into `createdCandidates`
+      // (a serial-mode failure skips later tests but must not poison future
+      // runs). Bounded loop; rows link as /candidates/<uuid> from the list.
+      for (let sweep = 0; sweep < 10; sweep++) {
+        await page.goto(`/candidates?q=${encodeURIComponent(SCRATCH_NAME_PREFIX)}`)
+        // The list rows hydrate after 'load' — a one-shot evaluateAll has no
+        // auto-waiting, so wait until either a row link or the empty state is
+        // actually present before snapshotting hrefs (else the sweep silently
+        // sees zero rows and exits while residue survives).
+        await page
+          .locator('main a[href^="/candidates/"]')
+          .first()
+          .or(page.getByText('No candidates match your search.'))
+          .first()
+          .waitFor({ timeout: 10_000 })
+        // Only detail links (uuid) count — a bare prefix selector would also
+        // match the "Add candidate" → /candidates/new link and loop forever.
+        const hrefs = await page
+          .locator('main a[href^="/candidates/"]')
+          .evaluateAll((anchors) => anchors.map((a) => a.getAttribute('href') ?? ''))
+        const target = hrefs.find((h) => /^\/candidates\/[0-9a-f-]{36}$/i.test(h))
+        if (!target) break
+        await page.goto(target)
+        // Auto-WAIT for the button — the detail page hydrates after 'load',
+        // and a one-shot count() here silently skipped every delete.
         const deleteButton = page.getByRole('button', { name: 'Delete' })
-        if ((await deleteButton.count()) === 0) {
-          // Already gone (e.g. a previous partial run) — nothing to clean up.
-          continue
-        }
+        await deleteButton.waitFor({ timeout: 10_000 })
         await deleteButton.click()
-        await page.getByRole('button', { name: 'Delete candidate' }).click()
+        const confirmButton = page.getByRole('button', { name: 'Delete candidate' })
+        await confirmButton.waitFor({ timeout: 10_000 })
+        await confirmButton.click()
         await page.waitForURL(/\/candidates(\?.*)?$/, { timeout: 15_000 })
       }
-      // Re-assert NO scratch residue survives — searched by the shared name
-      // prefix rather than per-tracked-name (re-review MEDIUM), so even a
-      // candidate created in a crashed earlier step (or a prior partial run)
-      // that never made it into `createdCandidates` is caught loudly here.
+      // Then re-assert NOTHING matching the prefix survives, via a fresh
+      // server round-trip. Residue after the sweep is a hard failure.
       await page.goto(`/candidates?q=${encodeURIComponent(SCRATCH_NAME_PREFIX)}`)
       await expect(
         page.getByText('No candidates match your search.'),
@@ -276,7 +313,7 @@ test.describe.serial('@smoke-auth cv-intake', () => {
     await page.getByRole('button', { name: 'Upload CV' }).click()
     await expect(page.getByText(CV_WRONG_FORMAT_MESSAGE)).toBeVisible({ timeout: 10_000 })
     // Immediate reject never calls router.refresh() — nothing should change.
-    expect(await page.getByText('Parsing…').count()).toBe(0)
+    expect(await page.locator('main').getByText('Parsing…', { exact: true }).count()).toBe(0)
     const after = await cvSidebarSnapshot(page)
     expect(
       after,
@@ -299,7 +336,7 @@ test.describe.serial('@smoke-auth cv-intake', () => {
     await expect(page.getByText('Only PDF and DOCX files are supported.')).toBeVisible({
       timeout: 10_000,
     })
-    expect(await page.getByText('Parsing…').count()).toBe(0)
+    expect(await page.locator('main').getByText('Parsing…', { exact: true }).count()).toBe(0)
     const after = await cvSidebarSnapshot(page)
     expect(
       after,
