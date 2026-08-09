@@ -18,6 +18,13 @@ export default defineConfig({
     environment: 'node',
     globals: true,
     setupFiles: [],
+    // Fail-closed precondition (review 2026-08-09 HI-01): aborts the whole
+    // run with a non-zero exit code when the local Supabase stack is down,
+    // instead of exiting 0 with "22 skipped". Lives in the runner rather
+    // than inside cv-write-path.test.ts because that file is frozen
+    // byte-identical to its RED commit. CI_SKIP_INTEGRATION=1 opts out,
+    // loudly.
+    globalSetup: ['./tests/integration/require-stack.setup.ts'],
     testTimeout: 120000,
     hookTimeout: 120000,
   },
