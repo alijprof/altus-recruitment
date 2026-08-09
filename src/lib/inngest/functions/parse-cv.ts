@@ -1,20 +1,17 @@
 import * as Sentry from '@sentry/nextjs'
 import { NonRetriableError } from 'inngest'
 
-import { parseCV } from '@/lib/ai/claude'
-import {
-  DOCX_MIME,
-  extractTextFromBuffer,
-  PDF_MIME,
-  UnsupportedCVMimeTypeError,
-} from '@/lib/ai/cv-extract'
+import { CVParseTruncatedError, parseCV } from '@/lib/ai/claude'
+import { DOCX_MIME, extractTextFromBuffer, PDF_MIME } from '@/lib/ai/cv-extract'
 import { candidateEmbeddingText } from '@/lib/ai/embed-text'
 import { isProfileEffectivelyEmpty } from '@/lib/ai/profile-completeness'
 import { embed } from '@/lib/ai/voyage'
+import { classifyExtractionError } from '@/lib/cv/extraction-errors'
 import {
   CV_BUDGET_CAPPED_MESSAGE,
   CV_NO_TEXT_MESSAGE,
   CV_PARSE_FAILED_MESSAGE,
+  CV_PARSE_TRUNCATED_MESSAGE,
   CV_UPLOAD_INCOMPLETE_MESSAGE,
 } from '@/lib/cv/parse-messages'
 import {
@@ -50,6 +47,22 @@ const MAX_CV_TEXT_CHARS = 60_000
 // Minimum extracted text length below which we assume the PDF was a
 // scanned image and the parse will produce garbage.
 const MIN_EXTRACTED_CHARS = 50
+
+/**
+ * Thrown by the write-extracted step when either DB write fails. Unlike an
+ * arbitrary caught error, THIS error's `.message` is guaranteed PII-free —
+ * it is built entirely from a DbResult's `.detail` (plan 06-06: SQLSTATE or
+ * PostgREST code plus hard-coded column names, never `err.message`, which
+ * PostgREST can populate with the offending VALUE — T-06-25) or, when no
+ * detail was captured, the bare discriminant `.code`. The bottom in-body
+ * catch checks `instanceof` and surfaces `.message` straight through to
+ * `parse_error_detail` ONLY for this class — every other caught error keeps
+ * the existing `${name}: ${status}` shape (VERIFICATION R4: never pass an
+ * arbitrary SDK error's raw message, which can embed prompt/API fragments).
+ */
+class WriteExtractedFailedError extends Error {
+  name = 'WriteExtractedFailedError'
+}
 
 type CVUploadedEventData = {
   organization_id: string
@@ -282,7 +295,24 @@ export const parseCVOnUpload = inngest.createFunction(
           const extracted = await extractTextFromBuffer(bytes, mime_type)
           return extracted.slice(0, MAX_CV_TEXT_CHARS)
         } catch (err) {
-          if (err instanceof UnsupportedCVMimeTypeError) {
+          // Plan 06-07: classify FIRST. classifyExtractionError maps the
+          // verified Tier-2 library-error shapes (corrupt/truncated PDF,
+          // password-protected PDF, wrong-extension upload, unsupported
+          // mime) onto an honest, type-specific message — and, when it
+          // does, we write that message BEFORE throwing so the honest copy
+          // lands, not the generic FAILED_USER_MESSAGE the in-body catch
+          // would otherwise write. An unrecognised error classifies to
+          // null and falls through to today's behaviour exactly: generic,
+          // retryable — an unknown fault may well be transient.
+          const classification = classifyExtractionError(err, mime_type)
+          if (classification) {
+            await markCvFailed({
+              candidateCvId: candidate_cv_id,
+              userMessage: classification.message,
+              parseErrorDetail: classification.detail,
+            })
+          }
+          if (err instanceof Error && err.name === 'UnsupportedCVMimeTypeError') {
             throw new NonRetriableError(err.message)
           }
           // Corrupt PDF/DOCX. unpdf and mammoth throw plain Errors with
@@ -312,13 +342,36 @@ export const parseCVOnUpload = inngest.createFunction(
 
       // Step 3: call Claude. parseCV() logs to ai_usage automatically
       // (CV-04 / CLAUDE.md mandate) — do NOT instantiate Anthropic here.
-      const parsed = await step.run('claude-parse', async () => {
-        return await parseCV({
-          cvText: text,
-          organizationId: organization_id,
-          userId: user_id,
+      //
+      // Plan 06-07 Task 2(c) / must_haves truth: a response cut off at
+      // max_tokens with nothing usable extracted throws CVParseTruncatedError
+      // (src/lib/ai/claude.ts, plan 06-06) — write-extracted below never
+      // runs, so there is no risk of a silently 'complete' empty profile.
+      // Mark the honest reason HERE, before it falls through to the bottom
+      // catch, which would otherwise write the generic FAILED_USER_MESSAGE
+      // (preserveExistingMessage reads this row back and keeps whatever we
+      // wrote). Deliberately still retryable — re-thrown as-is, not wrapped
+      // in NonRetriableError, because Claude's output length is not
+      // deterministic for identical input (isUnretryableParseFailure
+      // deliberately excludes CV_PARSE_TRUNCATED_MESSAGE).
+      const parsed = await step
+        .run('claude-parse', async () => {
+          return await parseCV({
+            cvText: text,
+            organizationId: organization_id,
+            userId: user_id,
+          })
         })
-      })
+        .catch(async (err) => {
+          if (err instanceof CVParseTruncatedError) {
+            await markCvFailed({
+              candidateCvId: candidate_cv_id,
+              userMessage: CV_PARSE_TRUNCATED_MESSAGE,
+              parseErrorDetail: 'claude-parse: max_tokens truncation',
+            })
+          }
+          throw err
+        })
 
       // Step 4: persist the structured output. Two writes:
       //   (a) candidate_cvs.extracted_data + parsing_status='complete'
@@ -332,7 +385,15 @@ export const parseCVOnUpload = inngest.createFunction(
           parseError: null,
         })
         if (!updateResult.ok) {
-          throw new Error('failed to write extracted data')
+          // Plan 06-07 Task 2(b): carry the SQLSTATE/PostgREST code +
+          // column through (DbResult.detail, plan 06-06) instead of the
+          // useless generic message this used to throw. WriteExtractedFailedError
+          // marks the message as safe-to-surface-verbatim: it is built
+          // entirely from `code` + hard-coded column names, never
+          // `err.message` (T-06-25) — see the class doc comment below.
+          throw new WriteExtractedFailedError(
+            `write-extracted: ${updateResult.detail ?? updateResult.code} (extracted_data)`,
+          )
         }
 
         // D-08: empty-field merge ONLY. The helper enforces both null and
@@ -352,7 +413,9 @@ export const parseCVOnUpload = inngest.createFunction(
           parsed: toParsedCVSubset(parsed),
         })
         if (!mergeResult.ok) {
-          throw new Error(`markCandidateFieldsFromCV: ${mergeResult.code}`)
+          throw new WriteExtractedFailedError(
+            `markCandidateFieldsFromCV: ${mergeResult.detail ?? mergeResult.code}`,
+          )
         }
       })
 
@@ -468,17 +531,27 @@ export const parseCVOnUpload = inngest.createFunction(
           candidate_cv_id,
         },
       })
+      // Plan 06-07 Task 2(b): a WriteExtractedFailedError's `.message` IS the
+      // PII-free parse_error_detail (SQLSTATE/code + column, from
+      // DbResult.detail) — surface it verbatim instead of the useless
+      // `${name}: ${status}` ('Error: undefined' for a plain Error, which is
+      // what shipped the 12 real production rows with no durable root cause,
+      // 06-CONTEXT.md). Every other error keeps the existing shape — an
+      // arbitrary caught error's message is NOT guaranteed PII-free (VERIFICATION R4).
+      const parseErrorDetail =
+        err instanceof WriteExtractedFailedError ? err.message : `${name}: ${status}`
       await markCvFailed({
         candidateCvId: candidate_cv_id,
         userMessage: FAILED_USER_MESSAGE,
-        parseErrorDetail: `${name}: ${status}`,
+        parseErrorDetail,
         // Review 2026-08-04 C2: the in-body branches above (no-extractable-
-        // text, storage-object-missing) already wrote an honest, specific
-        // message for this same invocation. Without this flag the generic
-        // copy overwrote it here — the exact SF-1 clobber onFailure was
-        // fixed for. Safe: retryParseAction resets the row to 'pending' with
-        // a NULL parse_error before re-dispatching, so a stale message from
-        // a PREVIOUS attempt can never be resurrected.
+        // text, storage-object-missing, claude-parse truncation) already
+        // wrote an honest, specific message for this same invocation.
+        // Without this flag the generic copy overwrote it here — the exact
+        // SF-1 clobber onFailure was fixed for. Safe: retryParseAction
+        // resets the row to 'pending' with a NULL parse_error before
+        // re-dispatching, so a stale message from a PREVIOUS attempt can
+        // never be resurrected.
         preserveExistingMessage: true,
       })
       throw err

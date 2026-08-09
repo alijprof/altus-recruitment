@@ -4,9 +4,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { CvReviewPanel } from '@/app/(app)/candidates/[id]/cv-review-panel'
 import {
+  CV_DAMAGED_FILE_MESSAGE,
   CV_NO_TEXT_MESSAGE,
+  CV_PARSE_TRUNCATED_MESSAGE,
+  CV_PASSWORD_PROTECTED_MESSAGE,
   CV_STUCK_MESSAGE,
+  CV_UNSUPPORTED_FORMAT_MESSAGE,
   CV_UPLOAD_INCOMPLETE_MESSAGE,
+  CV_WRONG_FORMAT_MESSAGE,
 } from '@/lib/cv/parse-messages'
 import type { CandidateCvRow } from '@/lib/db/candidate-cvs'
 
@@ -111,6 +116,40 @@ describe('CvReviewPanel — FailedState copy (C2)', () => {
       />,
     )
     expect(screen.getByText(/retry now or continue and parse later/i)).toBeInTheDocument()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Plan 06-07 Task 3: the single isUnretryableParseFailure gate that replaced
+// the three separate no-retry branches. One case per class, asserting the
+// retry control by accessible role + name (not CSS) per the plan's <action>.
+// ---------------------------------------------------------------------------
+describe('CvReviewPanel — FailedState Tier-2 extraction-error classes (06-07)', () => {
+  it.each([
+    ['damaged/corrupt/truncated-file', CV_DAMAGED_FILE_MESSAGE],
+    ['password-protected', CV_PASSWORD_PROTECTED_MESSAGE],
+    ['wrong-extension', CV_WRONG_FORMAT_MESSAGE],
+    ['unsupported-format', CV_UNSUPPORTED_FORMAT_MESSAGE],
+  ])('renders the stored %s reason and offers NO retry button', (_label, message) => {
+    render(
+      <CvReviewPanel
+        candidateCv={cvRow({ parsing_status: 'failed', parse_error: message })}
+        candidateFullName="Test Candidate"
+      />,
+    )
+    expect(screen.getByText(message)).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /try again/i })).not.toBeInTheDocument()
+  })
+
+  it('renders the stored max_tokens-truncation reason AND keeps a retry button (deliberately retryable)', () => {
+    render(
+      <CvReviewPanel
+        candidateCv={cvRow({ parsing_status: 'failed', parse_error: CV_PARSE_TRUNCATED_MESSAGE })}
+        candidateFullName="Test Candidate"
+      />,
+    )
+    expect(screen.getByText(CV_PARSE_TRUNCATED_MESSAGE)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /try again/i })).toBeInTheDocument()
   })
 })
 

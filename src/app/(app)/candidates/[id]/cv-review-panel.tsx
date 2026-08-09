@@ -23,7 +23,7 @@ import {
 import {
   CV_PARSE_FAILED_MESSAGE,
   isBudgetCapped,
-  isUnparseableSource,
+  isUnretryableParseFailure,
   isUploadIncomplete,
 } from '@/lib/cv/parse-messages'
 import type { CandidateCvRow } from '@/lib/db/candidate-cvs'
@@ -229,7 +229,14 @@ function FailedState({
   // reconcile-cv-parses.ts) and this client component can never drift on the
   // sentinel substrings.
   const budgetCapped = isBudgetCapped(parseError)
-  const unparseable = isUnparseableSource(parseError)
+  // Plan 06-07 Task 3: a single gate replaces the three separate no-retry
+  // branches this used to have (unparseable, uploadIncomplete, and — before
+  // this plan — no honest copy at all for damaged/password-protected/wrong-
+  // format/unsupported-format). Retrying the SAME stored bytes cannot
+  // possibly succeed for ANY class this predicate matches — see
+  // isUnretryableParseFailure's doc comment for the full class list and
+  // what's deliberately excluded (budget-capped, stuck, generic, truncated).
+  const unretryable = isUnretryableParseFailure(parseError)
   const uploadIncomplete = isUploadIncomplete(parseError)
 
   // Review 2026-08-04 C2: render what the server actually stored. The generic
@@ -279,10 +286,36 @@ function FailedState({
     )
   }
 
-  if (unparseable) {
-    // SF-1 fix: retrying the SAME bytes cannot produce a different result —
-    // no "Try again" button here. The candidate page's existing upload
-    // control is the re-upload path; we don't add a second uploader.
+  if (unretryable) {
+    // Plan 06-07 Task 3: one gate for every class where retrying the SAME
+    // stored bytes cannot possibly succeed — no "Try again" button in any
+    // of them. The candidate page's existing upload control is the
+    // re-upload path; we don't add a second uploader.
+    //
+    // uploadIncomplete keeps its distinct guidance copy (SF-4/SF-5, review
+    // 2026-08-04 C2): there is NO storage object for this row — the client
+    // PUT never completed — so the extra line pointing at the Upload CV
+    // control is meaningfully different from "the file itself is bad".
+    // Every other unretryable class (no-text, damaged, password-protected,
+    // wrong-format, unsupported-format) renders the stored message alone.
+    if (uploadIncomplete) {
+      return (
+        <Alert
+          variant="default"
+          className="border-amber-200 bg-amber-50 text-amber-900 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-100"
+        >
+          <AlertTriangle className="size-4" aria-hidden />
+          <AlertTitle className="text-sm font-semibold">CV upload didn&apos;t finish.</AlertTitle>
+          <AlertDescription className="space-y-3">
+            <p className="text-xs font-normal">{message}</p>
+            <p className="text-xs font-normal">
+              Use the <span className="font-semibold">Upload CV</span> control on this page to add
+              the file again — there&apos;s nothing stored to retry.
+            </p>
+          </AlertDescription>
+        </Alert>
+      )
+    }
     return (
       <Alert
         variant="default"
@@ -292,30 +325,6 @@ function FailedState({
         <AlertTitle className="text-sm font-semibold">CV parsing failed.</AlertTitle>
         <AlertDescription className="space-y-3">
           <p className="text-xs font-normal">{message}</p>
-        </AlertDescription>
-      </Alert>
-    )
-  }
-
-  if (uploadIncomplete) {
-    // Review 2026-08-04 C2: there is NO storage object for this row — the
-    // client PUT never completed. A retry re-runs the identical download,
-    // fails identically, and (before this fix) replaced the honest reason
-    // with the generic one. Same no-retry shape as the unparseable branch;
-    // the candidate page's existing upload control is the way out.
-    return (
-      <Alert
-        variant="default"
-        className="border-amber-200 bg-amber-50 text-amber-900 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-100"
-      >
-        <AlertTriangle className="size-4" aria-hidden />
-        <AlertTitle className="text-sm font-semibold">CV upload didn&apos;t finish.</AlertTitle>
-        <AlertDescription className="space-y-3">
-          <p className="text-xs font-normal">{message}</p>
-          <p className="text-xs font-normal">
-            Use the <span className="font-semibold">Upload CV</span> control on this page to add the
-            file again — there&apos;s nothing stored to retry.
-          </p>
         </AlertDescription>
       </Alert>
     )
