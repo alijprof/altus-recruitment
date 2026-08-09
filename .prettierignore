@@ -6,3 +6,10 @@ public
 coverage
 *.md
 supabase/.branches
+# Generated fixture sources (plan 06-03) — writeFileSync'd verbatim by
+# tests/fixtures/cv-corpus/generate.mjs on every `pnpm fixtures:regen`.
+# Reformatting the committed .html here would just be reverted on the next
+# regen (the generator always writes its own unformatted template string),
+# so keep prettier out of this directory entirely, same rationale as the
+# other generated-content ignores above.
+tests/fixtures/cv-corpus/sources
