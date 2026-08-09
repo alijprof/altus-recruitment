@@ -86,6 +86,13 @@ for repeat runs until they expire; re-run the relay to refresh.
 
 ## Layer A3 — authenticated CV-intake smoke (`tests/smoke/authed/cv-intake.smoke.ts`)
 
+**Required env — fail-closed org guard:** `SMOKE_ALLOWED_USER_ID` must be set to the
+founder's auth user id. The spec decodes the session cookie's JWT and refuses to run
+(before any write) if the signed-in user differs — a session minted for a customer-org
+user during an investigation must never drive this write-capable smoke. Without the
+env var the spec refuses to run at all.
+
+
 The project's mandatory AI-driven browser-automation pre-smoke for the CV
 intake path (see `CLAUDE.md` → "HARD RULE #1"). It reuses the exact same
 `pnpm smoke:auth` command, config, and captured session as Layer A2 — the new
