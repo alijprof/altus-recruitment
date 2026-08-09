@@ -112,8 +112,7 @@ export function ApplyForm({ orgSlug, orgName, consentText, contactEmail }: Apply
     },
   })
 
-  const consentChecked =
-    useWatch({ control: form.control, name: 'consent_confirmed' }) === true
+  const consentChecked = useWatch({ control: form.control, name: 'consent_confirmed' }) === true
   const turnstileToken = useWatch({ control: form.control, name: 'turnstile_token' })
 
   const onFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -206,7 +205,7 @@ export function ApplyForm({ orgSlug, orgName, consentText, contactEmail }: Apply
         // The generic copy survives only as a fallback for an empty
         // message — never as a replacement for one the server supplied.
         toast.error(
-          confirmResult.formError.trim() ||
+          confirmResult.formError?.trim() ||
             `Your CV uploaded but we couldn’t confirm it. Email ${contactEmail} and we’ll sort it.`,
         )
         resetTurnstile()
@@ -263,12 +262,7 @@ export function ApplyForm({ orgSlug, orgName, consentText, contactEmail }: Apply
                 <FormItem>
                   <FormLabel>Phone (optional)</FormLabel>
                   <FormControl>
-                    <Input
-                      type="tel"
-                      autoComplete="tel"
-                      {...field}
-                      value={field.value ?? ''}
-                    />
+                    <Input type="tel" autoComplete="tel" {...field} value={field.value ?? ''} />
                   </FormControl>
                   <FormMessage />
                 </FormItem>
@@ -284,11 +278,7 @@ export function ApplyForm({ orgSlug, orgName, consentText, contactEmail }: Apply
                 <FormItem>
                   <FormLabel>Location (optional)</FormLabel>
                   <FormControl>
-                    <Input
-                      placeholder="City, country"
-                      {...field}
-                      value={field.value ?? ''}
-                    />
+                    <Input placeholder="City, country" {...field} value={field.value ?? ''} />
                   </FormControl>
                   <FormMessage />
                 </FormItem>
@@ -362,11 +352,7 @@ export function ApplyForm({ orgSlug, orgName, consentText, contactEmail }: Apply
               <FormItem>
                 <FormLabel>How did you hear about us? (optional)</FormLabel>
                 <FormControl>
-                  <Textarea
-                    rows={2}
-                    {...field}
-                    value={field.value ?? ''}
-                  />
+                  <Textarea rows={2} {...field} value={field.value ?? ''} />
                 </FormControl>
                 <FormMessage />
               </FormItem>
@@ -384,9 +370,7 @@ export function ApplyForm({ orgSlug, orgName, consentText, contactEmail }: Apply
             onChange={onFileChange}
             aria-required="true"
           />
-          <p className="text-muted-foreground text-xs">
-            PDF or DOCX up to 10 MB.
-          </p>
+          <p className="text-muted-foreground text-xs">PDF or DOCX up to 10 MB.</p>
           {fileError ? (
             <p className="text-destructive text-sm" role="alert">
               {fileError}
@@ -403,12 +387,7 @@ export function ApplyForm({ orgSlug, orgName, consentText, contactEmail }: Apply
           </div>
           <p className="text-muted-foreground text-xs">
             Read our{' '}
-            <a
-              href="/privacy"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="underline"
-            >
+            <a href="/privacy" target="_blank" rel="noopener noreferrer" className="underline">
               privacy policy
             </a>{' '}
             for full details on how your data is handled.
@@ -449,8 +428,7 @@ export function ApplyForm({ orgSlug, orgName, consentText, contactEmail }: Apply
                 </FormControl>
                 <div className="space-y-1.5 leading-snug">
                   <FormLabel className="text-sm font-normal">
-                    I would also like to be considered for future similar
-                    roles at {orgName}.
+                    I would also like to be considered for future similar roles at {orgName}.
                   </FormLabel>
                 </div>
               </FormItem>
@@ -465,8 +443,8 @@ export function ApplyForm({ orgSlug, orgName, consentText, contactEmail }: Apply
           {devBypass ? (
             <div className="space-y-2">
               <p className="text-muted-foreground text-xs">
-                NEXT_PUBLIC_TURNSTILE_SITE_KEY is not set — dev affordance.
-                Production deploys MUST set this var.
+                NEXT_PUBLIC_TURNSTILE_SITE_KEY is not set — dev affordance. Production deploys MUST
+                set this var.
               </p>
               <Button
                 type="button"
@@ -496,8 +474,7 @@ export function ApplyForm({ orgSlug, orgName, consentText, contactEmail }: Apply
               />
               {turnstileError ? (
                 <p role="alert" className="text-sm text-amber-700">
-                  We couldn&rsquo;t load the verification check. Please email your CV directly
-                  to{' '}
+                  We couldn&rsquo;t load the verification check. Please email your CV directly to{' '}
                   <a href={`mailto:${contactEmail}`} className="font-medium underline">
                     {contactEmail}
                   </a>{' '}
@@ -525,13 +502,7 @@ export function ApplyForm({ orgSlug, orgName, consentText, contactEmail }: Apply
         */}
         <div aria-hidden="true" className="sr-only absolute -left-[9999px]">
           <label htmlFor="hp">Leave this field empty.</label>
-          <input
-            id="hp"
-            type="text"
-            tabIndex={-1}
-            autoComplete="off"
-            {...form.register('hp')}
-          />
+          <input id="hp" type="text" tabIndex={-1} autoComplete="off" {...form.register('hp')} />
         </div>
 
         <div className="flex items-center justify-end gap-3">

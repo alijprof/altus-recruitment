@@ -1,4 +1,4 @@
-import { existsSync, statSync } from 'node:fs'
+import { existsSync, readFileSync, statSync } from 'node:fs'
 
 import { test, expect, type Page, type BrowserContext } from '@playwright/test'
 
@@ -33,6 +33,45 @@ import {
 const STORAGE_STATE = 'tests/smoke/.auth/prod.json'
 const BASE_URL = process.env.SMOKE_BASE_URL ?? 'https://altusrecruit.com'
 const FIXTURE_ROOT = 'tests/fixtures/cv-corpus'
+const SCRATCH_NAME_PREFIX = 'GSD Phase06 Smoke'
+
+/**
+ * Decodes the Supabase auth cookie inside a Playwright storageState file and
+ * returns the JWT `sub` (auth user id) it will sign requests as. Fail-closed
+ * by construction (re-review HIGH): any cookie shape this does not positively
+ * recognise throws, and the caller refuses to run.
+ */
+function readSessionUserId(storageStatePath: string): string {
+  const state = JSON.parse(readFileSync(storageStatePath, 'utf8')) as {
+    cookies?: Array<{ name: string; value: string }>
+  }
+  const chunks = (state.cookies ?? [])
+    .filter((c) => /^sb-[a-z0-9]+-auth-token(\.\d+)?$/.test(c.name))
+    .sort((a, b) => a.name.localeCompare(b.name, 'en', { numeric: true }))
+    .map((c) => c.value)
+  if (chunks.length === 0) {
+    throw new Error(`cv-intake.smoke.ts: no Supabase auth cookie found in ${storageStatePath}`)
+  }
+  let joined = chunks.join('')
+  if (joined.startsWith('base64-')) joined = joined.slice('base64-'.length)
+  const session = JSON.parse(Buffer.from(joined, 'base64').toString('utf8')) as {
+    access_token?: string
+  }
+  if (!session.access_token) {
+    throw new Error('cv-intake.smoke.ts: auth cookie held no access_token')
+  }
+  const payloadSegment = session.access_token.split('.')[1]
+  if (!payloadSegment) {
+    throw new Error('cv-intake.smoke.ts: access_token is not a JWT')
+  }
+  const payload = JSON.parse(Buffer.from(payloadSegment, 'base64url').toString('utf8')) as {
+    sub?: string
+  }
+  if (!payload.sub) {
+    throw new Error('cv-intake.smoke.ts: JWT payload carries no sub claim')
+  }
+  return payload.sub
+}
 
 // Two genuinely non-ASCII fragments from tier1/t1-pdf-unicode.pdf's manifest
 // `mustContain` list (manifest.json) — deliberately excludes the plain-ASCII
@@ -65,7 +104,10 @@ async function uploadAndAwaitPending(page: Page, fixtureRelativePath: string) {
 /** Polls the CV panel until it leaves the in-progress state, either way. */
 async function waitForParseOutcome(page: Page, timeoutMs: number): Promise<'complete' | 'failed'> {
   const complete = page.getByText('Parsing complete')
-  const failed = page.getByRole('alert')
+  // Scoped inside <main> (re-review MEDIUM): sonner toasts portal to a
+  // body-level region and also carry role="alert" — an unscoped query could
+  // classify a stray toast as a parse failure.
+  const failed = page.locator('main').getByRole('alert')
   await expect(complete.or(failed)).toBeVisible({ timeout: timeoutMs })
   return (await complete.isVisible()) ? 'complete' : 'failed'
 }
@@ -131,6 +173,27 @@ test.describe.serial('@smoke-auth cv-intake', () => {
         ].join('\n'),
       )
     }
+    // Fail-closed org guard (re-review HIGH): this spec writes real rows and
+    // spends real AI budget, so "a session file exists" is not enough — the
+    // session must provably belong to the allow-listed founder account. The
+    // env var is REQUIRED; without it, or with a mismatched session (e.g. one
+    // minted for a customer-org user during an investigation), refuse to run.
+    const allowedUserId = process.env.SMOKE_ALLOWED_USER_ID?.trim()
+    if (!allowedUserId) {
+      throw new Error(
+        'cv-intake.smoke.ts: SMOKE_ALLOWED_USER_ID is required. This spec is ' +
+          "write-capable and must only ever run as the founder's own user — " +
+          'set SMOKE_ALLOWED_USER_ID to that auth user id (fail-closed guard).',
+      )
+    }
+    const sessionUserId = readSessionUserId(STORAGE_STATE)
+    if (sessionUserId !== allowedUserId) {
+      throw new Error(
+        `cv-intake.smoke.ts: session at ${STORAGE_STATE} signs requests as user ` +
+          `${sessionUserId}, not the allow-listed ${allowedUserId}. Refusing to run ` +
+          'a write-capable smoke under a session that may belong to a customer org.',
+      )
+    }
     context = await browser.newContext({ baseURL: BASE_URL, storageState: STORAGE_STATE })
     page = await context.newPage()
     pageErrors = trackPageErrors(page)
@@ -150,15 +213,15 @@ test.describe.serial('@smoke-auth cv-intake', () => {
         await page.getByRole('button', { name: 'Delete candidate' }).click()
         await page.waitForURL(/\/candidates(\?.*)?$/, { timeout: 15_000 })
       }
-      // Re-assert every scratch candidate is actually gone, via a fresh
-      // server round-trip (not just "the dialog closed without error").
-      for (const candidate of createdCandidates) {
-        await page.goto(`/candidates?q=${encodeURIComponent(candidate.name)}`)
-        await expect(
-          page.getByText('No candidates match your search.'),
-          `scratch candidate "${candidate.name}" (${candidate.id}) was not removed — smoke run left residue in the founder's org`,
-        ).toBeVisible({ timeout: 10_000 })
-      }
+      // Re-assert NO scratch residue survives — searched by the shared name
+      // prefix rather than per-tracked-name (re-review MEDIUM), so even a
+      // candidate created in a crashed earlier step (or a prior partial run)
+      // that never made it into `createdCandidates` is caught loudly here.
+      await page.goto(`/candidates?q=${encodeURIComponent(SCRATCH_NAME_PREFIX)}`)
+      await expect(
+        page.getByText('No candidates match your search.'),
+        `scratch residue matching "${SCRATCH_NAME_PREFIX}" remains in the founder's org — delete it manually before the next run`,
+      ).toBeVisible({ timeout: 10_000 })
     } finally {
       await context.close()
     }
@@ -173,8 +236,10 @@ test.describe.serial('@smoke-auth cv-intake', () => {
     await page.getByRole('button', { name: 'Add candidate' }).click()
     await page.waitForURL(/\/candidates\/[0-9a-f-]{36}$/, { timeout: 15_000 })
     const match = page.url().match(/\/candidates\/([0-9a-f-]{36})$/i)
+    // Track BEFORE any assertion can throw (re-review MEDIUM) — a candidate
+    // that exists but was never recorded would survive cleanup as residue.
+    if (match) createdCandidates.push({ id: match[1]!, name: candidateName })
     expect(match, `candidate id missing from redirect URL: ${page.url()}`).not.toBeNull()
-    createdCandidates.push({ id: match![1]!, name: candidateName })
   })
 
   test('Tier-1 PDF: uploads, parses, and populates the reviewed profile', async () => {
@@ -250,7 +315,7 @@ test.describe.serial('@smoke-auth cv-intake', () => {
     await uploadAndAwaitPending(page, 'tier2/t2-pdf-truncated.pdf')
     const outcome = await waitForParseOutcome(page, 60_000)
     expect(outcome, 'Tier-2 damaged-file fixture must fail, not parse successfully').toBe('failed')
-    const alert = page.getByRole('alert')
+    const alert = page.locator('main').getByRole('alert')
     await expect(alert).toContainText(CV_DAMAGED_FILE_MESSAGE)
     // No retry control anywhere in the failure alert — queried by accessible
     // role/name only, never by CSS. Retrying the SAME damaged bytes cannot

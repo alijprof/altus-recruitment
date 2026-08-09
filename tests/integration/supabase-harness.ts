@@ -217,7 +217,9 @@ export async function getHarness(): Promise<Harness> {
     .select('id')
     .single()
   if (orgError || !org) {
-    throw new Error(`getHarness: failed to seed organizations row: ${orgError?.message ?? 'unknown'}`)
+    throw new Error(
+      `getHarness: failed to seed organizations row: ${orgError?.message ?? 'unknown'}`,
+    )
   }
   const orgId = org.id
 
@@ -257,7 +259,9 @@ export async function getHarness(): Promise<Harness> {
     .select('id')
     .single()
   if (cvError || !cv) {
-    throw new Error(`getHarness: failed to seed candidate_cvs row: ${cvError?.message ?? 'unknown'}`)
+    throw new Error(
+      `getHarness: failed to seed candidate_cvs row: ${cvError?.message ?? 'unknown'}`,
+    )
   }
   const candidateCvId = cv.id
 
@@ -267,7 +271,9 @@ export async function getHarness(): Promise<Harness> {
       .update(EMPTY_CANDIDATE_PATCH)
       .eq('id', candidateId)
     if (candidateResetError) {
-      throw new Error(`resetCandidate: failed to reset candidates row: ${candidateResetError.message}`)
+      throw new Error(
+        `resetCandidate: failed to reset candidates row: ${candidateResetError.message}`,
+      )
     }
 
     const { error: cvResetError } = await sb

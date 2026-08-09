@@ -134,18 +134,15 @@ export async function upsertCandidateFromLinkedIn(
     // anyway. A mismatch means RLS is misconfigured OR a future caller
     // is using service-role — fail closed.
     if (existing.organization_id !== organizationId) {
-      Sentry.captureException(
-        new Error('linkedin-upsert: cross-tenant dedup row'),
-        {
-          tags: {
-            phase: 'p3',
-            layer: 'db',
-            helper: 'upsertCandidateFromLinkedIn',
-            existing_org: existing.organization_id,
-            caller_org: organizationId,
-          },
+      Sentry.captureException(new Error('linkedin-upsert: cross-tenant dedup row'), {
+        tags: {
+          phase: 'p3',
+          layer: 'db',
+          helper: 'upsertCandidateFromLinkedIn',
+          existing_org: existing.organization_id,
+          caller_org: organizationId,
         },
-      )
+      })
       return { ok: false, code: 'internal' }
     }
 
@@ -164,7 +161,10 @@ export async function upsertCandidateFromLinkedIn(
       current_company: profile.current_company ?? undefined,
       location: profile.location ?? undefined,
       ...(profile.work_experience.length > 0
-        ? { work_experience: profile.work_experience as unknown as TablesUpdate<'candidates'>['work_experience'] }
+        ? {
+            work_experience:
+              profile.work_experience as unknown as TablesUpdate<'candidates'>['work_experience'],
+          }
         : {}),
       ...(profile.education.length > 0
         ? { education: profile.education as unknown as TablesUpdate<'candidates'>['education'] }

@@ -148,7 +148,8 @@ export function isDocxArchive(bytes: Uint8Array): boolean {
     containsAsciiSequence(head, CONTENT_TYPES_ENTRY) ||
     containsAsciiSequence(tail, CONTENT_TYPES_ENTRY)
   const hasDocumentXml =
-    containsAsciiSequence(head, DOCUMENT_XML_ENTRY) || containsAsciiSequence(tail, DOCUMENT_XML_ENTRY)
+    containsAsciiSequence(head, DOCUMENT_XML_ENTRY) ||
+    containsAsciiSequence(tail, DOCUMENT_XML_ENTRY)
   return hasContentTypes && hasDocumentXml
 }
 
