@@ -143,7 +143,9 @@ describe('coerceParsedCV — years_experience_total (numeric(4,1))', () => {
 
   it('rounds to the one decimal place numeric(4,1) actually stores, before the cliff check', () => {
     // 999.96 would round to 1000.0 in the column and overflow — drop it.
-    expect(coerceParsedCV({ years_experience_total: 999.96 }).years_experience_total).toBeUndefined()
+    expect(
+      coerceParsedCV({ years_experience_total: 999.96 }).years_experience_total,
+    ).toBeUndefined()
     expect(coerceParsedCV({ years_experience_total: 12.34 }).years_experience_total).toBe(12.3)
   })
 })
@@ -179,9 +181,9 @@ describe('coerceParsedCV — skills / sector_tags (text[])', () => {
 
 describe('coerceParsedCV — work_history / education', () => {
   it('drops null and non-object elements (C5b)', () => {
-    expect(coerceParsedCV({ work_history: [null, { role: 'Dev' }, 'nope', 7] }).work_history).toEqual(
-      [{ role: 'Dev' }],
-    )
+    expect(
+      coerceParsedCV({ work_history: [null, { role: 'Dev' }, 'nope', 7] }).work_history,
+    ).toEqual([{ role: 'Dev' }])
     expect(coerceParsedCV({ education: [null, { institution: 'Oxford' }] }).education).toEqual([
       { institution: 'Oxford' },
     ])
@@ -191,7 +193,13 @@ describe('coerceParsedCV — work_history / education', () => {
     expect(
       coerceParsedCV({
         work_history: [
-          { company: 'Acme', role: 'Dev', start_date: 2020, end_date: null, summary: 'Built things' },
+          {
+            company: 'Acme',
+            role: 'Dev',
+            start_date: 2020,
+            end_date: null,
+            summary: 'Built things',
+          },
         ],
       }).work_history,
     ).toEqual([{ company: 'Acme', role: 'Dev', summary: 'Built things' }])
@@ -239,7 +247,7 @@ describe('coerceParsedCV — confidence_per_field', () => {
 
 describe('coerceParsedCV — legal-but-exotic content is byte-identical', () => {
   it('preserves emoji with ZWJ, CJK, RTL, astral plane, diacritics and smart quotes', () => {
-    const exotic = '\u{1F469}‍\u{1F4BB} 张伟 Zoë O’Brien-Şahin مرحبا'
+    const exotic = '\u{1F469}\u200D\u{1F4BB} 张伟 Zoë O’Brien-Şahin مرحبا'
     const out = coerceParsedCV({ name: exotic, current_company: exotic, skills: [exotic] })
     expect(out.name).toBe(exotic)
     expect(out.current_company).toBe(exotic)
