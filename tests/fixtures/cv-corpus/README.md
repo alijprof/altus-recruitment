@@ -102,12 +102,16 @@ the resulting diff before committing it.
    `SYNTHETIC_PEOPLE`/`SYNTHETIC_EMPLOYERS` (add a new synthetic entry there
    first if you need one). For a PDF, write the HTML to `sources/` via
    `writeSourceHtml()` before rendering it, so the content stays reviewable.
-3. Add exactly one entry to the in-file `FIXTURE_MANIFEST` table with a
-   `why` explaining what the fixture proves — a fixture nobody can explain
-   is a fixture nobody will maintain. For Tier-2/hostile fixtures, let the
-   generator's self-check (`mirrorExtractTextFromBuffer`) observe and
-   record the real error name/NUL count; never hand-write a predicted
-   value.
+3. Call `pushManifest({...})` for the new fixture — either by adding an
+   entry to the `TIER1_MANIFEST_DEFS` table (verified against the real
+   extracted text by `verifyTier1Manifest()`) if it's Tier-1, or inline
+   next to the fixture's own builder code in `buildTier2()`/`buildHostile()`
+   otherwise. Every entry needs a `why` explaining what the fixture proves
+   — a fixture nobody can explain is a fixture nobody will maintain. For
+   Tier-2/hostile fixtures, let `observeExtraction()` (which runs the
+   `mirrorExtractTextFromBuffer()` self-check) tell you the real error
+   name/NUL count and put THAT in the manifest; never hand-write a
+   predicted value.
 4. Run `pnpm fixtures:regen`, confirm the new fixture is non-empty and
    under the 1 MiB cap (the generator throws if not), and confirm
    `git status` is clean on a second consecutive run (idempotency).

@@ -1,0 +1,273 @@
+[
+  {
+    "file": "tier1/t1-pdf-single-column.pdf",
+    "tier": 1,
+    "mime": "application/pdf",
+    "declaredExtension": "pdf",
+    "expect": "parse",
+    "minChars": 1200,
+    "mustContain": [
+      "Zoë O'Brien-Şahin",
+      "Northwind Offshore Ltd"
+    ],
+    "expectNulCount": 0,
+    "why": "Baseline single-column text PDF, ~2 pages — the simplest Tier-1 shape; must always parse cleanly."
+  },
+  {
+    "file": "tier1/t1-pdf-filename with spaces & ünicode.pdf",
+    "tier": 1,
+    "mime": "application/pdf",
+    "declaredExtension": "pdf",
+    "expect": "parse",
+    "minChars": 1200,
+    "mustContain": [
+      "Zoë O'Brien-Şahin",
+      "Northwind Offshore Ltd"
+    ],
+    "expectNulCount": 0,
+    "why": "Identical bytes to t1-pdf-single-column.pdf under an awkward filename — exercises slugifyFilename() in the recruiter upload action (src/app/(app)/candidates/[id]/actions.ts), not extraction itself."
+  },
+  {
+    "file": "tier1/t1-pdf-two-column.pdf",
+    "tier": 1,
+    "mime": "application/pdf",
+    "declaredExtension": "pdf",
+    "expect": "parse",
+    "minChars": 800,
+    "mustContain": [
+      "张伟",
+      "Meridian Subsea Ltd"
+    ],
+    "expectNulCount": 0,
+    "why": "CSS column-count:2 is the classic PDF extraction-order trap — text must still extract in reading order, column by column."
+  },
+  {
+    "file": "tier1/t1-pdf-tables-headers-footers.pdf",
+    "tier": 1,
+    "mime": "application/pdf",
+    "declaredExtension": "pdf",
+    "expect": "parse",
+    "minChars": 400,
+    "mustContain": [
+      "Aoife Ní Bhraonáin",
+      "Cerulean Rail Group"
+    ],
+    "expectNulCount": 0,
+    "why": "Employment-history <table>, a real <a href> hyperlink, an embedded raster image, and a running Playwright header+footer — none of that structure should confuse the extractor or leak into the body text."
+  },
+  {
+    "file": "tier1/t1-pdf-unicode.pdf",
+    "tier": 1,
+    "mime": "application/pdf",
+    "declaredExtension": "pdf",
+    "expect": "parse",
+    "minChars": 400,
+    "mustContain": [
+      "Zoë O'Brien-Şahin",
+      "张伟",
+      "Solstice Grid Systems"
+    ],
+    "expectNulCount": 0,
+    "why": "The full unicode battery a real UK/EU CV can contain: diacritics, CJK, emoji+ZWJ, smart quotes, soft hyphen, an RTL fragment, an en-dash date range."
+  },
+  {
+    "file": "tier1/t1-pdf-linkedin-export.pdf",
+    "tier": 1,
+    "mime": "application/pdf",
+    "declaredExtension": "pdf",
+    "expect": "parse",
+    "minChars": 350,
+    "mustContain": [
+      "Jan Kowalski",
+      "Solstice Grid Systems"
+    ],
+    "expectNulCount": 0,
+    "why": "Approximates the LinkedIn \"Save to PDF\" export shape (bold name block, ALL-CAPS section headings, dense line breaks) that recruiters routinely upload."
+  },
+  {
+    "file": "tier1/t1-pdf-long-40-pages.pdf",
+    "tier": 1,
+    "mime": "application/pdf",
+    "declaredExtension": "pdf",
+    "expect": "parse",
+    "minChars": 60000,
+    "mustContain": [
+      "Zoë O'Brien-Şahin",
+      "Role 45 of 45",
+      "Northwind Offshore Ltd"
+    ],
+    "expectNulCount": 0,
+    "why": "Deliberately exceeds MAX_CV_TEXT_CHARS (60000, the 60k-char slice parse-cv.ts takes before calling Claude) while staying well under the 1 MiB fixture cap, proving the slice boundary itself does not corrupt or truncate mid-character."
+  },
+  {
+    "file": "tier1/t1-docx-simple.docx",
+    "tier": 1,
+    "mime": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "declaredExtension": "docx",
+    "expect": "parse",
+    "minChars": 300,
+    "mustContain": [
+      "Aoife Ní Bhraonáin",
+      "Cerulean Rail Group",
+      "Meridian Subsea Ltd"
+    ],
+    "expectNulCount": 0,
+    "why": "Baseline simple DOCX with no tables/headers — must always parse cleanly, the DOCX twin of the single-column PDF."
+  },
+  {
+    "file": "tier1/t1-docx-tables-headers-textbox.docx",
+    "tier": 1,
+    "mime": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "declaredExtension": "docx",
+    "expect": "parse",
+    "minChars": 200,
+    "mustContain": [
+      "Zoë O'Brien-Şahin",
+      "Northwind Offshore Ltd",
+      "Jan Kowalski"
+    ],
+    "expectNulCount": 0,
+    "why": "A <w:tbl>, a real header part (word/header1.xml + its content-type + relationship), and a text box (w:txbxContent) — the DOCX structural features real CV templates use that a naive body-only reader can choke on."
+  },
+  {
+    "file": "tier1/t1-docx-unicode.docx",
+    "tier": 1,
+    "mime": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "declaredExtension": "docx",
+    "expect": "parse",
+    "minChars": 400,
+    "mustContain": [
+      "张伟",
+      "Solstice Grid Systems",
+      "مرحبا"
+    ],
+    "expectNulCount": 0,
+    "why": "Same unicode battery as t1-pdf-unicode.pdf's twin, confirming DOCX preserves RTL text in logical order (unlike the PDF, whose visual-order extraction reverses RTL presentation forms — expected PDF.js behaviour, not a bug)."
+  },
+  {
+    "file": "tier2/t2-pdf-scanned-no-text.pdf",
+    "tier": 2,
+    "mime": "application/pdf",
+    "declaredExtension": "pdf",
+    "expect": "reject",
+    "expectMinCharsBelow": 50,
+    "why": "Image-only PDF, no text layer — unpdf does not throw, it extracts 0 char(s); parse-cv.ts's MIN_EXTRACTED_CHARS branch (not a caught exception) is what must catch this."
+  },
+  {
+    "file": "tier2/t2-pdf-encrypted.pdf",
+    "tier": 2,
+    "mime": "application/pdf",
+    "declaredExtension": "pdf",
+    "expect": "reject",
+    "expectErrorName": "PasswordException",
+    "why": "Carries a syntactically valid /Encrypt dictionary with deterministic-but-not-empty-password O/U values; pdf.js's implicit empty-password check fails and throws PasswordException (observed live during generation, not predicted — research open question 4)."
+  },
+  {
+    "file": "tier2/t2-pdf-truncated.pdf",
+    "tier": 2,
+    "mime": "application/pdf",
+    "declaredExtension": "pdf",
+    "expect": "reject",
+    "expectErrorName": "InvalidPDFException",
+    "why": "The first 40% of t1-pdf-single-column.pdf — no xref/trailer survives the cut, so pdf.js throws InvalidPDFException (a common real-world shape: an interrupted upload or a copy-paste truncation)."
+  },
+  {
+    "file": "tier2/t2-pdf-corrupt.pdf",
+    "tier": 2,
+    "mime": "application/pdf",
+    "declaredExtension": "pdf",
+    "expect": "reject",
+    "expectErrorName": "InvalidPDFException",
+    "why": "A real \"%PDF-1.7\" header followed by 4 KiB of deterministic (seeded) pseudo-random bytes — no valid object structure at all; pdf.js throws InvalidPDFException."
+  },
+  {
+    "file": "tier2/t2-zero-byte.pdf",
+    "tier": 2,
+    "mime": "application/pdf",
+    "declaredExtension": "pdf",
+    "expect": "reject",
+    "expectErrorName": "InvalidPDFException",
+    "why": "A genuinely empty (0-byte) file — the \"upload never actually wrote any bytes\" case; pdf.js throws InvalidPDFException."
+  },
+  {
+    "file": "tier2/t2-docx-renamed.pdf",
+    "tier": 2,
+    "mime": "application/pdf",
+    "declaredExtension": "pdf",
+    "expect": "reject",
+    "expectErrorName": "InvalidPDFException",
+    "why": "A real, valid t1-docx-simple.docx byte-copied under a .pdf name/label — the wrong-extension case. Fed to unpdf as PDF_MIME, pdf.js throws InvalidPDFException (its magic bytes are \"PK\", not \"%PDF\")."
+  },
+  {
+    "file": "tier2/t2-pdf-renamed.docx",
+    "tier": 2,
+    "mime": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "declaredExtension": "docx",
+    "expect": "reject",
+    "expectErrorName": "Error",
+    "why": "The mirror case: a real t1-pdf-single-column.pdf byte-copied under a .docx name/label. Fed to mammoth as DOCX_MIME, jszip cannot find a central directory and throws Error."
+  },
+  {
+    "file": "tier2/t2-legacy.doc",
+    "tier": 2,
+    "mime": "application/msword",
+    "declaredExtension": "doc",
+    "expect": "reject",
+    "expectErrorName": "UnsupportedCVMimeTypeError",
+    "why": "Legacy binary .doc (OLE2 compound-file magic bytes D0 CF 11 E0 A1 B1 1A E1, not OOXML) — extractTextFromBuffer only recognises PDF_MIME/DOCX_MIME, so any real .doc mime throws UnsupportedCVMimeTypeError immediately, before any byte is even read."
+  },
+  {
+    "file": "tier2/t2-plain.rtf",
+    "tier": 2,
+    "mime": "application/rtf",
+    "declaredExtension": "rtf",
+    "expect": "reject",
+    "expectErrorName": "UnsupportedCVMimeTypeError",
+    "why": "Minimal {\\rtf1\\ansi ...} document — same mime-routing rejection (UnsupportedCVMimeTypeError) as any non-PDF/DOCX mime today; the locked \"works\" definition wants this said at upload time, not 3 minutes later (plan 06-08)."
+  },
+  {
+    "file": "tier2/t2-opendocument.odt",
+    "tier": 2,
+    "mime": "application/vnd.oasis.opendocument.text",
+    "declaredExtension": "odt",
+    "expect": "reject",
+    "expectErrorName": "UnsupportedCVMimeTypeError",
+    "why": "Mime-routing rejects this today (UnsupportedCVMimeTypeError, same as any non-PDF/DOCX mime). But its magic bytes ARE a valid ZIP — same signature as DOCX — and it is deliberately missing word/document.xml, so if it were ever mistakenly routed as DOCX_MIME, mammoth would instead throw Error (\"Could not find main document part. Are you sure this is a valid .docx file?\"). This is the fixture that proves a header-only magic-byte check is insufficient, which plan 06-08 depends on."
+  },
+  {
+    "file": "tier2/t2-plain.txt",
+    "tier": 2,
+    "mime": "text/plain",
+    "declaredExtension": "txt",
+    "expect": "reject",
+    "expectErrorName": "UnsupportedCVMimeTypeError",
+    "why": "Plain text CV — same mime-routing rejection (UnsupportedCVMimeTypeError); a surprisingly common real-world upload from candidates pasting a CV into a .txt file."
+  },
+  {
+    "file": "hostile/hostile-pdf-tounicode-nul.pdf",
+    "tier": "hostile",
+    "mime": "application/pdf",
+    "declaredExtension": "pdf",
+    "expect": "parse",
+    "expectNulCount": ">0",
+    "why": "A ToUnicode CMap maps glyph 0x41 ('A') to U+0000 — a real-world artefact of subset/broken font embedding. unpdf/PDF.js parses this successfully and emits 2 literal NUL byte(s) in the extracted text (verified live during generation). A green (\"0 NUL\") result on this fixture before plan 06-06's sanitiser ships means the FIXTURE is wrong, not the bug."
+  },
+  {
+    "file": "hostile/hostile-docx-raw-nul.docx",
+    "tier": "hostile",
+    "mime": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "declaredExtension": "docx",
+    "expect": "parse",
+    "expectNulCount": ">0",
+    "why": "A raw 0x00 byte sits inside a <w:t xml:space=\"preserve\"> run. mammoth reads it straight through and emits 1 literal NUL byte(s) (verified live during generation) — the DOCX twin of the ToUnicode-CMap PDF mechanism."
+  },
+  {
+    "file": "hostile/hostile-docx-charref-nul.docx",
+    "tier": "hostile",
+    "mime": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "declaredExtension": "docx",
+    "expect": "parse",
+    "expectNulCount": ">0",
+    "why": "The XML character reference &#x0; (5 plain ASCII bytes on disk — no raw NUL byte in the file itself) resolves to a real U+0000 when mammoth's XML parser decodes it, emitting 1 literal NUL byte(s) (verified live during generation) — the second independently-verified DOCX NUL-emission mechanism."
+  }
+]

@@ -6,10 +6,12 @@ public
 coverage
 *.md
 supabase/.branches
-# Generated fixture sources (plan 06-03) — writeFileSync'd verbatim by
+# Generated fixture sources + manifest (plan 06-03) — written verbatim by
 # tests/fixtures/cv-corpus/generate.mjs on every `pnpm fixtures:regen`.
-# Reformatting the committed .html here would just be reverted on the next
-# regen (the generator always writes its own unformatted template string),
-# so keep prettier out of this directory entirely, same rationale as the
-# other generated-content ignores above.
+# Reformatting these would just be reverted on the next regen (the
+# generator always writes its own JSON.stringify()/template-string output),
+# so keep prettier out of them entirely, same rationale as the other
+# generated-content ignores above. generate.mjs itself and README.md are
+# hand-maintained and stay prettier-checked.
 tests/fixtures/cv-corpus/sources
+tests/fixtures/cv-corpus/manifest.json
