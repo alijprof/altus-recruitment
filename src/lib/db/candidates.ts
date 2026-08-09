@@ -4,9 +4,11 @@ import * as Sentry from '@sentry/nextjs'
 import type { SupabaseClient } from '@supabase/supabase-js'
 
 import { embed } from '@/lib/ai/voyage'
+import { sanitiseForPostgres } from '@/lib/text/postgres-safe-text'
 import type { Database, Enums, Tables, TablesInsert, TablesUpdate } from '@/types/database'
 
 import { hybridSearchCandidates } from './embeddings'
+import { failureDetail } from './failure-detail'
 import type { DbResult } from './types'
 
 // ---------------------------------------------------------------------------
@@ -368,7 +370,17 @@ export async function createCandidate(
     ...(input.source_detail !== undefined ? { source_detail: input.source_detail } : {}),
   } as unknown as TablesInsert<'candidates'>
 
-  const { data, error } = await supabase.from('candidates').insert(payload).select('id').single()
+  // sanitiseForPostgres at the write boundary (review 2026-08-09 ME-03).
+  // This insert is fed by the PUBLIC apply form, whose full_name / location /
+  // current_role_title come straight from an untrusted browser. A NUL or a
+  // lone surrogate in any of them makes the write fail deterministically
+  // (22P05 / PGRST102) — an applicant who can never apply, and a failure the
+  // form reports as a generic error.
+  const { data, error } = await supabase
+    .from('candidates')
+    .insert(sanitiseForPostgres(payload))
+    .select('id')
+    .single()
 
   if (error) {
     Sentry.captureException(error, { tags: { layer: 'db', helper: 'createCandidate' } })
@@ -377,7 +389,11 @@ export async function createCandidate(
     // proofing.
     const pgErr = error as { code?: string }
     if (pgErr.code === '23505') return { ok: false, code: 'conflict' as never }
-    return { ok: false, code: 'internal' }
+    return {
+      ok: false,
+      code: 'internal',
+      detail: failureDetail(error, 'candidates.insert', Object.keys(payload)),
+    }
   }
 
   return { ok: true, data: { id: data.id } }

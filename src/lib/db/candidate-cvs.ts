@@ -7,31 +7,16 @@ import { coerceParsedCV } from '@/lib/ai/parsed-cv-schema'
 import { sanitiseForPostgres } from '@/lib/text/postgres-safe-text'
 import type { Database, Tables, TablesInsert, TablesUpdate } from '@/types/database'
 
+// failureDetail builds the PII-free `detail` string for a failed write
+// (DbResult.detail): ONLY the error's code (a SQLSTATE like 22P05/22003/
+// 22P02, or a PostgREST code like PGRST102 for errors rejected before
+// Postgres is reached) plus a hard-coded sub-operation label and, where
+// useful, the COLUMN NAMES in the failing statement. Never err.message —
+// see the module for why. Lifted to a shared db/ helper (review 2026-08-09
+// ME-03) so the sibling write paths report root cause in the same shape.
+import { failureDetail } from './failure-detail'
 import { isMissingColumnError } from './postgrest-errors'
 import type { DbResult } from './types'
-
-/**
- * Build the PII-free `detail` string for a failed write (DbResult.detail).
- *
- * ONLY the error's code (a SQLSTATE like 22P05/22003/22P02, or a PostgREST
- * code like PGRST102 for errors rejected before Postgres is reached) plus a
- * hard-coded sub-operation label and, where useful, the COLUMN NAMES in the
- * failing statement.
- *
- * NEVER `err.message`: PostgREST echoes the offending value back
- * ('invalid input syntax for type integer: "£45,000"'), so a message can
- * carry a candidate's salary, email or name straight into
- * candidate_cvs.parse_error_detail and the operator's screen (ASVS V7,
- * threat T-06-21).
- */
-function failureDetail(error: unknown, subop: string, columns?: string[]): string {
-  const code =
-    error !== null && typeof error === 'object' && 'code' in error
-      ? ((error as { code?: string }).code ?? 'unknown')
-      : 'unknown'
-  const where = columns?.length ? `${subop}: ${columns.join(', ')}` : subop
-  return `${code} (${where})`
-}
 
 // ---------------------------------------------------------------------------
 // CV row helpers. All writes go through here so the Inngest function and the
