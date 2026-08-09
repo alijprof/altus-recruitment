@@ -5,6 +5,7 @@ import { redirect } from 'next/navigation'
 import * as Sentry from '@sentry/nextjs'
 import { z } from 'zod'
 
+import { assertUploadableCV } from '@/lib/cv/file-signature'
 import { isUnretryableParseFailure, isUploadIncomplete } from '@/lib/cv/parse-messages'
 import { createActivity } from '@/lib/db/activities'
 import {
@@ -141,6 +142,22 @@ export async function uploadCVAction(formData: FormData): Promise<UploadCVResult
       ok: false,
       error: 'That file is over 10 MiB. Please upload a smaller CV.',
     }
+  }
+
+  // Plan 06-08 (T-06-29): byte-level format sniff, BEFORE the entitlement
+  // gate and any Storage write. file.type is client-supplied and spoofable
+  // (a .docx renamed .pdf sails through the ACCEPTED_CV_MIME check above
+  // unchanged) — this is the Server Action holding the actual bytes, the
+  // earliest point this path can honestly know what the file really is.
+  // Reading the full buffer here is bounded by the MAX_CV_BYTES check two
+  // lines above (10 MiB) — if that cap is ever raised, this read's cost
+  // rises with it, so raising the cap must re-examine this line. The
+  // ArrayBuffer read does not consume/detach the File; the same `file` is
+  // still handed to storage.upload(...) further down unmodified.
+  const head = new Uint8Array(await file.arrayBuffer())
+  const signatureCheck = assertUploadableCV(head, file.type)
+  if (!signatureCheck.ok) {
+    return { ok: false, error: signatureCheck.message }
   }
 
   // Entitlement gate — block CV upload (drives AI parse) for non-entitled orgs.

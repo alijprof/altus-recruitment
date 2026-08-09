@@ -34,7 +34,8 @@ import { createHash } from 'node:crypto'
 import * as Sentry from '@sentry/nextjs'
 import { headers } from 'next/headers'
 
-import { CV_STUCK_MESSAGE } from '@/lib/cv/parse-messages'
+import { isDocxArchive, sniffFileType } from '@/lib/cv/file-signature'
+import { CV_STUCK_MESSAGE, CV_WRONG_FORMAT_MESSAGE } from '@/lib/cv/parse-messages'
 import { createActivity } from '@/lib/db/activities'
 import { createCandidate, getCandidateByEmailForOrg, updateCandidate } from '@/lib/db/candidates'
 import { createCandidateCV, nextCVVersion, updateCandidateCVParse } from '@/lib/db/candidate-cvs'
@@ -78,6 +79,12 @@ const ALLOWED_MIMES = new Set([
   'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
 ])
 
+// Plan 06-08: named references to the same two values ALLOWED_MIMES holds
+// (kept as a SEPARATE pair of constants, not derived from ALLOWED_MIMES,
+// so this plan's diff never touches the ALLOWED_MIMES line above).
+const PDF_MIME = 'application/pdf'
+const DOCX_MIME = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -104,6 +111,116 @@ function fileExt(name: string): string {
       .replace(/[^a-z0-9]/g, '')
       .slice(0, 8) || 'bin'
   )
+}
+
+// ---------------------------------------------------------------------------
+// Plan 06-08 (T-06-29, T-06-30, T-06-34): apply-path byte sniff.
+//
+// The browser PUTs bytes straight to Storage via a signed URL —
+// submitApplyAction never sees them, so confirmApplyAction (below) is the
+// EARLIEST server-visible point on this path. Unlike the recruiter upload
+// action, this can only ever read a BOUNDED HEAD of the object, so its
+// contradiction logic is deliberately more lenient than
+// assertUploadableCV's (src/lib/cv/file-signature.ts): a false rejection of
+// a genuine CV here is worse than a delayed-but-honest message from the
+// async parse pipeline (plan 06-07), so ambiguous reads are always resolved
+// in the applicant's favour.
+// ---------------------------------------------------------------------------
+
+const RANGE_READ_BYTES = 65536 // 64 KiB — matches isDocxArchive's own scan window.
+
+/**
+ * Reads a bounded head of a Storage object for the confirm-time sniff.
+ * Prefers a short-lived signed URL + a ranged GET so this public endpoint
+ * never has to pull a full (up to 10 MiB) object into memory just to sniff
+ * a handful of bytes (T-06-30). Verified locally against the dev Supabase
+ * Storage stack: Range headers ARE honoured (206 Partial Content). If that
+ * ever regresses — a storage-api version drift, or the signed URL mint
+ * itself failing — correctness never depends on Range support, only
+ * efficiency does: falls back to a full `.download()` (bounded by the
+ * pre-existing 10 MiB upload cap, and this runs at most once per
+ * application).
+ *
+ * Returns `null` on ANY failure (never throws) — the caller treats that as
+ * "couldn't sniff, fall through to the existing behaviour" per the plan's
+ * explicit availability-over-precision instruction, not as a rejection.
+ */
+async function readObjectHeadBytes(
+  supabase: ReturnType<typeof createServiceClient>,
+  storagePath: string,
+): Promise<Uint8Array | null> {
+  try {
+    const { data: signed, error: signError } = await supabase.storage
+      .from('cvs')
+      .createSignedUrl(storagePath, 60)
+    if (!signError && signed?.signedUrl) {
+      try {
+        const res = await fetch(signed.signedUrl, {
+          headers: { Range: `bytes=0-${RANGE_READ_BYTES - 1}` },
+        })
+        if (res.ok) {
+          return new Uint8Array(await res.arrayBuffer())
+        }
+      } catch {
+        // Ranged fetch failed — fall through to the full-download fallback.
+      }
+    }
+  } catch {
+    // createSignedUrl unavailable/failed — fall through to the fallback.
+  }
+
+  try {
+    const { data: blob, error: downloadError } = await supabase.storage
+      .from('cvs')
+      .download(storagePath)
+    if (downloadError || !blob) return null
+    return new Uint8Array(await blob.arrayBuffer())
+  } catch {
+    return null
+  }
+}
+
+/**
+ * True only on a POSITIVE contradiction between the declared mime
+ * (`candidate_cvs.mime_type`, always PDF or DOCX per ALLOWED_MIMES) and
+ * what the bytes actually are:
+ *   - bytes say PDF, mime says DOCX
+ *   - bytes say ZIP, mime says PDF
+ *   - bytes say OLE2 (legacy .doc), RTF, or unknown — never a genuine PDF
+ *     or DOCX regardless of what was declared
+ *
+ * Deliberately does NOT reject "ZIP declared as DOCX but isDocxArchive is
+ * false" — this head read only ever sees the first RANGE_READ_BYTES of the
+ * object, so a genuine DOCX whose `word/document.xml` entry lands later in
+ * the archive would otherwise be falsely rejected (T-06-34). That case is
+ * INCONCLUSIVE, not a rejection: it is allowed through, and the async parse
+ * pipeline (which downloads the full object) gives an honest, type-specific
+ * message if the file really is something else (plan 06-07's
+ * classifyExtractionError).
+ */
+function isApplyPathFormatMismatch(headBytes: Uint8Array, declaredMime: string): boolean {
+  const sniffed = sniffFileType(headBytes)
+
+  if (sniffed === 'pdf') {
+    return declaredMime !== PDF_MIME
+  }
+
+  if (sniffed === 'zip') {
+    if (declaredMime === PDF_MIME) return true
+    if (declaredMime === DOCX_MIME) {
+      // isDocxArchive's result only matters for observability below — a
+      // `false` result on this bounded read is INCONCLUSIVE, not proof the
+      // file isn't a DOCX, so it is never a rejection either way.
+      return false
+    }
+    // Defensive: ALLOWED_MIMES only ever permits PDF_MIME/DOCX_MIME, so this
+    // branch is unreachable in practice — but a zip matching neither
+    // declared mime is unambiguously wrong regardless.
+    return true
+  }
+
+  // ole2, rtf, or unknown: never a supported format, whatever was declared.
+  return true
 }
 
 // ---------------------------------------------------------------------------
@@ -513,6 +630,46 @@ export async function confirmApplyAction(args: {
         ok: false,
         formError: 'CV upload did not complete. Please try again.',
       }
+    }
+
+    // 2c. Byte-level format sniff (plan 06-08, T-06-29): the client-supplied
+    //     fileMeta.type submitApplyAction validated is NEVER checked against
+    //     the real bytes — the server never saw them until now, so this is
+    //     the earliest honest point on this path. A read failure (signed
+    //     URL mint, network, Storage) does NOT block the application —
+    //     availability beats early-warning precision; it logs a breadcrumb
+    //     and falls through, and the async parse pipeline still gives an
+    //     honest, type-specific message if the file really is wrong (plan
+    //     06-07). The candidate/CV/consent rows are never rolled back here,
+    //     mirroring the existing !objectExists precedent above.
+    const headBytes = await readObjectHeadBytes(supabase, cvRow.storage_path)
+    if (headBytes) {
+      if (headBytes.length > 0 && sniffFileType(headBytes) === 'zip') {
+        // Observability only (see isApplyPathFormatMismatch's doc comment):
+        // record whether this bounded read could positively confirm a real
+        // DOCX, so an operator can tell "genuinely inconclusive" apart from
+        // "this never happens" in the breadcrumb trail.
+        Sentry.addBreadcrumb({
+          category: 'apply-form',
+          message: `confirm: zip signature — isDocxArchive=${isDocxArchive(headBytes)} within ${headBytes.length}-byte read window`,
+          level: 'info',
+        })
+      }
+      if (isApplyPathFormatMismatch(headBytes, cvRow.mime_type)) {
+        await updateCandidateCVParse(supabase, {
+          id: args.candidateCvId,
+          status: 'failed',
+          parseError: CV_WRONG_FORMAT_MESSAGE,
+          parseErrorDetail: 'apply-confirm: signature mismatch',
+        })
+        return { ok: false, formError: CV_WRONG_FORMAT_MESSAGE }
+      }
+    } else {
+      Sentry.addBreadcrumb({
+        category: 'apply-form',
+        message: 'confirm: byte-sniff read failed — skipping, falling through',
+        level: 'info',
+      })
     }
 
     // 2b. Entitlement gate on AI spend ONLY (quick task 260618-sjo / audit
