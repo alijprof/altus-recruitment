@@ -7,8 +7,15 @@ import { env } from '@/lib/env'
 import { createServiceClient } from '@/lib/supabase/service'
 import { checkCap, CapExceededError } from '@/lib/stripe/cap-enforcement'
 
+import { coerceParsedCV, type ParsedCV } from './parsed-cv-schema'
+
 // Re-export CapExceededError so callers don't need to import cap-enforcement.
 export { CapExceededError }
+
+// ParsedCV moved to ./parsed-cv-schema (the coercion boundary owns the shape
+// it produces). Re-exported here so every existing
+// `import type { ParsedCV } from '@/lib/ai/claude'` keeps working.
+export type { ParsedCV } from './parsed-cv-schema'
 
 // Hard-coded model IDs from CLAUDE.md. Any new model needs explicit approval
 // (and a pricing entry below); the TS layer refuses unknown IDs.
@@ -264,13 +271,37 @@ const cvParseTool: Anthropic.Tool = {
           },
         },
       },
-      salary_current_estimate: { type: 'integer', description: 'Annual GBP estimate.' },
-      salary_expectation: { type: 'integer', description: 'Annual GBP estimate.' },
+      // Bounds are advisory to the model, not a substitute for the coercion
+      // boundary in parsed-cv-schema.ts — a tool schema constrains what
+      // Claude is ASKED for, never what it can actually return. Both layers
+      // are required (06-RESEARCH.md Pitfall 2).
+      salary_current_estimate: {
+        type: 'integer',
+        description: 'Annual GBP salary as a whole number, e.g. 45000. No symbols or separators.',
+        minimum: 0,
+        maximum: 2000000,
+      },
+      salary_expectation: {
+        type: 'integer',
+        description: 'Annual GBP salary as a whole number, e.g. 45000. No symbols or separators.',
+        minimum: 0,
+        maximum: 2000000,
+      },
       seniority_level: {
         type: 'string',
         enum: ['junior', 'mid', 'senior', 'lead', 'principal', 'manager', 'director'],
       },
-      years_experience_total: { type: 'number' },
+      // Previously `{ type: 'number' }` with no description and no bounds —
+      // the weakest-specified field in the whole tool, and the most likely
+      // source of the 12 production write failures: a graduation year read
+      // as a duration overflows candidates.years_experience numeric(4,1).
+      years_experience_total: {
+        type: 'number',
+        description:
+          'Total years of professional experience as a DURATION, e.g. 12.5 — never a calendar year.',
+        minimum: 0,
+        maximum: 60,
+      },
       sector_tags: { type: 'array', items: { type: 'string' } },
       confidence_per_field: {
         type: 'object',
@@ -282,28 +313,19 @@ const cvParseTool: Anthropic.Tool = {
   },
 }
 
-export type ParsedCV = {
-  name: string
-  email?: string
-  phone?: string
-  location?: string
-  current_role?: string
-  current_company?: string
-  work_history?: Array<{
-    company?: string
-    role?: string
-    start_date?: string
-    end_date?: string
-    summary?: string
-  }>
-  skills?: string[]
-  education?: Array<{ institution?: string; qualification?: string; year?: string }>
-  salary_current_estimate?: number
-  salary_expectation?: number
-  seniority_level?: string
-  years_experience_total?: number
-  sector_tags?: string[]
-  confidence_per_field: Record<string, 'high' | 'medium' | 'low'>
+/**
+ * Thrown when Claude's response was cut off at max_tokens AND the coerced
+ * result carries nothing usable. Storing that as a successful parse would be
+ * a Tier-3 violation (06-CONTEXT.md): a candidate silently marked 'complete'
+ * with an empty profile, behind a retry button the recruiter has no reason
+ * to press.
+ */
+export class CVParseTruncatedError extends Error {
+  name = 'CVParseTruncatedError'
+
+  constructor(message = 'CV parse was truncated at max_tokens with no usable fields') {
+    super(message)
+  }
 }
 
 export type ParseCVDetailed = {
@@ -333,7 +355,16 @@ export async function parseCVDetailed(args: {
     userId: args.userId,
     purpose: args.purpose ?? 'cv_parse',
     request: {
-      max_tokens: 2048,
+      // Raised from 2048 (plan 06-06). 2048 output tokens is tight for a
+      // dense CV with long work_history[].summary strings, and a truncated
+      // parse is a Tier-3 violation, not a degraded result. At Haiku's 400p
+      // per MTok output rate the worst-case extra 2048 tokens costs about
+      // 0.08p per CV — the headroom is far cheaper than one lost back-book
+      // upload. 06-FORENSICS.md recorded no max_tokens stop reasons among
+      // the 12 real failures (its AI half was not run), so this is
+      // precautionary: the guard below is what makes truncation loud, and
+      // the headroom is what makes it rare.
+      max_tokens: 4096,
       tools: [cvParseTool],
       tool_choice: { type: 'tool', name: 'extract_cv_fields' },
       messages: [
@@ -358,14 +389,48 @@ export async function parseCVDetailed(args: {
   }
 }
 
+/**
+ * True when the coerced parse carries at least one fact worth storing.
+ * `confidence_per_field` never counts — it is metadata about fields, and
+ * Claude emits it even when it captured nothing. Empty strings and empty
+ * arrays do not count either: they are the shape of "nothing", not content.
+ */
+function hasUsableField(parsed: ParsedCV): boolean {
+  for (const [key, value] of Object.entries(parsed)) {
+    if (key === 'confidence_per_field') continue
+    if (Array.isArray(value)) {
+      if (value.length > 0) return true
+      continue
+    }
+    if (typeof value === 'string') {
+      if (value.trim().length > 0) return true
+      continue
+    }
+    if (value !== undefined && value !== null) return true
+  }
+  return false
+}
+
 export async function parseCV(args: {
   cvText: string
   organizationId: string
   userId?: string | null
 }): Promise<ParsedCV> {
   const d = await parseCVDetailed(args)
-  // KNOWN-DEFECTIVE BOUNDARY: trusts Claude's tool-use output shape with no
-  // runtime validation. Plan 06-06 replaces this `as` cast with a zod
-  // coercion boundary (06-RESEARCH.md Pattern 2) — do not "fix" it here.
-  return d.parsed as ParsedCV
+  // THE COERCION BOUNDARY. Everything downstream — parse-cv.ts,
+  // reconcile-cv-parses.ts, acceptCVFieldsAction — inherits this one call:
+  // Claude's raw tool output never reaches a typed consumer or a Postgres
+  // column again. (parseCVDetailed still returns the RAW input on purpose;
+  // forensics must be able to see what the model actually said.)
+  const parsed = coerceParsedCV(d.parsed)
+
+  // A response cut off at max_tokens that yielded nothing usable is a
+  // FAILURE, not an empty-but-successful parse. Thrown here rather than in
+  // parseCVDetailed so the ai_usage cost row (already written by
+  // runWithLogging) is kept — we paid for those tokens.
+  if (d.stopReason === 'max_tokens' && !hasUsableField(parsed)) {
+    throw new CVParseTruncatedError()
+  }
+
+  return parsed
 }

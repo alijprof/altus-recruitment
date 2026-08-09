@@ -3,6 +3,8 @@ import 'server-only'
 import mammoth from 'mammoth'
 import { extractText, getDocumentProxy } from 'unpdf'
 
+import { sanitiseText } from '@/lib/text/postgres-safe-text'
+
 // RESEARCH §15. PDF via unpdf (pure-JS PDF.js — Vercel-safe, no native
 // bindings). DOCX via mammoth (Office Open XML → raw text). Both run in
 // Node runtime; do not call from edge runtime.
@@ -11,8 +13,7 @@ import { extractText, getDocumentProxy } from 'unpdf'
 // surfaces a NonRetriableError and stops the pipeline cleanly.
 
 export const PDF_MIME = 'application/pdf'
-export const DOCX_MIME =
-  'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+export const DOCX_MIME = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
 
 export type SupportedCVMimeType = typeof PDF_MIME | typeof DOCX_MIME
 
@@ -24,10 +25,23 @@ export class UnsupportedCVMimeTypeError extends Error {
 }
 
 function normaliseWhitespace(text: string): string {
-  // Collapse runs of whitespace + trim. CVs frequently have stray tabs and
-  // double spaces from PDF column extraction — Claude tolerates them but
+  // FIRST, make the text legal for Postgres. Both extractors are verified to
+  // emit a literal U+0000 from real-world documents (a PDF ToUnicode CMap
+  // that maps a glyph to NUL; a raw 0x00 byte or an `&#x0;` char-ref inside
+  // a DOCX <w:t> run — tests/fixtures/cv-corpus/hostile/*). Stopping it here
+  // means Claude never sees it and cannot echo it back into extracted_data.
+  // This is defence in depth, NOT the only guard: candidate-cvs.ts sanitises
+  // again at the DB boundary in case Claude produces one independently.
+  // Content-preserving by construction — only NUL and lone surrogates are
+  // touched (see src/lib/text/postgres-safe-text.ts).
+  const legal = sanitiseText(text)
+  // Then collapse runs of whitespace + trim. CVs frequently have stray tabs
+  // and double spaces from PDF column extraction — Claude tolerates them but
   // they bloat the token count for no benefit.
-  return text.replace(/[ \t]+/g, ' ').replace(/\n{3,}/g, '\n\n').trim()
+  return legal
+    .replace(/[ \t]+/g, ' ')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
 }
 
 /**

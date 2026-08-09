@@ -3,10 +3,35 @@ import 'server-only'
 import * as Sentry from '@sentry/nextjs'
 import type { SupabaseClient } from '@supabase/supabase-js'
 
+import { coerceParsedCV } from '@/lib/ai/parsed-cv-schema'
+import { sanitiseForPostgres } from '@/lib/text/postgres-safe-text'
 import type { Database, Tables, TablesInsert, TablesUpdate } from '@/types/database'
 
 import { isMissingColumnError } from './postgrest-errors'
 import type { DbResult } from './types'
+
+/**
+ * Build the PII-free `detail` string for a failed write (DbResult.detail).
+ *
+ * ONLY the error's code (a SQLSTATE like 22P05/22003/22P02, or a PostgREST
+ * code like PGRST102 for errors rejected before Postgres is reached) plus a
+ * hard-coded sub-operation label and, where useful, the COLUMN NAMES in the
+ * failing statement.
+ *
+ * NEVER `err.message`: PostgREST echoes the offending value back
+ * ('invalid input syntax for type integer: "£45,000"'), so a message can
+ * carry a candidate's salary, email or name straight into
+ * candidate_cvs.parse_error_detail and the operator's screen (ASVS V7,
+ * threat T-06-21).
+ */
+function failureDetail(error: unknown, subop: string, columns?: string[]): string {
+  const code =
+    error !== null && typeof error === 'object' && 'code' in error
+      ? ((error as { code?: string }).code ?? 'unknown')
+      : 'unknown'
+  const where = columns?.length ? `${subop}: ${columns.join(', ')}` : subop
+  return `${code} (${where})`
+}
 
 // ---------------------------------------------------------------------------
 // CV row helpers. All writes go through here so the Inngest function and the
@@ -33,7 +58,7 @@ export async function listCandidateCVs(
 
   if (error) {
     Sentry.captureException(error, { tags: { layer: 'db', helper: 'listCandidateCVs' } })
-    return { ok: false, code: 'internal' }
+    return { ok: false, code: 'internal', detail: failureDetail(error, 'candidate_cvs.select') }
   }
   return { ok: true, data: data ?? [] }
 }
@@ -53,7 +78,7 @@ export async function getCandidateCV(
 
   if (error) {
     Sentry.captureException(error, { tags: { layer: 'db', helper: 'getCandidateCV' } })
-    return { ok: false, code: 'internal' }
+    return { ok: false, code: 'internal', detail: failureDetail(error, 'candidate_cvs.select') }
   }
   if (!data) return { ok: false, code: 'not_found' }
   return { ok: true, data }
@@ -108,7 +133,11 @@ export async function createCandidateCV(
 
   if (error) {
     Sentry.captureException(error, { tags: { layer: 'db', helper: 'createCandidateCV' } })
-    return { ok: false, code: 'internal' }
+    return {
+      ok: false,
+      code: 'internal',
+      detail: failureDetail(error, 'candidate_cvs.insert', Object.keys(payload)),
+    }
   }
   return { ok: true, data }
 }
@@ -132,7 +161,7 @@ export async function nextCVVersion(
 
   if (error) {
     Sentry.captureException(error, { tags: { layer: 'db', helper: 'nextCVVersion' } })
-    return { ok: false, code: 'internal' }
+    return { ok: false, code: 'internal', detail: failureDetail(error, 'candidate_cvs.select') }
   }
   return { ok: true, data: (data?.version ?? 0) + 1 }
 }
@@ -190,9 +219,24 @@ export async function updateCandidateCVParse(
       .select('id')
       .single()
 
-  let { error } = await runUpdate(patch)
+  // THE DB-BOUNDARY SANITISER. extracted_data is the widest funnel in the
+  // whole pipeline — Claude's entire tool output is written verbatim into
+  // that one jsonb column — so a single U+0000 or lone surrogate anywhere in
+  // it used to fail the whole write (22P05 / PGRST102) and, since the
+  // Inngest retry replays the memoized claude-parse step, fail identically
+  // forever. Sanitising the PATCH covers every field at once, keys included,
+  // and covers every caller: the Inngest function, retryParseAction, and the
+  // reconciler. Content-preserving: only those two sequences are altered.
+  const safePatch = sanitiseForPostgres(patch)
+  let sentColumns = Object.keys(safePatch)
 
-  if (error && 'parse_error_detail' in patch && isMissingColumnError(error, 'parse_error_detail')) {
+  let { error } = await runUpdate(safePatch)
+
+  if (
+    error &&
+    'parse_error_detail' in safePatch &&
+    isMissingColumnError(error, 'parse_error_detail')
+  ) {
     // Pre-migration deploy is an EXPECTED state, not an error — breadcrumb
     // only, never captureException.
     Sentry.addBreadcrumb({
@@ -201,9 +245,10 @@ export async function updateCandidateCVParse(
       level: 'info',
     })
     const withoutDetail: Record<string, unknown> = {}
-    for (const [key, value] of Object.entries(patch)) {
+    for (const [key, value] of Object.entries(safePatch)) {
       if (key !== 'parse_error_detail') withoutDetail[key] = value
     }
+    sentColumns = Object.keys(withoutDetail)
     ;({ error } = await runUpdate(withoutDetail))
   }
 
@@ -211,7 +256,13 @@ export async function updateCandidateCVParse(
     Sentry.captureException(error, {
       tags: { layer: 'db', helper: 'updateCandidateCVParse' },
     })
-    return { ok: false, code: 'internal' }
+    return {
+      ok: false,
+      code: 'internal',
+      // Columns of the statement that actually failed — after the
+      // pre-migration fallback above, if it fired.
+      detail: failureDetail(error, 'candidate_cvs.update', sentColumns),
+    }
   }
   return { ok: true, data: { id: input.id } }
 }
@@ -282,28 +333,34 @@ export type ParsedCVSubset = {
  * field mapping never drifts between the two call sites.
  */
 export function toParsedCVSubset(extracted: unknown): ParsedCVSubset {
-  const e = (extracted ?? {}) as Record<string, unknown>
+  // Routed through the coercion boundary, which replaces the fourteen
+  // per-field `as` casts this function used to carry. That matters most for
+  // STORED extracted_data: rows written BEFORE the boundary existed still
+  // hold whatever Claude said at the time, and the reconciler re-processes
+  // them (heal-unmerged-profiles). Coercing on the way out means an old row
+  // carrying years_experience_total: 2015 heals instead of re-failing.
+  const e = coerceParsedCV(extracted)
   return {
-    name: (e.name as string | undefined) ?? null,
-    email: (e.email as string | undefined) ?? null,
-    phone: (e.phone as string | undefined) ?? null,
-    location: (e.location as string | undefined) ?? null,
-    current_role: (e.current_role as string | undefined) ?? null,
-    current_company: (e.current_company as string | undefined) ?? null,
-    seniority_level: (e.seniority_level as string | undefined) ?? null,
-    salary_current_estimate: (e.salary_current_estimate as number | undefined) ?? null,
-    salary_expectation: (e.salary_expectation as number | undefined) ?? null,
+    name: e.name ?? null,
+    email: e.email ?? null,
+    phone: e.phone ?? null,
+    location: e.location ?? null,
+    current_role: e.current_role ?? null,
+    current_company: e.current_company ?? null,
+    seniority_level: e.seniority_level ?? null,
+    salary_current_estimate: e.salary_current_estimate ?? null,
+    salary_expectation: e.salary_expectation ?? null,
     // parseCV's tool schema doesn't return `currency` — leave null and let
     // the candidate column keep its 'GBP' default.
     currency: null,
-    years_experience_total: (e.years_experience_total as number | undefined) ?? null,
-    skills: (e.skills as string[] | undefined) ?? null,
-    sector_tags: (e.sector_tags as string[] | undefined) ?? null,
+    years_experience_total: e.years_experience_total ?? null,
+    skills: e.skills ?? null,
+    sector_tags: e.sector_tags ?? null,
     // JSONB-array fields — added 2026-05-22 to populate the
     // candidates.work_experience and candidates.education columns
     // introduced for the LinkedIn-PDF flow.
-    work_history: (e.work_history as ParsedCVSubset['work_history']) ?? null,
-    education: (e.education as ParsedCVSubset['education']) ?? null,
+    work_history: e.work_history ?? null,
+    education: e.education ?? null,
   }
 }
 
@@ -386,6 +443,24 @@ export async function markCandidateFieldsFromCV(
   supabase: SupabaseClient<Database>,
   args: { candidateId: string; parsed: ParsedCVSubset },
 ): Promise<DbResult<MarkCandidateFieldsResult>> {
+  // COERCE FIRST — before a single field is read. This helper is called with
+  // three different provenances: a fresh parseCV result (already coerced), a
+  // STORED extracted_data blob (the reconciler, and acceptCVFieldsAction's
+  // "Accept all" button — both re-processing rows written before the
+  // coercion boundary existed), and whatever a future caller passes. Only
+  // coercing here makes all three safe, and it is what stops
+  // `(parsed.name ?? '').trim()` and `item.role` below from throwing an
+  // uncaught TypeError on a non-string name or a null work_history element.
+  // Idempotent: coercing an already-coerced value is a no-op.
+  const parsed: ParsedCVSubset = {
+    ...toParsedCVSubset(args.parsed),
+    // `currency` is the one ParsedCVSubset field the extract_cv_fields tool
+    // never returns, so toParsedCVSubset deliberately nulls it. A caller who
+    // sets it explicitly (rather than a model that guessed it) is trusted —
+    // carry it across the boundary when it is a string.
+    currency: typeof args.parsed.currency === 'string' ? args.parsed.currency : null,
+  }
+
   // Select * so we don't 400 if the migration that added work_experience /
   // education hasn't yet applied on this environment. Reading the full row
   // for a single id costs us only the embedding (halfvec) extra bytes,
@@ -401,7 +476,7 @@ export async function markCandidateFieldsFromCV(
     Sentry.captureException(readError, {
       tags: { layer: 'db', helper: 'markCandidateFieldsFromCV', subop: 'read' },
     })
-    return { ok: false, code: 'internal' }
+    return { ok: false, code: 'internal', detail: failureDetail(readError, 'candidates.read') }
   }
   if (!current) return { ok: false, code: 'not_found' }
 
@@ -412,7 +487,7 @@ export async function markCandidateFieldsFromCV(
 
   for (const [parsedKey, col] of SCALAR_FIELD_MAP) {
     const candidateValue = row[col]
-    const parsedValue = args.parsed[parsedKey]
+    const parsedValue = parsed[parsedKey]
     // Empty = null or undefined. Empty string also counts as empty so that
     // a candidate created with `email: ''` (form quirk) can still be filled.
     const isEmpty = candidateValue == null || candidateValue === ''
@@ -423,7 +498,7 @@ export async function markCandidateFieldsFromCV(
 
   for (const [parsedKey, col] of ARRAY_FIELD_MAP) {
     const candidateValue = row[col]
-    const parsedValue = args.parsed[parsedKey]
+    const parsedValue = parsed[parsedKey]
     const isEmpty = Array.isArray(candidateValue) && candidateValue.length === 0
     if (isEmpty && Array.isArray(parsedValue) && parsedValue.length > 0) {
       patch[col] = parsedValue
@@ -437,7 +512,7 @@ export async function markCandidateFieldsFromCV(
   // a trailing space + more text), promote to the more complete value.
   // This handles the common quick-add-then-upload-CV flow without
   // clobbering an intentional full name with a CV-extracted variant.
-  const parsedName = (args.parsed.name ?? '').trim()
+  const parsedName = (parsed.name ?? '').trim()
   const currentName = String(row['full_name'] ?? '').trim()
   if (parsedName) {
     if (!currentName) {
@@ -455,19 +530,15 @@ export async function markCandidateFieldsFromCV(
   const candidateWorkExperience = row['work_experience']
   const workExperienceEmpty =
     Array.isArray(candidateWorkExperience) && candidateWorkExperience.length === 0
-  if (
-    workExperienceEmpty &&
-    Array.isArray(args.parsed.work_history) &&
-    args.parsed.work_history.length > 0
-  ) {
-    const mapped = mapWorkHistory(args.parsed.work_history)
+  if (workExperienceEmpty && Array.isArray(parsed.work_history) && parsed.work_history.length > 0) {
+    const mapped = mapWorkHistory(parsed.work_history)
     if (mapped.length > 0) patch['work_experience'] = mapped
   }
 
   const candidateEducation = row['education']
   const educationEmpty = Array.isArray(candidateEducation) && candidateEducation.length === 0
-  if (educationEmpty && Array.isArray(args.parsed.education) && args.parsed.education.length > 0) {
-    const mapped = mapEducation(args.parsed.education)
+  if (educationEmpty && Array.isArray(parsed.education) && parsed.education.length > 0) {
+    const mapped = mapEducation(parsed.education)
     if (mapped.length > 0) patch['education'] = mapped
   }
 
@@ -475,10 +546,17 @@ export async function markCandidateFieldsFromCV(
     return { ok: true, data: { fieldsPopulated: [] } }
   }
 
+  // The second DB-boundary sanitiser (the first is in
+  // updateCandidateCVParse). Coercion above guarantees SHAPE and RANGE;
+  // this guarantees Postgres LEGALITY of the string content — a NUL that
+  // travelled from a CV through Claude into a name or a skill would
+  // otherwise fail the whole merge with 22P05.
+  const safePatch = sanitiseForPostgres(patch)
+
   // reason: TablesUpdate<'candidates'> is the canonical update shape but our
   // patch is built dynamically from the column maps above. Cast at the
   // boundary so the type system still narrows the result.
-  const updatePayload = patch as unknown as TablesUpdate<'candidates'>
+  const updatePayload = safePatch as unknown as TablesUpdate<'candidates'>
 
   const { error: updateError } = await supabase
     .from('candidates')
@@ -489,7 +567,11 @@ export async function markCandidateFieldsFromCV(
     Sentry.captureException(updateError, {
       tags: { layer: 'db', helper: 'markCandidateFieldsFromCV', subop: 'update' },
     })
-    return { ok: false, code: 'internal' }
+    return {
+      ok: false,
+      code: 'internal',
+      detail: failureDetail(updateError, 'candidates.update', Object.keys(safePatch)),
+    }
   }
 
   return { ok: true, data: { fieldsPopulated: Object.keys(patch) } }
