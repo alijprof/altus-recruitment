@@ -588,7 +588,20 @@ work_history: [null, {...}]      -> TypeError: Cannot read properties of null (r
 
 ---
 
-## Open Questions
+## Open Questions (RESOLVED — dispositioned during planning, 2026-08-09)
+
+All five were closed by assigning each to a specific plan. Resolutions:
+
+| # | Question | Resolution | Owner |
+|---|----------|------------|-------|
+| 1 | Which of the six classes caused each of the 12? | Run the Decisive Experiment as a read-only forensic replay; per-file classification written to `06-FORENSICS.md`. All six are fixed regardless, so the answer changes the narrative, not the work. | plan 06-02 |
+| 2 | Should `max_tokens` rise from 2048? | Yes — raised to 4096 (worst case ~0.08p/CV at Haiku's output rate) AND a `CVParseTruncatedError` guard added so a truncated-to-empty parse fails honestly instead of storing an empty profile as complete. | plan 06-06 |
+| 3 | Commit the corpus binaries, or generate in CI? | Commit them, plus the HTML/XML sources and a `pnpm fixtures:regen` script. CI never needs a browser; regeneration is deliberate. | plan 06-03 |
+| 4 | Password-protected/encrypted PDFs — what does unpdf actually throw? | The generator builds an encrypted fixture and PRINTS the observed exception name, which is recorded in `manifest.json`; the classifier and its tests key off the OBSERVED name, never the predicted `PasswordException`. | plan 06-03 (observed) → 06-07 (mapped) |
+| 5 | Are the pending migrations still unapplied in prod? | Enumerated fresh from `supabase/migrations/` at execution time and diffed against the applied ledger — never transcribed. The research-era list here is incomplete (it omits `20260804140100`). This phase adds no migration and is correct either way. | plan 06-10 |
+
+### Original questions, for the record
+
 
 1. **Which of the six classes actually caused each of the 12?**
    - Known: all six reproduce the exact signature; the write stage is the site.
