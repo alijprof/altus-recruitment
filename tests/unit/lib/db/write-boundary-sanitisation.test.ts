@@ -80,8 +80,10 @@ const dirtyProfile = {
   location: `Aberdeen${LONE_HIGH}`,
   about: `About${NUL}me`,
   skills: [`Auto${NUL}CAD`, `P6 ${LONE_HIGH}`],
-  work_experience: [{ role: `Dev${NUL}`, summary: `Text${LONE_HIGH}` }],
-  education: [{ institution: `Uni${NUL}` }],
+  work_experience: [
+    { title: `Dev${NUL}`, company: `North${LONE_HIGH}wind`, dates: `2019${NUL}-2024` },
+  ],
+  education: [{ school: `Uni${NUL}`, degree: `MEng${LONE_HIGH}`, dates: null }],
   linkedin_url: 'https://www.linkedin.com/in/jane/',
   email: 'jane@example.com',
 }
