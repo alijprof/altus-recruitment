@@ -9,6 +9,9 @@ export default defineConfig({
   plugins: [tsconfigPaths()],
   test: {
     include: ['tests/forensics/**/*.forensic.ts'],
+    // Belt and braces — see vitest.config.ts: `.claude/**` holds live agent
+    // worktrees, which are full duplicates of this repo.
+    exclude: ['**/node_modules/**', '**/dist/**', '.claude/**'],
     environment: 'node',
     globals: true,
     setupFiles: [],

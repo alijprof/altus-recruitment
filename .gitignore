@@ -61,3 +61,8 @@ chrome-extension/node_modules/
 
 # forensic replay output — regenerated per run, PII-free but never committed (Phase 6)
 tests/forensics/.out/
+
+# Claude Code local state + agent worktrees. Each worktree under
+# .claude/worktrees/ is a FULL duplicate of this repo — one `git add -A`
+# away from being committed to a PUBLIC repo. Nothing in here is tracked.
+.claude/
