@@ -28,6 +28,34 @@
     "why": "Identical bytes to t1-pdf-single-column.pdf under an awkward filename — exercises slugifyFilename() in the recruiter upload action (src/app/(app)/candidates/[id]/actions.ts), not extraction itself."
   },
   {
+    "file": "tier1/t1-pdf-bom-prefixed.pdf",
+    "tier": 1,
+    "mime": "application/pdf",
+    "declaredExtension": "pdf",
+    "expect": "parse",
+    "minChars": 1200,
+    "mustContain": [
+      "Zoë O'Brien-Şahin",
+      "Northwind Offshore Ltd"
+    ],
+    "expectNulCount": 0,
+    "why": "t1-pdf-single-column.pdf behind a 3-byte UTF-8 BOM — the shape a naive re-save produces. pdf.js's checkHeader() searches the first 1024 bytes for %PDF- and moveStart()s to it, so this extracts identically to the unprefixed original; it is here so sniffFileType() can never again be stricter than the parser it gates (review 2026-08-09 CR-02)."
+  },
+  {
+    "file": "tier1/t1-pdf-junk-prefixed.pdf",
+    "tier": 1,
+    "mime": "application/pdf",
+    "declaredExtension": "pdf",
+    "expect": "parse",
+    "minChars": 1200,
+    "mustContain": [
+      "Zoë O'Brien-Şahin",
+      "Northwind Offshore Ltd"
+    ],
+    "expectNulCount": 0,
+    "why": "t1-pdf-single-column.pdf behind a 45-byte mail-gateway preamble (CRLF + a MIME-Version line) — the other common real-world source of bytes before the PDF header. Extracts identically to the unprefixed original (review 2026-08-09 CR-02)."
+  },
+  {
     "file": "tier1/t1-pdf-two-column.pdf",
     "tier": 1,
     "mime": "application/pdf",
