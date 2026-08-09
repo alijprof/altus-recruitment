@@ -41,7 +41,7 @@ Full phase details: [milestones/v1.0-ROADMAP.md](milestones/v1.0-ROADMAP.md)
 **Goal:** Every CV upload either parses successfully or fails immediately with an honest, actionable message — no third outcome — proven by a permanent synthetic fixture corpus, a three-layer regression harness (extraction unit, real-Postgres write-path integration, live spot-check), and all 12 of the customer's failed 5-6 Aug uploads re-parsing to complete with populated profiles.
 **Requirements**: [CVI-01, CVI-02, CVI-03, CVI-04, CVI-05, CVI-06, CVI-07, CVI-08, CVI-09]
 **Depends on:** Phase 5
-**Plans:** 2/10 plans executed
+**Plans:** 4/10 plans executed
 
 Requirements:
 
@@ -58,10 +58,10 @@ Requirements:
 Plans:
 
 - [x] 06-01-PLAN.md — Harness scaffolding, jszip dependency gate, Postgres-legality classifier (wave 1)
-- [ ] 06-02-PLAN.md — Read-only forensic replay of the 12 production failures (wave 2)
+- [x] 06-02-PLAN.md — Read-only forensic replay of the 12 production failures (wave 2)
 - [x] 06-03-PLAN.md — Fixture corpus: generator, Tier-1/Tier-2/hostile binaries, manifest (wave 2)
 - [ ] 06-04-PLAN.md — Layer 1: manifest-driven extraction suite + PII tripwire (wave 3)
-- [ ] 06-05-PLAN.md — Layer 2: real-Supabase write-path harness + the six RED tests (wave 3)
+- [x] 06-05-PLAN.md — Layer 2: real-Supabase write-path harness + the six RED tests (wave 3)
 - [ ] 06-06-PLAN.md — Fix the write boundary: zod coercion + Postgres sanitiser + wiring (wave 4)
 - [ ] 06-07-PLAN.md — Honest async failures: SQLSTATE detail, type-specific messages, no doomed retry (wave 5)
 - [ ] 06-08-PLAN.md — Upload-time rejection: magic-byte sniff on both intake paths (wave 6)
