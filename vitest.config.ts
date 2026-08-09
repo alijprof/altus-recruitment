@@ -12,9 +12,13 @@ export default defineConfig({
     // `**/node_modules/**` also excludes the workspace package's nested
     // node_modules (e.g. chrome-extension/node_modules/**) so dependency
     // test fixtures don't get accidentally discovered.
+    // `tests/integration/**` hits a real database (layer-2 suite) and must
+    // never be pulled into `pnpm test`, which has to stay fast and
+    // dependency-free — it runs only via `pnpm test:integration`.
     exclude: [
       '**/node_modules/**',
       'tests/e2e/**',
+      'tests/integration/**',
       '.next/**',
       'dist/**',
       'chrome-extension/dist/**',
