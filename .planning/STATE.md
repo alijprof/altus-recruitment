@@ -1,16 +1,15 @@
 ---
 gsd_state_version: 1.0
 milestone: v1.0
-milestone_name: MVP — AI-First Recruitment CRM
+milestone_name: milestone
 status: Milestone complete — awaiting next milestone
-last_updated: "2026-06-12T07:30:00.000Z"
-last_activity: 2026-06-12 — Milestone v1.0 completed, archived, and tagged
+last_updated: "2026-08-09T19:39:11.680Z"
 progress:
-  total_phases: 5
-  completed_phases: 5
-  total_plans: 31
-  completed_plans: 31
-  percent: 100
+  total_phases: 1
+  completed_phases: 0
+  total_plans: 10
+  completed_plans: 2
+  percent: 0
 ---
 
 # Project State: Altus — AI-First Recruitment CRM
@@ -59,6 +58,7 @@ All 6 go-live blockers from `.planning/audits/PRE-LAUNCH-AUDIT-2026-06-18.md` fi
 | 260804-lih | SC review SF-3 + TEL + STRIPE | Match scores on all 4 application-create paths (idempotent, tenant-verified, 3 display surfaces) + search/view/export/attribution telemetry + Stripe webhook status ledger (non-dedupe invariant preserved) + Vercel Analytics | a55fb45, a5a07ac, 8b313c0 | verified 9/9 + full-branch review SHIP-CONFIRMED; LIVE on prod de60c30 (2026-08-04); smoked anon 32/32 + authed 9/9 |
 
 ### Still required before real paying customers (NOT code) — FOUNDER OWNS
+
 - **Blocker 3 residual:** /privacy is a TEMPLATE (live + reachable) — needs a UK DP solicitor review + [placeholders] filled; DPA + ROPA are separate org deliverables.
 - **Founder runbook:** Stripe TEST→LIVE keys + live webhook; rotate Stripe + Supabase keys (confirm-before-revoke); Resend custom SMTP for auth emails.
 - **Optional fast-follow:** atomic campaign idempotency_key + partial unique index (the current guard covers sequential resubmits, not simultaneous).
@@ -106,5 +106,19 @@ Items acknowledged and deferred at milestone close on 2026-06-12. All 21 quick t
 *State refreshed at v1.0 milestone close. Full milestone history: .planning/MILESTONES.md*
 
 ## Accumulated Context
+
 ### Roadmap Evolution
+
 - Phase 6 added (2026-08-09): CV Intake Battle-Test & Hardening — driven by customer feedback (12 parse failures in the 5-6 Aug 73-CV bulk upload; telemetry proves all failures are post-Claude write-stage)
+
+## Performance Metrics
+
+| Phase | Plan | Duration | Notes |
+|-------|------|----------|-------|
+| Phase 06 P03 | 55min | 2 tasks | 22 files |
+
+## Decisions
+
+- [Phase 06]: 06-03: pinned Chromium PDF /CreationDate+/ModDate and jszip per-entry mtimes (incl. auto-created folders) to a fixed date so pnpm fixtures:regen is byte-for-byte idempotent
+- [Phase 06]: 06-03: encrypted-PDF fixture uses deterministic pseudo-random O/U values instead of a real RC4/MD5 password derivation — empirically confirmed pdf.js throws PasswordException identically either way
+- [Phase 06]: 06-03: unpdf/pdf.js can neuter the ArrayBuffer it is handed — every self-check now defensively copies bytes before extraction rather than passing a live view still needed elsewhere

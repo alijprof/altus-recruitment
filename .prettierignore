@@ -6,3 +6,12 @@ public
 coverage
 *.md
 supabase/.branches
+# Generated fixture sources + manifest (plan 06-03) — written verbatim by
+# tests/fixtures/cv-corpus/generate.mjs on every `pnpm fixtures:regen`.
+# Reformatting these would just be reverted on the next regen (the
+# generator always writes its own JSON.stringify()/template-string output),
+# so keep prettier out of them entirely, same rationale as the other
+# generated-content ignores above. generate.mjs itself and README.md are
+# hand-maintained and stay prettier-checked.
+tests/fixtures/cv-corpus/sources
+tests/fixtures/cv-corpus/manifest.json
