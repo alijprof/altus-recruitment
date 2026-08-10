@@ -48,3 +48,10 @@ validating the output against the pg-legality classifier + capturing stop_reason
 Instructions: tests/forensics/README.md. **Not blocking:** Waves 3-6 fix every
 candidate class regardless, and Wave 8's retry-the-12 acceptance run proves closure
 empirically. Run it only if you want per-row attribution before the fixes land.
+
+## Outcome (2026-08-10, post-fix retry)
+
+All 12 rows retried through the fixed pipeline via their original cv/uploaded
+events: **12/12 complete, 10/10 distinct candidates with populated profiles.**
+Root-cause attribution: write-stage (Claude-output-vs-DB-bounds) per the
+layer-2 regression suite; extraction was never the problem for these rows.
