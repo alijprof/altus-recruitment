@@ -29,6 +29,7 @@ import { deleteAllOrgStorage, deleteOrgAuthUsers } from '@/lib/admin/org-erasure
 import { hasLiveStripeSubscription } from '@/lib/db/subscriptions'
 import { sendResendEmail } from '@/lib/email/resend'
 import { env } from '@/lib/env'
+import { inngest } from '@/lib/inngest/client'
 import { findLiveStripeSubscription } from '@/lib/stripe/live-check'
 import { createServiceClient } from '@/lib/supabase/service'
 
@@ -928,5 +929,68 @@ export async function eraseOrganizationAction(
   return {
     ok: true,
     message: `Erased "${org.name}" — ${storageDeleted} file(s), ${usersResult.deleted} user(s), and all org data deleted.`,
+  }
+}
+
+// ---------------------------------------------------------------------------
+// backfillMatchScoresAction — Phase 7 Plan 07-06 (D-04 backfill half).
+//
+// Fires the `application/backfill-scores` event picked up by
+// backfillApplicationMatchScores (src/lib/inngest/functions/backfill-
+// application-match-scores.ts), which fans out to the existing
+// score-application-match scorer for applications that predate
+// auto-scoring — one Sonnet call per unscored, job-bearing application,
+// with every tenancy/idempotency/cap guard living in the scorer, not here.
+//
+// The work is ASYNCHRONOUS: this action only queues the sweep. Scores
+// appear on the job/application screens as the sweep and its downstream
+// scoring calls finish — the success message says so rather than implying
+// completion (CLAUDE.md silent-failure rule: never claim success for work
+// that hasn't actually happened yet).
+//
+// D-04 scope: the backfill covers ALL organisations by default. `orgId` is
+// an optional narrowing for a targeted re-run — the default /admin control
+// calls this with no argument.
+//
+// GATE: requireSuperAdmin() → only then anything else (no service-role
+// client is needed here; inngest.send is safe to call pre-gate in every
+// OTHER sense, but the chokepoint pattern in this file's header comment is
+// "every action calls requireSuperAdmin() FIRST", so we keep it first for
+// consistency even though this action has no data access of its own).
+// ---------------------------------------------------------------------------
+
+const backfillMatchScoresSchema = z.object({
+  orgId: z.string().uuid().optional(),
+})
+
+export async function backfillMatchScoresAction(orgId?: string): Promise<AdminActionResult> {
+  // GATE — must be first.
+  await requireSuperAdmin()
+
+  const parsed = backfillMatchScoresSchema.safeParse({ orgId })
+  if (!parsed.success) {
+    return { ok: false, error: 'Invalid input: ' + parsed.error.message }
+  }
+
+  try {
+    await inngest.send({
+      name: 'application/backfill-scores',
+      data: parsed.data.orgId ? { organization_id: parsed.data.orgId } : {},
+    })
+  } catch (err) {
+    Sentry.captureException(err, {
+      tags: { layer: 'admin', action: 'backfillMatchScoresAction' },
+    })
+    return {
+      ok: false,
+      error: 'Could not queue the backfill. Check Sentry for details.',
+    }
+  }
+
+  return {
+    ok: true,
+    message: parsed.data.orgId
+      ? 'Backfill queued for this organisation — scores appear on job and application screens as the sweep finishes.'
+      : 'Backfill queued for all organisations — scores appear on job and application screens as the sweep finishes.',
   }
 }

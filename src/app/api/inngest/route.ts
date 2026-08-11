@@ -1,6 +1,7 @@
 import { serve } from 'inngest/next'
 
 import { inngest } from '@/lib/inngest/client'
+import { backfillApplicationMatchScores } from '@/lib/inngest/functions/backfill-application-match-scores'
 import { bootstrapVectorIndex } from '@/lib/inngest/functions/bootstrap-vector-index'
 import { cleanupStaleSummaries } from '@/lib/inngest/functions/cleanup-stale-summaries'
 import { createJobFromSpec } from '@/lib/inngest/functions/create-job-from-spec'
@@ -65,5 +66,9 @@ export const { GET, POST, PUT } = serve({
     // moment a recruiter adds a candidate to a job (any of the four
     // application-create paths).
     scoreApplicationMatch,
+    // Phase 7 Plan 07-06 (D-04 backfill half) — founder-triggered, one-off
+    // sweep that fans out to scoreApplicationMatch for applications that
+    // predate auto-scoring. No cron; started from /admin only.
+    backfillApplicationMatchScores,
   ],
 })
