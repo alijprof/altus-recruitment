@@ -47,8 +47,8 @@ hardening pass if a similar silent gap shows up around retention/cleanup.
 ## 2. The exact heartbeat message to alert on
 
 Each instrumented function emits a fixed Sentry message string, tagged
-`layer: inngest`, on every tick — before it does any real work, so it fires
-even on a run that finds nothing to process:
+`layer: inngest`, **exactly once per run**, before it does any real work —
+so it fires even on a run that finds nothing to process:
 
 | Function | Sentry message string |
 |---|---|
@@ -60,6 +60,35 @@ even on a run that finds nothing to process:
 These are the four strings you'll search for when setting up alerts below,
 and the four strings to search for in Sentry when triaging a suspected
 stall.
+
+### One heartbeat = one run (and what that costs)
+
+"Exactly once per run" is load-bearing, not a detail. Inngest re-runs a
+function's handler once per step boundary, replaying everything that isn't
+inside a step. The heartbeats therefore had to be moved *inside* a step of
+their own — before that they fired once per step boundary, which is 3-4×
+per tick and, worse, silently changed meaning every time a step was added
+or removed. The "is below 1" alert below only works if the count is stable.
+
+Expected steady-state volume, all from crons, nothing else running:
+
+| Function | Cadence | Runs/day | Heartbeat events/day |
+|---|---|---|---|
+| `embed-batch` | every 10 min | 144 | 144 |
+| `reconcile-cv-parses` | every 15 min | 96 | 96 |
+| **Total** | | **240** | **~7,300/month** |
+
+(Before the fix this was ~816/day ≈ 24,500/month.)
+
+**Founder-side caveat:** `Sentry.captureMessage` consumes the **errors**
+quota, not a separate one. Sentry's free tier is 5,000 errors/month, so
+~7,300 heartbeats/month still exceeds it on its own — and once the quota is
+exhausted, Sentry **drops real production errors**. If Sentry is on the free
+tier, treat this as a live watch item: either upgrade the Sentry plan, or
+migrate the heartbeats to Sentry's dedicated Crons check-in product (see the
+upgrade path at the end of section 3), which does not bill against errors.
+Do not "fix" it by making the heartbeat fire less often than the alert
+window — that just breaks the alert.
 
 ## 3. Setting up the Sentry alert (do this once per heartbeat)
 

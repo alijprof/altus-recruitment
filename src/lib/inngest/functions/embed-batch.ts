@@ -111,14 +111,36 @@ export const embedBatch = inngest.createFunction(
     timeouts: { start: '5m', finish: '10m' },
   },
   async ({ event, step }) => {
-    // Cron hardening (2026-08-11) — top-of-handler heartbeat, before any
-    // step.run, so the tick is provable even when the sweep finds nothing
-    // to do. This also fires on the event-driven `embed/backfill-org`
-    // trigger (embed-batch has two triggers) — acceptable, not gated
-    // behind a cron check, since the point is proving liveness of ticks.
-    Sentry.captureMessage('embed-batch:cron:heartbeat', {
-      level: 'info',
-      tags: { layer: 'inngest', function: 'embed-batch' },
+    // Cron hardening (2026-08-11) — heartbeat, so the tick is provable even
+    // when the sweep finds nothing to do. This also fires on the
+    // event-driven `embed/backfill-org` trigger (embed-batch has two
+    // triggers) — acceptable, not gated behind a cron check, since the
+    // point is proving liveness of ticks.
+    //
+    // CR-03 (review 2026-08-11) — IT MUST BE THE FIRST step.run, NOT bare
+    // top-of-handler code. Inngest re-invokes the handler once per step
+    // boundary, replaying every non-step statement with memoized step
+    // results, so anything outside a step runs (steps + 1) times per run:
+    //
+    //   before: 2 steps -> 3 heartbeats x 144 ticks/day = 432/day
+    //           (reconcile-cv-parses: 4 x 96 = 384/day; ~816/day combined)
+    //   after:  exactly 1 per run   x 144 ticks/day = 144/day
+    //           (reconcile-cv-parses: 96/day; 240/day combined)
+    //
+    // Sentry.captureMessage consumes the ERRORS quota, and once that quota
+    // is exhausted Sentry drops real production errors — on a live system
+    // where Sentry is the only alerting channel. Being a step also makes
+    // the count stable: it no longer changes meaning whenever a step is
+    // added or removed, which the alert recipe in docs/cron-monitoring.md
+    // depends on. Keeping it FIRST preserves the original intent (visible
+    // even when there is nothing to do); see docs/cron-monitoring.md §6 for
+    // the residual monthly volume against the free tier.
+    await step.run('heartbeat', async () => {
+      Sentry.captureMessage('embed-batch:cron:heartbeat', {
+        level: 'info',
+        tags: { layer: 'inngest', function: 'embed-batch' },
+      })
+      return { ok: true }
     })
 
     const eventData = isEmbedBatchEvent(event.data) ? event.data : {}
