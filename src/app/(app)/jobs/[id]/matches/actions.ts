@@ -11,10 +11,7 @@ import {
   getMatchSummary,
   upsertMatchSummary,
 } from '@/lib/db/ai-summaries'
-import {
-  getCandidateEmbeddingVersion,
-  getJobEmbeddingVersion,
-} from '@/lib/db/embeddings'
+import { getCandidateEmbeddingVersion, getJobEmbeddingVersion } from '@/lib/db/embeddings'
 import { getJob } from '@/lib/db/jobs'
 import { env } from '@/lib/env'
 import { inngest } from '@/lib/inngest/client'
@@ -40,9 +37,7 @@ import { createClient as createSupabaseClient } from '@/lib/supabase/server'
 // toast without leaking server internals.
 // ---------------------------------------------------------------------------
 
-export type ExplainMatchActionResult =
-  | { ok: true }
-  | { ok: false; error: string }
+export type ExplainMatchActionResult = { ok: true } | { ok: false; error: string }
 
 const inputSchema = z.object({
   jobId: z.string().uuid(),
@@ -130,8 +125,7 @@ export async function explainCandidateMatchAction(
     // We need the org id for the ai_usage write. Read it via the same
     // helper the listCandidates semantic branch uses.
     const orgResult = await supabase.rpc('current_organization_id')
-    const organizationId =
-      typeof orgResult.data === 'string' ? orgResult.data : null
+    const organizationId = typeof orgResult.data === 'string' ? orgResult.data : null
     if (!organizationId) {
       return { ok: false, error: 'Could not resolve your organisation.' }
     }
@@ -253,9 +247,7 @@ export async function explainCandidateMatchAction(
 //   6. inngest.send — never report success on a failed send.
 // ---------------------------------------------------------------------------
 
-export type ScoreAllMatchesActionResult =
-  | { ok: true }
-  | { ok: false; error: string }
+export type ScoreAllMatchesActionResult = { ok: true } | { ok: false; error: string }
 
 const scoreAllInputSchema = z.object({
   jobId: z.string().uuid(),
