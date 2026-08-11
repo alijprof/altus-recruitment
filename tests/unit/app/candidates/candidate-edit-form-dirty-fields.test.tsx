@@ -221,6 +221,62 @@ describe('CandidateEditForm — dirty-field submission (CR-01)', () => {
     expect(toastError.mock.calls[0]?.[0]).toBe('Invalid candidate id.')
   })
 
+  // --- WR-12: legacy jsonb must not be truncated on round-trip ----------
+
+  it('renders work history read-only when the stored rows cannot round-trip', async () => {
+    const user = userEvent.setup()
+    render(
+      <CandidateEditForm
+        candidateId="cand-1"
+        defaultValues={parsedSnapshot()}
+        workExperienceEditable={false}
+      />,
+    )
+
+    // Only "Basics" is open by default, so the section has to be expanded
+    // before any of this is in the DOM at all.
+    await user.click(screen.getByRole('button', { name: 'Work history' }))
+
+    expect(await screen.findByText(/older format/i)).toBeInTheDocument()
+    // No editor at all — which is what makes the guarantee structural: the
+    // field can never become dirty, so it can never be submitted.
+    expect(screen.queryByRole('button', { name: 'Add work history' })).not.toBeInTheDocument()
+    // The read-only notice must not be an alert (the frozen smoke helper
+    // treats any role="alert" inside <main> as a parse failure).
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+
+    await user.type(screen.getByLabelText('Phone'), '9')
+    await user.click(screen.getByRole('button', { name: 'Save changes' }))
+
+    await waitFor(() => expect(updateCandidateAction).toHaveBeenCalledTimes(1))
+    expect(Object.hasOwn(lastPayload(), 'work_experience')).toBe(false)
+  })
+
+  it('leaves education editable when only work history is legacy', async () => {
+    const user = userEvent.setup()
+    render(
+      <CandidateEditForm
+        candidateId="cand-1"
+        defaultValues={parsedSnapshot()}
+        workExperienceEditable={false}
+      />,
+    )
+
+    await user.click(screen.getByRole('button', { name: 'Education' }))
+
+    expect(await screen.findByRole('button', { name: 'Add education' })).toBeInTheDocument()
+  })
+
+  it('renders the editor normally when the stored rows round-trip cleanly', async () => {
+    const user = userEvent.setup()
+    render(<CandidateEditForm candidateId="cand-1" defaultValues={parsedSnapshot()} />)
+
+    await user.click(screen.getByRole('button', { name: 'Work history' }))
+
+    expect(await screen.findByRole('button', { name: 'Add work history' })).toBeInTheDocument()
+    expect(screen.queryByText(/older format/i)).not.toBeInTheDocument()
+  })
+
   it('sends a field back to its original value as NOT dirty (no needless write)', async () => {
     const user = userEvent.setup()
     render(<CandidateEditForm candidateId="cand-1" defaultValues={parsedSnapshot()} />)

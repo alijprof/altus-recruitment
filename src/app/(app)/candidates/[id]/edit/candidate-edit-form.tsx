@@ -48,6 +48,28 @@ import {
 export type CandidateEditFormProps = {
   candidateId: string
   defaultValues: EditCandidateInput
+  // WR-12: false when the stored jsonb for that column contains rows this
+  // editor cannot round-trip losslessly (a row with no title/school, a
+  // non-object entry, or extra keys a past/future writer stored). The
+  // section then renders read-only rather than offering an editor whose
+  // save would permanently delete those rows. Both default to true so the
+  // ordinary case needs no ceremony at the call site.
+  workExperienceEditable?: boolean
+  educationEditable?: boolean
+}
+
+// Shown in place of a repeating-row editor when the stored array cannot be
+// edited without losing data. Deliberately NOT an Alert and carries no
+// role="alert" — the frozen Phase-6 smoke helper treats any role="alert"
+// inside <main> as a parse failure.
+function LegacyFormatNotice({ what }: { what: string }) {
+  return (
+    <p className="text-muted-foreground bg-muted/40 rounded-md border p-3 text-sm font-normal">
+      This candidate&apos;s {what} is stored in an older format that this editor can&apos;t change
+      without losing part of it, so it&apos;s read-only here. It still shows in full on the
+      candidate&apos;s profile, and re-uploading their CV will rewrite it in the current format.
+    </p>
+  )
 }
 
 // Radix Select forbids an empty-string item value (it's reserved for "no
@@ -84,7 +106,12 @@ function toRepeatingRowValues(
 // Mirror of CandidateForm minus the consent block. Pre-populated from server-
 // fetched row (passed down by the page). On submit calls updateCandidateAction
 // which redirects on success — same redirect-throws-inside-the-action pattern.
-export function CandidateEditForm({ candidateId, defaultValues }: CandidateEditFormProps) {
+export function CandidateEditForm({
+  candidateId,
+  defaultValues,
+  workExperienceEditable = true,
+  educationEditable = true,
+}: CandidateEditFormProps) {
   const router = useRouter()
   const [isPending, startTransition] = useTransition()
   const form = useForm<EditCandidateInput>({
@@ -503,50 +530,62 @@ export function CandidateEditForm({ candidateId, defaultValues }: CandidateEditF
           <AccordionItem value="work-history">
             <AccordionTrigger>Work history</AccordionTrigger>
             <AccordionContent>
-              <FormField
-                control={form.control}
-                name="work_experience"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Work history</FormLabel>
-                    <FormControl>
-                      <RepeatingRows
-                        value={toRepeatingRowValues(field.value, ['title', 'company', 'dates'])}
-                        onChange={field.onChange}
-                        fields={WORK_EXPERIENCE_FIELDS}
-                        addLabel="Add work history"
-                        rowLabel="Work history"
-                      />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
+              {/* WR-12 — not rendering the editor is what makes the guarantee
+                  structural: react-hook-form can never mark this field dirty,
+                  so CR-01's dirty-field submission never sends it and the
+                  column cannot be rewritten from this page. */}
+              {workExperienceEditable ? (
+                <FormField
+                  control={form.control}
+                  name="work_experience"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Work history</FormLabel>
+                      <FormControl>
+                        <RepeatingRows
+                          value={toRepeatingRowValues(field.value, ['title', 'company', 'dates'])}
+                          onChange={field.onChange}
+                          fields={WORK_EXPERIENCE_FIELDS}
+                          addLabel="Add work history"
+                          rowLabel="Work history"
+                        />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              ) : (
+                <LegacyFormatNotice what="work history" />
+              )}
             </AccordionContent>
           </AccordionItem>
 
           <AccordionItem value="education">
             <AccordionTrigger>Education</AccordionTrigger>
             <AccordionContent>
-              <FormField
-                control={form.control}
-                name="education"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Education</FormLabel>
-                    <FormControl>
-                      <RepeatingRows
-                        value={toRepeatingRowValues(field.value, ['school', 'degree', 'dates'])}
-                        onChange={field.onChange}
-                        fields={EDUCATION_FIELDS}
-                        addLabel="Add education"
-                        rowLabel="Education"
-                      />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
+              {educationEditable ? (
+                <FormField
+                  control={form.control}
+                  name="education"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Education</FormLabel>
+                      <FormControl>
+                        <RepeatingRows
+                          value={toRepeatingRowValues(field.value, ['school', 'degree', 'dates'])}
+                          onChange={field.onChange}
+                          fields={EDUCATION_FIELDS}
+                          addLabel="Add education"
+                          rowLabel="Education"
+                        />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              ) : (
+                <LegacyFormatNotice what="education history" />
+              )}
             </AccordionContent>
           </AccordionItem>
         </Accordion>
