@@ -143,8 +143,24 @@ export const reconcileCvParses = inngest.createFunction(
     triggers: [{ cron: 'TZ=Europe/London */15 * * * *' }],
     concurrency: { limit: 1 },
     retries: 1,
+    // Cron hardening (2026-08-11) — a wedged run sat holding this
+    // concurrency-1 slot for days (4-9 Aug) and silently blocked every
+    // later cron tick behind it. `finish` bounds a run's total time and
+    // RELEASES the slot if it wedges; `start` cancels a tick that never
+    // got to run at all, so ticks stop queueing up behind a blocked one.
+    // Three capped steps normally finish in seconds; these windows are
+    // ~10x a healthy run.
+    timeouts: { start: '5m', finish: '10m' },
   },
   async ({ step }) => {
+    // Cron hardening (2026-08-11) — top-of-handler heartbeat, before any
+    // step.run, so the tick is provable even when all three steps find
+    // nothing to do.
+    Sentry.captureMessage('reconcile-cv-parses:cron:heartbeat', {
+      level: 'info',
+      tags: { layer: 'inngest', function: 'reconcile-cv-parses' },
+    })
+
     // -------------------------------------------------------------------
     // Step A — sweep-stuck-pending.
     // -------------------------------------------------------------------
