@@ -172,7 +172,7 @@ export const reconcileCvParses = inngest.createFunction(
     // the count stable: it no longer changes meaning whenever a step is
     // added or removed, which the alert recipe in docs/cron-monitoring.md
     // depends on. Keeping it FIRST preserves the original intent (visible
-    // even when there is nothing to do); see docs/cron-monitoring.md §6 for
+    // even when there is nothing to do); see docs/cron-monitoring.md §2 for
     // the residual monthly volume against the free tier.
     await step.run('heartbeat', async () => {
       Sentry.captureMessage('reconcile-cv-parses:cron:heartbeat', {

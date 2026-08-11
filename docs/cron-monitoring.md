@@ -143,6 +143,10 @@ needs no further engineering.
   **not** getting stuck for days — but it's still a signal something made
   that run wedge in the first place, and is worth a look even though nothing
   broke downstream.
+  **Caveat — confirm this is actually switched on: see section 7.** Until
+  the timeouts are visible on the Inngest dashboard's config page for both
+  functions, treat "a cancelled-run event will appear" as unconfirmed rather
+  than as a working safety net.
 
 In short: a missing heartbeat means "investigate now, something is actually
 stalled." A cancelled-run event means "the safety net caught something —
@@ -186,3 +190,37 @@ for the Inngest Pro plan is the single highest-leverage fix for the
 reliability issues behind the whole 2026-08-11 feedback session, and it is a
 founder-side billing action, not a code change — it is intentionally outside
 this phase's scope.
+
+## 7. One-time check: confirm `timeouts` is actually enforced on your plan
+
+**Do this before you rely on anything in section 4.** Two minutes.
+
+`timeouts: { start, finish }` is accepted by the Inngest SDK, so the code
+compiles and syncs whether or not the platform honours it — the config is
+enforced **by the Inngest platform**, not by our code. This runbook records
+that the account is on the **free tier**, and the free tier's behaviour was
+the root cause of the 4-9 Aug outage. If `timeouts` turns out to be a
+paid-plan feature, or is simply ignored on the current plan, then the
+headline fix of the cron-hardening work is **inert** and the
+`inngest/function.cancelled` events described in section 4 will never
+appear. Nobody has checked, so this document does not claim otherwise.
+
+**The check:**
+
+1. Inngest dashboard → **Functions** → `embed-batch` → its config page.
+2. Confirm a **Timeouts** entry showing `start: 5m` and `finish: 10m`.
+3. Repeat for `reconcile-cv-parses`.
+
+**Record the outcome by editing this line:**
+
+> Status: **NOT YET VERIFIED** on the live account (as of 2026-08-11).
+
+- **If both show the timeouts** → section 4's cancelled-run signal is real.
+  Change the line above to "Verified, `<date>`" and you are done.
+- **If they do not appear, or the dashboard marks them as a paid feature** →
+  say so on the line above, and treat the wedge protection as **absent**. A
+  stuck run can then still hold its concurrency-1 slot indefinitely, which
+  means: the missing-heartbeat alert from section 3 is your ONLY detection
+  for it, and a wedge has to be cleared by hand (cancel the run in the
+  dashboard). That makes upgrading the Inngest plan (section 6) more urgent,
+  not less — the same upgrade fixes both this and the quota ceiling.
