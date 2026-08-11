@@ -3,10 +3,11 @@
  *
  * THIS TEST IS THE ENTIRE REASON PLAN 07-03 WRITES NO INVALIDATION CODE.
  *
- * The BEFORE UPDATE trigger `invalidate_candidate_embedding`
- * (supabase/migrations/20260519092951_invalidate_embeddings_triggers.sql:
- * 38-63) NULLs `candidate_embedding` + `embedded_at` whenever any column it
- * compares changes. `candidateEmbeddingText` (src/lib/ai/embed-text.ts) is
+ * The BEFORE UPDATE trigger `invalidate_candidate_embedding` (first defined
+ * in supabase/migrations/20260519092951_invalidate_embeddings_triggers.sql;
+ * the LATEST migration defining it is what this test resolves and parses —
+ * see WR-09 below) NULLs `candidate_embedding` + `embedded_at` whenever any
+ * column it compares changes. `candidateEmbeddingText` (src/lib/ai/embed-text.ts) is
  * the exact field set the embed-batch sweep reads to build the embedding
  * input text — the comment at embed-text.ts:25-27 records that these two
  * lists must be kept in sync BY HAND, because nothing in Postgres or
@@ -32,7 +33,7 @@
  * `Parameters<typeof candidateEmbeddingText>[0]` instead, the same pattern
  * already used by embed-text.test.ts:18.
  */
-import { readFileSync } from 'node:fs'
+import { readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 import { describe, expect, it, vi } from 'vitest'
@@ -70,19 +71,52 @@ const CANDIDATE_EMBED_FIELD_LIST = Object.keys(CANDIDATE_EMBED_FIELD_MEMBERSHIP)
 
 // --- Parse the trigger's column list straight out of the migration SQL ----
 
-const MIGRATION_PATH = join(
-  process.cwd(),
-  'supabase/migrations/20260519092951_invalidate_embeddings_triggers.sql',
-)
+const MIGRATIONS_DIR = join(process.cwd(), 'supabase/migrations')
+const FN_MARKER = 'create or replace function public.invalidate_candidate_embedding()'
+
+/**
+ * WR-09 (review 2026-08-11) — resolve the AUTHORITATIVE definition, do not
+ * hardcode one file.
+ *
+ * Migrations are append-only in this project, so the correct way to change
+ * this trigger is a NEW `create or replace function
+ * public.invalidate_candidate_embedding()` in a later migration. Reading
+ * only 20260519092951 meant the test would keep parsing the 2026-05-19
+ * definition and keep passing while production diverged — precisely the
+ * failure it exists to prevent.
+ *
+ * Filename sort is the ordering Supabase itself applies (timestamp prefix),
+ * so the LAST matching file is the definition that wins at runtime.
+ */
+function findLatestTriggerMigration(): { file: string; sql: string } {
+  const matches = readdirSync(MIGRATIONS_DIR)
+    .filter((name) => name.endsWith('.sql'))
+    .sort()
+    .map((name) => ({ file: name, sql: readFileSync(join(MIGRATIONS_DIR, name), 'utf8') }))
+    .filter(({ sql }) => sql.includes(FN_MARKER))
+
+  const latest = matches.at(-1)
+  if (!latest) {
+    throw new Error(
+      `embedding-invalidation-contract: no migration in ${MIGRATIONS_DIR} contains "${FN_MARKER}". ` +
+        'Either the function was renamed or the trigger was dropped — this contract can no longer ' +
+        'bind SQL to TypeScript, so it fails loudly rather than passing vacuously.',
+    )
+  }
+  return latest
+}
+
+// Resolved once — the migration directory does not change mid-run, and the
+// column list is read by every case below.
+const TRIGGER_MIGRATION = findLatestTriggerMigration()
 
 function extractCandidateTriggerColumns(): string[] {
-  const sql = readFileSync(MIGRATION_PATH, 'utf8')
-  const fnMarker = 'create or replace function public.invalidate_candidate_embedding()'
-  const fnStart = sql.indexOf(fnMarker)
+  const { sql, file } = TRIGGER_MIGRATION
+  const fnStart = sql.lastIndexOf(FN_MARKER)
   if (fnStart === -1) {
     throw new Error(
-      `embedding-invalidation-contract: could not find "${fnMarker}" in ${MIGRATION_PATH}. ` +
-        'The migration file structure changed — update this test\'s parser to match.',
+      `embedding-invalidation-contract: could not find "${FN_MARKER}" in ${file}. ` +
+        "The migration file structure changed — update this test's parser to match.",
     )
   }
   // The function body's own closing delimiter is the first `$$;` after
@@ -132,7 +166,7 @@ describe('embedding-invalidation contract: trigger columns == CandidateEmbedFiel
 
     const message =
       'DRIFT DETECTED between invalidate_candidate_embedding (SQL trigger, ' +
-      `supabase/migrations/20260519092951_invalidate_embeddings_triggers.sql) and ` +
+      `supabase/migrations/${TRIGGER_MIGRATION.file}) and ` +
       'candidateEmbeddingText (src/lib/ai/embed-text.ts).\n' +
       `  Columns in the SQL trigger but NOT in candidateEmbeddingText: ${formatColumnList(inTriggerOnly)}\n` +
       `  Fields in candidateEmbeddingText but NOT in the SQL trigger: ${formatColumnList(inEmbedOnly)}\n` +
@@ -163,18 +197,15 @@ describe('embedding-invalidation contract: trigger columns == CandidateEmbedFiel
 })
 
 describe('embedding-invalidation contract: non-search fields stay OUT', () => {
-  it.each(NON_SEARCH_EDITABLE_FIELDS)(
-    '%s is absent from the SQL trigger column list',
-    (field) => {
-      const triggerColumns = extractCandidateTriggerColumns()
-      expect(
-        triggerColumns,
-        `${field} must NOT be in invalidate_candidate_embedding's column list — it is not part ` +
-          'of candidateEmbeddingText, so invalidating on it would buy an org a Voyage call for a ' +
-          'byte-identical embedding vector (real spend, zero benefit).',
-      ).not.toContain(field)
-    },
-  )
+  it.each(NON_SEARCH_EDITABLE_FIELDS)('%s is absent from the SQL trigger column list', (field) => {
+    const triggerColumns = extractCandidateTriggerColumns()
+    expect(
+      triggerColumns,
+      `${field} must NOT be in invalidate_candidate_embedding's column list — it is not part ` +
+        'of candidateEmbeddingText, so invalidating on it would buy an org a Voyage call for a ' +
+        'byte-identical embedding vector (real spend, zero benefit).',
+    ).not.toContain(field)
+  })
 
   it.each(NON_SEARCH_EDITABLE_FIELDS)('%s is absent from CandidateEmbedFields', (field) => {
     expect(
