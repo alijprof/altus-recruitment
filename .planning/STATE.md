@@ -3,12 +3,12 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: Milestone complete — awaiting next milestone
-last_updated: "2026-08-09T20:11:51.650Z"
+last_updated: "2026-08-11T14:15:55.793Z"
 progress:
-  total_phases: 1
+  total_phases: 2
   completed_phases: 0
-  total_plans: 10
-  completed_plans: 4
+  total_plans: 18
+  completed_plans: 10
   percent: 0
 ---
 
@@ -117,6 +117,7 @@ Items acknowledged and deferred at milestone close on 2026-06-12. All 21 quick t
 |-------|------|----------|-------|
 | Phase 06 P03 | 55min | 2 tasks | 22 files |
 | Phase 06 P05 | 30min | 3 tasks | 5 files |
+| Phase 07 P05 | 25min | 3 tasks | 4 files |
 
 ## Decisions
 
@@ -126,3 +127,6 @@ Items acknowledged and deferred at milestone close on 2026-06-12. All 21 quick t
 - [Phase 06]: 06-05: resolved local Supabase creds via node_modules/.bin/supabase directly (pnpm not on bare PATH in this env)
 - [Phase 06]: 06-05: C1/C2 (Unicode illegalities) target updateCandidateCVParse's extracted_data jsonb; C3/C4/C5 target markCandidateFieldsFromCV's typed candidates columns — matches which real Postgres column each verified-matrix row actually writes to
 - [Phase 06]: 06-05: BAD-ENUM is the one test where result.ok===false is the PERMANENT expected outcome — proves DbResult.detail will carry the SQLSTATE + column once 06-06/06-07 land
+- [Phase 07]: 07-05: timeouts.start=5m / timeouts.finish=10m on embed-batch + reconcile-cv-parses — ~10x healthy runtime, bounds a wedged concurrency-1 run without falsely cancelling legitimate slow runs
+- [Phase 07]: 07-05: regression test uses source inspection (node:fs + regex) rather than importing the Inngest function modules, since import pulls in @/lib/supabase/service, @/lib/env and the Sentry SDK requiring a populated server env the unit suite doesn't have
+- [Phase 07]: 07-05: cron-monitoring runbook recommends a Sentry Metric Alert (Number of Events, "is below 1") keyed on each heartbeat message string, not the native Sentry Crons/check-in product — the existing heartbeats use plain Sentry.captureMessage not Sentry.captureCheckIn
