@@ -33,8 +33,10 @@ import { createServiceClient } from '@/lib/supabase/service'
 //
 // Modeled structurally on reconcile-cv-parses.ts (the reference multi-tenant
 // sweep in this codebase): createServiceClient() inside the step.run, a hard
-// row cap, per-row try/catch so one bad row never aborts the sweep, and
-// PII-free Sentry (ids and counts only).
+// per-run cap, per-row try/catch so one bad row never aborts the sweep, and
+// PII-free Sentry (ids and counts only). The cap is on ENQUEUES, with a
+// separately bounded scan (WR-02) — capping the SCAN instead is what made a
+// re-run a permanent no-op once the oldest page was fully scored.
 //
 // Guards ALREADY enforced inside score-application-match (do not
 // re-implement here):
@@ -53,15 +55,38 @@ import { createServiceClient } from '@/lib/supabase/service'
 // thing that wedges the Inngest queue.
 // ---------------------------------------------------------------------------
 
-const BACKFILL_ROW_CAP = 500
+// Per-run ENQUEUE cap — the real spend bound (~1p per enqueued
+// application, so ~£5 a run). WR-02: this caps how many unscored rows the
+// run fans out, NOT how many rows it is allowed to look at. Capping the
+// SCAN was the bug: once the oldest 500 applications were all scored, every
+// later run enqueued zero while newer unscored rows sat beyond the cap
+// forever, and the "row cap reached" warning read as "there is more to do"
+// on a sweep that was in fact permanently stuck.
+const ENQUEUE_CAP = 500
 
-// Existence-check chunk size for the ai_summaries pre-filter query below —
-// mirrors listLatestMatchScoresForPairs's ID_CHUNK (src/lib/db/ai-summaries.ts)
-// so a large candidate-id list can never risk a 414 from the edge.
-const ID_CHUNK = 100
+// Scan budget. The sweep walks applications oldest-first, skipping ones that
+// already have a score, until it has filled ENQUEUE_CAP or exhausted this
+// budget — so a re-run naturally advances through the backlog as previously
+// enqueued rows acquire summaries.
+const SCAN_PAGE_SIZE = 500
+const MAX_SCAN_PAGES = 20
+
+// Row-chunk size for the ai_summaries pre-filter below. WR-01: BOTH `.in()`
+// lists are bounded by this, not just one. Chunking by ROWS (rather than by
+// unique candidate ids) means a chunk contributes at most this many ids to
+// each list, so the worst-case query string is ~2 x 50 x ~45 chars ≈ 4.5 kB
+// — comfortably under postgrest-js's 8,000-char `urlLengthLimit` and under
+// typical edge/proxy URL limits. The previous code chunked `candidateIds` at
+// 100 but passed `jobIds` whole, which at the 500-row cap meant up to 500
+// uuids ≈ 18.5 kB in one URL.
+const PAIR_LOOKUP_CHUNK_ROWS = 50
 
 type BackfillEventData = {
   organization_id?: string
+  // Optional resume point (ISO timestamp). A run that stops on its scan
+  // budget reports `next_cursor`; re-sending the event with that value
+  // continues from there instead of re-walking the scored prefix.
+  created_after?: string
 }
 
 function isBackfillEventData(data: unknown): data is BackfillEventData {
@@ -73,11 +98,26 @@ type UnscoredApplicationRow = {
   organization_id: string
   candidate_id: string
   job_id: string
+  created_at: string
 }
 
 type ExistingSummaryPairRow = {
   candidate_id: string | null
   job_id: string | null
+}
+
+function pairKey(row: { candidate_id: string; job_id: string }): string {
+  return `${row.candidate_id}:${row.job_id}`
+}
+
+type ScoredPairLookup = {
+  /** Pairs KNOWN to already carry a match_score summary. */
+  scored: Set<string>
+  /**
+   * Pairs whose scored-ness could NOT be determined because the lookup
+   * chunk errored. WR-01: these are skipped, never enqueued.
+   */
+  unknown: Set<string>
 }
 
 /**
@@ -86,29 +126,38 @@ type ExistingSummaryPairRow = {
  * already has a score — even a stale-version one — must be left alone here.
  * The version-exact decision stays where it already lives, inside the
  * scorer's own cache lookup, which is the second and authoritative guard.
- * A read failure on a chunk fails OPEN (the pair is
- * treated as unscored): the downstream hour-bucketed dedup id and the
- * ai_summaries unique constraint make a redundant enqueue harmless, so this
- * pre-filter is purely a spend-avoidance optimisation, never a security
- * boundary.
+ *
+ * WR-01 — a chunk read failure now fails CLOSED. It used to `continue`,
+ * which left the chunk's pairs absent from the `scored` set and therefore
+ * indistinguishable from genuinely-unscored ones: a single 414 or aborted
+ * request turned the whole sweep into "nothing is scored, enqueue
+ * everything". The downstream version-exact cache absorbs most of that, but
+ * any pair whose embedding version has moved since it was scored buys a
+ * fresh Sonnet call — across every org, from a button labelled "safe to run
+ * more than once". Unknown now means skip: the sweep is idempotent and the
+ * next run re-reads the same rows, so deferring costs nothing and
+ * double-spending costs money.
  */
 async function fetchAlreadyScoredPairs(
   supabase: SupabaseClient<Database>,
   rows: UnscoredApplicationRow[],
-): Promise<Set<string>> {
+): Promise<ScoredPairLookup> {
   const scored = new Set<string>()
-  const candidateIds = Array.from(new Set(rows.map((r) => r.candidate_id)))
-  const jobIds = Array.from(new Set(rows.map((r) => r.job_id)))
-  if (candidateIds.length === 0 || jobIds.length === 0) return scored
+  const unknown = new Set<string>()
 
-  for (let i = 0; i < candidateIds.length; i += ID_CHUNK) {
-    const candidateIdChunk = candidateIds.slice(i, i + ID_CHUNK)
+  for (let i = 0; i < rows.length; i += PAIR_LOOKUP_CHUNK_ROWS) {
+    const chunk = rows.slice(i, i + PAIR_LOOKUP_CHUNK_ROWS)
+    const candidateIds = Array.from(new Set(chunk.map((r) => r.candidate_id)))
+    const jobIds = Array.from(new Set(chunk.map((r) => r.job_id)))
+    if (candidateIds.length === 0 || jobIds.length === 0) continue
+
     const { data, error } = await supabase
       .from('ai_summaries')
       .select('candidate_id, job_id')
       .eq('kind', 'match_score')
-      .in('candidate_id', candidateIdChunk)
+      .in('candidate_id', candidateIds)
       .in('job_id', jobIds)
+
     if (error) {
       Sentry.captureException(error, {
         tags: {
@@ -117,15 +166,20 @@ async function fetchAlreadyScoredPairs(
           subop: 'existing-pairs-select',
         },
       })
+      for (const row of chunk) unknown.add(pairKey(row))
       continue
     }
+
+    // The chunk query is a cross-product of the two id lists, so it can
+    // return pairs belonging to rows in a LATER chunk. Recording them is
+    // correct and saves a lookup — they really are scored.
     for (const row of (data ?? []) as ExistingSummaryPairRow[]) {
       if (row.candidate_id && row.job_id) {
         scored.add(`${row.candidate_id}:${row.job_id}`)
       }
     }
   }
-  return scored
+  return { scored, unknown }
 }
 
 export const backfillApplicationMatchScores = inngest.createFunction(
@@ -157,90 +211,206 @@ export const backfillApplicationMatchScores = inngest.createFunction(
       typeof eventData.organization_id === 'string' && eventData.organization_id.length > 0
         ? eventData.organization_id
         : null
+    const startCursor =
+      typeof eventData.created_after === 'string' && eventData.created_after.length > 0
+        ? eventData.created_after
+        : null
 
     return await step.run('sweep', async () => {
       const supabase = createServiceClient()
 
-      let query = supabase
-        .from('applications')
-        .select('id, organization_id, candidate_id, job_id')
-        // Float applications (job_id null by design) have nothing to score
-        // against and are never enqueued.
-        .not('job_id', 'is', null)
-        .order('created_at', { ascending: true })
-        .limit(BACKFILL_ROW_CAP)
-
-      if (scopeOrgId) {
-        query = query.eq('organization_id', scopeOrgId)
-      }
-
-      const { data: rawRows, error } = await query
-      if (error) {
-        Sentry.captureException(error, {
-          tags: {
-            layer: 'inngest',
-            function: 'backfill-application-match-scores',
-            subop: 'applications-select',
-          },
-        })
-        return { enqueued: 0, skippedAlreadyScored: 0, errored: 0, scanned: 0, truncated: false }
-      }
-      // job_id is guaranteed non-null by the `.not('job_id', 'is', null)`
-      // filter above; the generated Row type still carries `string | null`.
-      const rows = (rawRows ?? []) as UnscoredApplicationRow[]
-
-      const truncated = rows.length === BACKFILL_ROW_CAP
-      if (truncated) {
-        // Mirror the STUCK_EVENT_SWEEP_CAP treatment in stripe-reconcile.ts
-        // — a truncation can never lie by omission.
-        Sentry.captureMessage('backfill-application-match-scores: row cap reached', {
-          level: 'warning',
-          tags: {
-            layer: 'inngest',
-            function: 'backfill-application-match-scores',
-            subop: 'row-cap',
-          },
-          extra: { row_cap: BACKFILL_ROW_CAP, scoped_org: scopeOrgId != null },
-        })
-      }
-
-      const alreadyScoredPairs = await fetchAlreadyScoredPairs(supabase, rows)
-
       let enqueued = 0
       let skippedAlreadyScored = 0
+      let skippedUnknown = 0
       let errored = 0
+      let scanned = 0
+      let truncated = false
+      let cursor: string | null = startCursor
+      let nextCursor: string | null = null
 
-      for (const row of rows) {
-        const pairKey = `${row.candidate_id}:${row.job_id}`
-        if (alreadyScoredPairs.has(pairKey)) {
-          skippedAlreadyScored++
-          continue
+      // Ids already visited in THIS run. The page cursor is `.gte` rather
+      // than `.gt` so a group of applications sharing one created_at (every
+      // row of a single bulk-import transaction gets the same now()) can
+      // never be split across a page boundary and silently skipped; this set
+      // is what stops the re-read from being processed twice.
+      const seenApplicationIds = new Set<string>()
+
+      // WR-02 — walk pages of applications oldest-first, skipping ones that
+      // already carry a score, until ENQUEUE_CAP unscored rows have been
+      // fanned out or the scan budget is spent. Because the cap is on
+      // ENQUEUES and scored rows are skipped, each re-run advances: last
+      // run's enqueues acquire summaries, so this run scans past them and
+      // reaches rows that were previously beyond the cap. Newer applications
+      // are therefore reachable, which they were not before.
+      for (let page = 0; page < MAX_SCAN_PAGES; page++) {
+        let query = supabase
+          .from('applications')
+          .select('id, organization_id, candidate_id, job_id, created_at')
+          // Float applications (job_id null by design) have nothing to score
+          // against and are never enqueued.
+          .not('job_id', 'is', null)
+          .order('created_at', { ascending: true })
+          .order('id', { ascending: true })
+          .limit(SCAN_PAGE_SIZE)
+
+        if (scopeOrgId) {
+          query = query.eq('organization_id', scopeOrgId)
         }
-        try {
-          await enqueueApplicationMatchScore({
-            organizationId: row.organization_id,
-            applicationId: row.id,
-            candidateId: row.candidate_id,
-            jobId: row.job_id,
-            userId: null,
+        if (cursor) {
+          query = query.gte('created_at', cursor)
+        }
+
+        const { data: rawRows, error } = await query
+        if (error) {
+          Sentry.captureException(error, {
+            tags: {
+              layer: 'inngest',
+              function: 'backfill-application-match-scores',
+              subop: 'applications-select',
+            },
           })
-          enqueued++
-        } catch (rowErr) {
-          // enqueueApplicationMatchScore is documented never to throw; this
-          // catch is defence in depth so a future change to that contract
-          // can never abort the sweep for every remaining row.
-          errored++
-          Sentry.captureException(
-            formatErrorForSentry(rowErr, 'backfill-application-match-scores row:'),
+          // Fail closed and stop: a partial scan must not be reported as a
+          // completed backlog.
+          truncated = true
+          nextCursor = cursor
+          break
+        }
+
+        // job_id is guaranteed non-null by the `.not('job_id', 'is', null)`
+        // filter above; the generated Row type still carries `string | null`.
+        const pageRows = (rawRows ?? []) as UnscoredApplicationRow[]
+        if (pageRows.length === 0) break
+
+        const lastRow = pageRows[pageRows.length - 1]
+        const freshRows = pageRows.filter((r) => !seenApplicationIds.has(r.id))
+        for (const row of pageRows) seenApplicationIds.add(row.id)
+
+        if (freshRows.length === 0) {
+          // A whole page of already-seen rows means more than SCAN_PAGE_SIZE
+          // applications share one created_at, so the cursor cannot advance.
+          // Stop rather than spin; report it so it is never silent.
+          Sentry.captureMessage(
+            'backfill-application-match-scores: cursor could not advance past a created_at tie',
             {
+              level: 'warning',
               tags: {
                 layer: 'inngest',
                 function: 'backfill-application-match-scores',
-                subop: 'enqueue-row',
+                subop: 'cursor-stall',
               },
+              extra: { page_size: SCAN_PAGE_SIZE, scoped_org: scopeOrgId != null },
             },
           )
+          truncated = true
+          nextCursor = cursor
+          break
         }
+
+        scanned += freshRows.length
+        const lookup = await fetchAlreadyScoredPairs(supabase, freshRows)
+
+        let capReached = false
+        for (const row of freshRows) {
+          const key = pairKey(row)
+          if (lookup.scored.has(key)) {
+            skippedAlreadyScored++
+            continue
+          }
+          if (lookup.unknown.has(key)) {
+            // WR-01 fail-closed: scored-ness unknown, so do not spend. The
+            // next run re-reads this row.
+            skippedUnknown++
+            continue
+          }
+          if (enqueued >= ENQUEUE_CAP) {
+            capReached = true
+            break
+          }
+          try {
+            await enqueueApplicationMatchScore({
+              organizationId: row.organization_id,
+              applicationId: row.id,
+              candidateId: row.candidate_id,
+              jobId: row.job_id,
+              userId: null,
+            })
+            enqueued++
+          } catch (rowErr) {
+            // enqueueApplicationMatchScore is documented never to throw;
+            // this catch is defence in depth so a future change to that
+            // contract can never abort the sweep for every remaining row.
+            errored++
+            Sentry.captureException(
+              formatErrorForSentry(rowErr, 'backfill-application-match-scores row:'),
+              {
+                tags: {
+                  layer: 'inngest',
+                  function: 'backfill-application-match-scores',
+                  subop: 'enqueue-row',
+                },
+              },
+            )
+          }
+        }
+
+        if (capReached) {
+          truncated = true
+          nextCursor = cursor
+          break
+        }
+
+        // Short page = end of the table for this scope.
+        if (pageRows.length < SCAN_PAGE_SIZE) break
+
+        cursor = lastRow?.created_at ?? cursor
+        if (page === MAX_SCAN_PAGES - 1) {
+          truncated = true
+          nextCursor = cursor
+        }
+      }
+
+      if (truncated) {
+        // Mirror the STUCK_EVENT_SWEEP_CAP treatment in stripe-reconcile.ts
+        // — a truncation can never lie by omission. Unlike the old "row cap
+        // reached" warning, this one is TRUE: running the backfill again
+        // now makes progress, and `next_cursor` can be passed back on the
+        // event to resume without re-walking the scored prefix.
+        Sentry.captureMessage(
+          'backfill-application-match-scores: stopped early, more backlog remains',
+          {
+            level: 'warning',
+            tags: {
+              layer: 'inngest',
+              function: 'backfill-application-match-scores',
+              subop: 'row-cap',
+            },
+            extra: {
+              enqueue_cap: ENQUEUE_CAP,
+              scan_budget: SCAN_PAGE_SIZE * MAX_SCAN_PAGES,
+              enqueued,
+              scanned,
+              next_cursor: nextCursor,
+              scoped_org: scopeOrgId != null,
+            },
+          },
+        )
+      }
+
+      if (skippedUnknown > 0) {
+        // Deferred, not lost — but the founder should know the run was not
+        // a complete pass.
+        Sentry.captureMessage(
+          'backfill-application-match-scores: skipped rows with undetermined scored-ness',
+          {
+            level: 'warning',
+            tags: {
+              layer: 'inngest',
+              function: 'backfill-application-match-scores',
+              subop: 'scored-lookup-failed',
+            },
+            extra: { skipped_unknown: skippedUnknown, scoped_org: scopeOrgId != null },
+          },
+        )
       }
 
       // Ids and counts only — no PII (CLAUDE.md).
@@ -248,10 +418,18 @@ export const backfillApplicationMatchScores = inngest.createFunction(
         category: 'inngest',
         message: 'backfill-application-match-scores: sweep complete',
         level: 'info',
-        data: { scanned: rows.length, enqueued, skippedAlreadyScored, errored, truncated },
+        data: { scanned, enqueued, skippedAlreadyScored, skippedUnknown, errored, truncated },
       })
 
-      return { enqueued, skippedAlreadyScored, errored, scanned: rows.length, truncated }
+      return {
+        enqueued,
+        skippedAlreadyScored,
+        skippedUnknown,
+        errored,
+        scanned,
+        truncated,
+        nextCursor,
+      }
     })
   },
 )
