@@ -25,10 +25,16 @@ export const CV_FILE_UPLOAD_INCOMPLETE_DISABLED_COPY =
 
 // Storage path convention (uploadCVAction, actions.ts:188):
 //   `${organizationId}/${candidateId}/${crypto.randomUUID()}-${slugifyFilename(file.name)}.${ext}`
-// A uuid is always exactly 36 characters (8-4-4-4-12 hex digits + 4 hyphens).
-// This mirrors the shape page.tsx:422 used before this module became the
-// single source of truth for the derivation.
-const LEADING_UUID_PREFIX = /^[0-9a-f-]{36}-/
+//
+// IN-07 (review 2026-08-11): this matches the uuid's actual 8-4-4-4-12
+// GROUPING, not just "36 characters of hex-or-hyphen". The looser form also
+// stripped any legitimate 36-character `[0-9a-f-]` filename prefix — e.g. a
+// hyphenated slug of exactly that length — turning a real filename into a
+// truncated one on screen. Case-insensitive because a uuid written by
+// anything other than crypto.randomUUID() (an import, a manual upload, a
+// future writer) may be uppercase; display-only either way, but there is no
+// reason to get it wrong.
+const LEADING_UUID_PREFIX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}-/i
 
 /**
  * Derive a human-readable filename from a candidate_cvs.storage_path: take

@@ -54,6 +54,16 @@ export function CvFilesPanel({ cvs }: CvFilesPanelProps) {
         {cvs.map((cv, index) => {
           const filename = cvDisplayFilename(cv.storage_path)
           const downloadable = isCvFileDownloadable(cv)
+          // IN-03 review note: STATUS_LABEL is an exhaustive
+          // Record<union, string>, so TypeScript types this lookup as
+          // always-defined and treats the `??` as unreachable. It is kept
+          // deliberately as a RUNTIME guard for the window where the
+          // Postgres enum has gained a value but src/types/database.ts has
+          // not been regenerated (`pnpm db:types`) — during which the real
+          // value is outside the union TypeScript believes in, and without
+          // the fallback the badge would render empty on a live page. The
+          // exhaustive Record still fails the build the moment the types ARE
+          // regenerated, which is the signal we want.
           const statusLabel = STATUS_LABEL[cv.parsing_status] ?? 'Pending'
           return (
             <li key={cv.id} className="flex items-center justify-between gap-3">

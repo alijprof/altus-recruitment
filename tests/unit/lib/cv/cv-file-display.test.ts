@@ -44,6 +44,22 @@ describe('cvDisplayFilename', () => {
       CV_FILE_FALLBACK_NAME,
     )
   })
+
+  // IN-07 (review 2026-08-11): the old `^[0-9a-f-]{36}-` matched any 36
+  // characters of hex-or-hyphen, so it also ate legitimate filename prefixes
+  // of that length, and it missed uppercase uuids entirely.
+  it('does not strip a 36-character prefix that is not uuid-shaped', () => {
+    // 36 chars of [a-f0-9-] followed by a hyphen, but not 8-4-4-4-12.
+    const notAUuid = 'abcdef-abcdef-abcdef-abcdef-abcdef-a'
+    expect(notAUuid).toHaveLength(36)
+    expect(cvDisplayFilename(`org/cand/${notAUuid}-cv.pdf`)).toBe(`${notAUuid}-cv.pdf`)
+  })
+
+  it('strips an uppercase uuid prefix too', () => {
+    expect(
+      cvDisplayFilename('org/cand/3F2504E0-4F89-11D3-9A0C-0305E82C3301-jane-smith-cv.pdf'),
+    ).toBe('jane-smith-cv.pdf')
+  })
 })
 
 describe('isCvFileDownloadable', () => {
