@@ -15,7 +15,9 @@ import {
   getCandidateEmbeddingVersion,
   getJobEmbeddingVersion,
 } from '@/lib/db/embeddings'
+import { getJob } from '@/lib/db/jobs'
 import { env } from '@/lib/env'
+import { inngest } from '@/lib/inngest/client'
 import { ENTITLEMENT_BLOCKED_MESSAGE, requireEntitledOrg } from '@/lib/stripe/require-entitlement'
 import { createClient as createSupabaseClient } from '@/lib/supabase/server'
 
@@ -224,4 +226,98 @@ export async function explainCandidateMatchAction(
     })
     return { ok: false, error: 'Failed to score this candidate. Please try again.' }
   }
+}
+
+// ---------------------------------------------------------------------------
+// Plan 07-07 Task 2 — bulk "Score all" action.
+//
+// Fires the SAME `job/score-top-candidates` event that
+// embed-job-on-jd-change.ts, jobs/new/actions.ts, and
+// clients/[id]/jobs/new/actions.ts already produce.
+// `precompute-matches-for-job` (registered separately) does the actual
+// work: tenant-boundary check, month-to-date spend ceiling, up to 10
+// candidates, cache-lookup + Sonnet + upsert per candidate. This action
+// deliberately does NOT duplicate the spend ceiling or the AI cap check —
+// precompute owns both, and a second copy here would be a second place to
+// drift out of sync (see plan interfaces block).
+//
+// Order of operations mirrors explainCandidateMatchAction:
+//   1. validate jobId
+//   2. entitlement gate (this path drives Sonnet spend)
+//   3. auth
+//   4. resolve organizationId
+//   5. RLS-scoped getJob — fail fast on a forged/cross-tenant id so a
+//      forged jobId never costs an Inngest attempt (same reasoning as
+//      score-application-match.ts's tenant-boundary check, applied one
+//      layer earlier). precompute re-checks tenancy server-side regardless.
+//   6. inngest.send — never report success on a failed send.
+// ---------------------------------------------------------------------------
+
+export type ScoreAllMatchesActionResult =
+  | { ok: true }
+  | { ok: false; error: string }
+
+const scoreAllInputSchema = z.object({
+  jobId: z.string().uuid(),
+})
+
+export async function scoreAllMatchesAction(jobId: string): Promise<ScoreAllMatchesActionResult> {
+  const parsed = scoreAllInputSchema.safeParse({ jobId })
+  if (!parsed.success) {
+    return { ok: false, error: 'Invalid request.' }
+  }
+
+  const gate = await requireEntitledOrg()
+  if (!gate.ok) {
+    return { ok: false, error: ENTITLEMENT_BLOCKED_MESSAGE }
+  }
+
+  const supabase = await createSupabaseClient()
+  const { data: userData } = await supabase.auth.getUser()
+  if (!userData.user) {
+    return { ok: false, error: 'Sign in to score matches.' }
+  }
+  const userId = userData.user.id
+
+  const orgResult = await supabase.rpc('current_organization_id')
+  const organizationId = typeof orgResult.data === 'string' ? orgResult.data : null
+  if (!organizationId) {
+    return { ok: false, error: 'Could not resolve your organisation.' }
+  }
+
+  // RLS-scoped read — a forged or cross-tenant jobId surfaces as not_found
+  // here, before any Inngest attempt is spent. precompute-matches-for-job
+  // re-checks the tenant boundary itself (service-role bypasses RLS), so
+  // this is a fail-fast optimisation, not the only guard.
+  const jobResult = await getJob(supabase, parsed.data.jobId)
+  if (!jobResult.ok || jobResult.data.organization_id !== organizationId) {
+    return { ok: false, error: 'Job not found in your organisation.' }
+  }
+
+  try {
+    await inngest.send({
+      name: 'job/score-top-candidates',
+      data: {
+        organization_id: organizationId,
+        job_id: parsed.data.jobId,
+        user_id: userId,
+      },
+    })
+  } catch (err) {
+    // Wrap name only, same PII-safe posture as the explain action's catch
+    // block — never log the Inngest payload.
+    const name = err instanceof Error ? err.name : 'UnknownError'
+    Sentry.captureException(new Error(`scoreAllMatchesAction: ${name}`), {
+      tags: {
+        layer: 'action',
+        action: 'scoreAllMatchesAction',
+        subop: 'inngest.send',
+        job_id: parsed.data.jobId,
+      },
+    })
+    return { ok: false, error: 'Could not start scoring. Please try again.' }
+  }
+
+  revalidatePath(`/jobs/${parsed.data.jobId}/matches`)
+  return { ok: true }
 }
