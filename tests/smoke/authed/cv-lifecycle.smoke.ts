@@ -195,20 +195,29 @@ test.describe.serial('@smoke-auth cv-lifecycle', () => {
         const target = hrefs.find((h) => /^\/candidates\/[0-9a-f-]{36}$/i.test(h))
         if (!target) break
         await page.goto(target)
-        // WR-R6 (re-review): NEVER delete a row whose name lacks the scratch
-        // prefix — search can surface partial matches, and deletion in a
-        // live org is irreversible. Verify on the detail page itself and
-        // fail LOUD rather than deleting the wrong candidate.
-        const detailHeading = page.locator('main h1, main h2').first()
-        await detailHeading.waitFor({ timeout: 10_000 })
-        const headingText = (await detailHeading.innerText()).trim()
+        // WR-R6 (re-review, hardened after live runs): NEVER delete a row
+        // whose name lacks the scratch prefix — deletion in a live org is
+        // irreversible. The detail page STREAMS in: at 'load' the previous
+        // page's h1 ('Candidates') is still in the DOM, so anchor on the
+        // Delete button (definitive, hydrated detail-page control) before
+        // reading any heading. No button within 15s = row already gone or
+        // page bounced — skip it; wrong candidate name = THROW.
+        const deleteButton = page.getByRole('button', { name: 'Delete' })
+        try {
+          await deleteButton.waitFor({ timeout: 15_000 })
+        } catch {
+          continue
+        }
+        const headingText = (await page.locator('main h1').first().innerText()).trim()
+        if (headingText === 'Candidates') {
+          // Stale paint still present despite the button — retry next pass.
+          continue
+        }
         if (!headingText.includes(SCRATCH_NAME_PREFIX)) {
           throw new Error(
             `sweep landed on a NON-SCRATCH candidate at ${target} ("${headingText.slice(0, 40)}") — refusing to delete; investigate the search results`,
           )
         }
-        const deleteButton = page.getByRole('button', { name: 'Delete' })
-        await deleteButton.waitFor({ timeout: 10_000 })
         await deleteButton.click()
         const confirmButton = page.getByRole('button', { name: 'Delete candidate' })
         await confirmButton.waitFor({ timeout: 10_000 })
