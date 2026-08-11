@@ -8,6 +8,7 @@ import { toast } from 'sonner'
 
 import { ConfidenceBadge, type ConfidenceLevel } from '@/components/app/confidence-badge'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Progress } from '@/components/ui/progress'
 import { Separator } from '@/components/ui/separator'
@@ -21,36 +22,31 @@ import {
   SheetTrigger,
 } from '@/components/ui/sheet'
 import {
+  CV_FILE_UPLOAD_INCOMPLETE_DISABLED_COPY,
+  cvDisplayFilename,
+  isCvFileDownloadable,
+} from '@/lib/cv/cv-file-display'
+import { CV_FIELD_LABELS, type ConfidenceSummary } from '@/lib/cv/confidence-summary'
+import {
   CV_PARSE_FAILED_MESSAGE,
   isBudgetCapped,
   isUnretryableParseFailure,
   isUploadIncomplete,
 } from '@/lib/cv/parse-messages'
+import { formatDateLong } from '@/lib/date'
 import type { CandidateCvRow } from '@/lib/db/candidate-cvs'
 
 import { acceptCVFieldsAction, retryParseAction } from './actions'
+import { CvFileLink } from './cv-file-link'
 
 type CvReviewPanelProps = {
   candidateCv: CandidateCvRow
   candidateFullName: string
+  // D-02: server-computed low/medium-confidence field summary. Optional —
+  // PendingState and FailedState never see this prop; only CompleteState
+  // renders the badge + named-field line, and only when unsureCount > 0.
+  confidence?: ConfidenceSummary
 }
-
-// Labels shown in the review sheet. Keeps the order stable across renders
-// so the sheet doesn't reflow on re-parse.
-const FIELD_LABELS: Array<{ key: string; label: string }> = [
-  { key: 'name', label: 'Name' },
-  { key: 'email', label: 'Email' },
-  { key: 'phone', label: 'Phone' },
-  { key: 'location', label: 'Location' },
-  { key: 'current_role', label: 'Current role' },
-  { key: 'current_company', label: 'Current company' },
-  { key: 'seniority_level', label: 'Seniority' },
-  { key: 'years_experience_total', label: 'Years experience' },
-  { key: 'salary_current_estimate', label: 'Current salary (est.)' },
-  { key: 'salary_expectation', label: 'Salary expectation' },
-  { key: 'skills', label: 'Skills' },
-  { key: 'sector_tags', label: 'Sectors' },
-]
 
 type ExtractedShape = {
   [key: string]: unknown
@@ -74,7 +70,7 @@ function formatValue(value: unknown): string {
 function ReviewSheetBody({ extracted }: { extracted: ExtractedShape }) {
   return (
     <div className="space-y-2 px-4">
-      {FIELD_LABELS.map(({ key, label }) => {
+      {CV_FIELD_LABELS.map(({ key, label }) => {
         const value = extracted[key]
         const confidence = extracted.confidence_per_field?.[key]
         // Don't render rows for fields the model didn't return at all,
@@ -356,14 +352,21 @@ function FailedState({
 function CompleteState({
   candidateCv,
   candidateFullName,
+  confidence,
 }: {
   candidateCv: CandidateCvRow
   candidateFullName: string
+  confidence?: ConfidenceSummary
 }) {
   const router = useRouter()
   const [open, setOpen] = useState(false)
   const [isPending, startTransition] = useTransition()
   const extracted = (candidateCv.extracted_data ?? {}) as ExtractedShape
+  const filename = cvDisplayFilename(candidateCv.storage_path)
+  const downloadable = isCvFileDownloadable(candidateCv)
+  const unsureCount = confidence?.unsureCount ?? 0
+  const unsureFields = confidence?.unsureFields ?? []
+  const hasUnsureFields = unsureCount > 0
 
   const onAcceptAll = () => {
     startTransition(async () => {
@@ -390,49 +393,96 @@ function CompleteState({
         <h3 className="text-sm font-semibold">Latest CV</h3>
         <span className="text-muted-foreground text-xs font-normal">Parsing complete</span>
       </div>
-      <Sheet open={open} onOpenChange={setOpen}>
-        <SheetTrigger asChild>
-          <Button size="sm" variant="outline" className="w-full">
-            Review extracted data
-          </Button>
-        </SheetTrigger>
-        <SheetContent
-          side="right"
-          className="w-full overflow-y-auto sm:max-w-md"
-          aria-describedby="cv-review-description"
+      {/* D-01 (Plan 07-01 sibling surface): filename + upload date + the
+          same View control the CV files panel uses lower on the page. */}
+      <div className="flex items-center justify-between gap-3">
+        <p
+          className="text-muted-foreground min-w-0 flex-1 truncate text-xs font-normal"
+          title={filename}
         >
-          <SheetHeader>
-            <SheetTitle className="text-sm font-semibold">Review extracted data</SheetTitle>
-            <SheetDescription id="cv-review-description" className="text-xs font-normal">
-              AI-extracted fields from {candidateFullName}&apos;s CV. Accept all fills any empty
-              candidate fields — your manually-entered values are never overwritten.
-            </SheetDescription>
-          </SheetHeader>
-          <Separator />
-          <ReviewSheetBody extracted={extracted} />
-          <SheetFooter className="border-t">
-            <Button
-              type="button"
-              onClick={onAcceptAll}
-              disabled={isPending}
-              size="sm"
-              className="w-full"
-            >
-              {isPending ? 'Accepting…' : 'Accept all'}
+          {filename} · {formatDateLong(candidateCv.created_at)}
+        </p>
+        <CvFileLink
+          candidateCvId={candidateCv.id}
+          filename={filename}
+          downloadable={downloadable}
+          disabledReason={CV_FILE_UPLOAD_INCOMPLETE_DISABLED_COPY}
+        />
+      </div>
+      {/* HARD CONSTRAINT (07-02-PLAN.md Task 2): the badge is a SIBLING of
+          the Review button inside this flex row, never a child — Sheet
+          renders no DOM node of its own, so the button and badge land as
+          adjacent elements in the actual tree. Nesting badge text inside
+          the button would change its accessible name and break
+          tests/smoke/authed/cv-intake.smoke.ts's
+          getByRole('button', { name: 'Review extracted data' }) lookup. */}
+      <div className="flex items-center gap-2">
+        <Sheet open={open} onOpenChange={setOpen}>
+          <SheetTrigger asChild>
+            <Button size="sm" variant="outline" className="flex-1">
+              Review extracted data
             </Button>
-          </SheetFooter>
-        </SheetContent>
-      </Sheet>
+          </SheetTrigger>
+          <SheetContent
+            side="right"
+            className="w-full overflow-y-auto sm:max-w-md"
+            aria-describedby="cv-review-description"
+          >
+            <SheetHeader>
+              <SheetTitle className="text-sm font-semibold">Review extracted data</SheetTitle>
+              <SheetDescription id="cv-review-description" className="text-xs font-normal">
+                AI-extracted fields from {candidateFullName}&apos;s CV. Accept all fills any empty
+                candidate fields — your manually-entered values are never overwritten.
+              </SheetDescription>
+            </SheetHeader>
+            <Separator />
+            <ReviewSheetBody extracted={extracted} />
+            <SheetFooter className="border-t">
+              <Button
+                type="button"
+                onClick={onAcceptAll}
+                disabled={isPending}
+                size="sm"
+                className="w-full"
+              >
+                {isPending ? 'Accepting…' : 'Accept all'}
+              </Button>
+            </SheetFooter>
+          </SheetContent>
+        </Sheet>
+        {hasUnsureFields ? (
+          <Badge
+            variant="outline"
+            className="shrink-0 border-amber-200 bg-amber-50 text-amber-900 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-100"
+            aria-label={`Unsure fields: ${unsureFields.join(', ')}`}
+          >
+            {unsureCount} {unsureCount === 1 ? 'field' : 'fields'} unsure
+          </Badge>
+        ) : null}
+      </div>
+      {/* D-02: rows without confidence data (or with none low/medium) render
+          NEITHER the badge above nor this line — no empty amber cue. */}
+      {hasUnsureFields ? (
+        <p className="text-muted-foreground text-xs font-normal">
+          Unsure: {unsureFields.join(', ')}.
+        </p>
+      ) : null}
     </div>
   )
 }
 
-export function CvReviewPanel({ candidateCv, candidateFullName }: CvReviewPanelProps) {
+export function CvReviewPanel({ candidateCv, candidateFullName, confidence }: CvReviewPanelProps) {
   if (candidateCv.parsing_status === 'pending') {
     return <PendingState candidateCvId={candidateCv.id} />
   }
   if (candidateCv.parsing_status === 'failed') {
     return <FailedState candidateCvId={candidateCv.id} parseError={candidateCv.parse_error} />
   }
-  return <CompleteState candidateCv={candidateCv} candidateFullName={candidateFullName} />
+  return (
+    <CompleteState
+      candidateCv={candidateCv}
+      candidateFullName={candidateFullName}
+      confidence={confidence}
+    />
+  )
 }
