@@ -89,7 +89,15 @@ export function ScoreAllButton({ jobId }: ScoreAllButtonProps) {
         variant="default"
         size="sm"
         onClick={onClick}
-        disabled={isPending}
+        // WR-03 (review 2026-08-11) — `isPending` clears the instant
+        // inngest.send resolves, but `isPolling` keeps a spinner on screen
+        // for up to 90 more seconds, which reads as "busy". The button was
+        // still live underneath it, so an impatient second click started a
+        // second concurrent precompute run and re-paid Sonnet for every
+        // candidate the first run had not yet finished writing. The action
+        // now also carries an hour-bucketed dedup id as the server-side
+        // half of this guard.
+        disabled={isPending || isPolling}
         className="gap-2"
       >
         {isPending || isPolling ? (

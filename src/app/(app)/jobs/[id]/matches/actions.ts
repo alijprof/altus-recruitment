@@ -253,6 +253,13 @@ const scoreAllInputSchema = z.object({
   jobId: z.string().uuid(),
 })
 
+// Hour-granularity bucket for the "Score all" Inngest dedup id (WR-03).
+// Same value and same reasoning as enqueue-match-score.ts's bucket and the
+// reconciler's REQUEUE_BUCKET_MS: Inngest dedups on `id` for 24h, so a
+// bucket is what keeps a collapsed double-click from becoming a day-long
+// block on ever scoring this job again.
+const SCORE_ALL_DEDUP_BUCKET_MS = 60 * 60 * 1000
+
 export async function scoreAllMatchesAction(jobId: string): Promise<ScoreAllMatchesActionResult> {
   const parsed = scoreAllInputSchema.safeParse({ jobId })
   if (!parsed.success) {
@@ -288,6 +295,25 @@ export async function scoreAllMatchesAction(jobId: string): Promise<ScoreAllMatc
 
   try {
     await inngest.send({
+      // WR-03 (review 2026-08-11) — dedup id, mirroring the prior art in
+      // enqueue-match-score.ts:58. Without one, an impatient double/triple
+      // click during the 90-second poll started 2-3 concurrent
+      // precompute-matches-for-job runs (per-org concurrency is 2), and the
+      // scorer's cache guard only helps once a PRIOR run has finished
+      // WRITING — so the same uncached candidates each bought 2-3 Sonnet
+      // calls. That is the exact failure review 2026-08-04 M1 already paid
+      // for on the other event.
+      //
+      // Hour-bucketed for the same reason as the match-score id: several
+      // precompute outcomes write no summary (empty profile, spend ceiling,
+      // AI cap), so a bare per-job key would turn a transient skip into a
+      // 24h scoring blind spot. The bucket collapses the double-click
+      // (seconds apart) while capping any blind spot at one hour.
+      //
+      // The other three producers of this event (jobs/new, clients/[id]/
+      // jobs/new, embed-job-on-jd-change) deliberately send no id, so this
+      // never dedups a legitimate JD-change or job-creation rescore.
+      id: `score-top:${parsed.data.jobId}:${Math.floor(Date.now() / SCORE_ALL_DEDUP_BUCKET_MS)}`,
       name: 'job/score-top-candidates',
       data: {
         organization_id: organizationId,
