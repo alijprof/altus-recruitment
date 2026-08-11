@@ -445,6 +445,23 @@ export type UpdateCandidateInput = Partial<{
   market_status: Enums<'market_status'>
   source: Enums<'candidate_source'>
   last_contacted_at: string | null
+  // Plan 07-03 (CLT-04) — full parsed-field editing. skills / sector_tags are
+  // `text[] not null default '{}'`; work_experience / education are
+  // `jsonb not null default '[]'`. An empty array is the legitimate
+  // "cleared" value for all four and MUST be written when present, not
+  // skipped — see edit/actions.ts's toNullableString/toNullableNumber
+  // comment for why `undefined` (key omitted from the caller's patch) is
+  // treated differently from an explicit empty value.
+  seniority_level: string | null
+  years_experience: number | null
+  salary_current_estimate: number | null
+  salary_expectation: number | null
+  headline: string | null
+  about: string | null
+  skills: string[]
+  sector_tags: string[]
+  work_experience: unknown[]
+  education: unknown[]
 }>
 
 /**

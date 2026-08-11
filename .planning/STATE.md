@@ -3,7 +3,7 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: Milestone complete — awaiting next milestone
-last_updated: "2026-08-11T14:10:32.592Z"
+last_updated: "2026-08-11T14:13:16.774Z"
 progress:
   total_phases: 2
   completed_phases: 0
@@ -118,6 +118,7 @@ Items acknowledged and deferred at milestone close on 2026-06-12. All 21 quick t
 | Phase 06 P03 | 55min | 2 tasks | 22 files |
 | Phase 06 P05 | 30min | 3 tasks | 5 files |
 | Phase 07 P07 | 25min | 2 tasks | 4 files |
+| Phase 07 P03 | 15min | 3 tasks | 5 files |
 
 ## Decisions
 
@@ -128,3 +129,5 @@ Items acknowledged and deferred at milestone close on 2026-06-12. All 21 quick t
 - [Phase 06]: 06-05: C1/C2 (Unicode illegalities) target updateCandidateCVParse's extracted_data jsonb; C3/C4/C5 target markCandidateFieldsFromCV's typed candidates columns — matches which real Postgres column each verified-matrix row actually writes to
 - [Phase 06]: 06-05: BAD-ENUM is the one test where result.ok===false is the PERMANENT expected outcome — proves DbResult.detail will carry the SQLSTATE + column once 06-06/06-07 land
 - [Phase 07]: scoreAllMatchesAction reuses precompute's spend ceiling and AI cap guards rather than duplicating them; the action layer only adds a fail-fast RLS-scoped tenant check before spending an Inngest attempt
+- [Phase 07]: 07-03: undefined-preserving null coercion (toNullableString/toNullableNumber) for the 10 new edit-schema scalar fields, not the existing eight's bare x||null — the unmodified edit form omits these keys until 07-04, and x||null would silently null out real candidate data on every save — data-safety on a live-prod system with real candidate rows
+- [Phase 07]: 07-03: Record<keyof T, true> exhaustiveness assertion (not the plan-suggested satisfies-array) for the embedding-invalidation contract test's compile-time binding to CandidateEmbedFields — catches both field-added and field-removed drift at typecheck time; satisfies-array only catches removal
