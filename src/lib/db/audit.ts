@@ -87,6 +87,48 @@ export async function recordSearchAudit(
   return recordViewAudit(supabase, 'search', NIL_UUID, metadata)
 }
 
+/**
+ * Write an `export` audit row via the `record_audit` RPC. Same never-throw
+ * contract and shape as recordViewAudit — the only difference is the action.
+ *
+ * Plan 07-01: this is intentionally a SEPARATE helper rather than
+ * recordViewAudit(..., 'export' as never) or a shared internal with an
+ * action parameter. Migration 20260804140000 deduplicates `view` rows per
+ * (actor, entity, hour) — filing a CV download as `view` would silently
+ * collapse repeated exports of a PII document (the same recruiter opening
+ * the same CV three times in an hour) into a single row, destroying the one
+ * question audit_log exists to answer: who accessed this document, and how
+ * many times. `export` is explicitly excluded from that dedupe (see the
+ * migration's header comment) and already exists in the `audit_action`
+ * enum, so this plan requires NO migration — every call here writes its own
+ * row.
+ */
+export async function recordExportAudit(
+  supabase: SupabaseClient<Database>,
+  entityType: string,
+  entityId: string,
+  metadata?: Record<string, unknown>,
+): Promise<void> {
+  try {
+    const client = supabase as unknown as RecordAuditClient
+    const { error } = await client.rpc('record_audit', {
+      p_action: 'export',
+      p_entity_type: entityType,
+      p_entity_id: entityId,
+      p_metadata: metadata,
+    })
+    if (error) {
+      Sentry.captureException(error, {
+        tags: { layer: 'db', helper: 'recordExportAudit', subop: 'record_audit' },
+      })
+    }
+  } catch (err) {
+    Sentry.captureException(err, {
+      tags: { layer: 'db', helper: 'recordExportAudit', subop: 'record_audit' },
+    })
+  }
+}
+
 type ServiceAuditClient = {
   from: (table: 'audit_log') => {
     insert: (row: Record<string, unknown>) => Promise<{ data: unknown; error: unknown }>
