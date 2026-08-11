@@ -70,16 +70,41 @@ Plans:
 
 ### Phase 7: CV Lifecycle & Trust — make stored CVs visible/downloadable with version history, proactively flag low-confidence parsed fields, full editing of AI-parsed fields with re-embed-on-change, match-score backfill + auto-freshness, and background-job hardening (cron timeouts + heartbeats)
 
-**Goal:** [To be planned]
-**Requirements**: TBD
+**Goal:** The CV data the customer already trusts us with becomes visible, correctable and trustworthy — every stored CV file is viewable and downloadable with its version history and an audit trail, low-confidence parsed fields are flagged before the recruiter has to go looking, every AI-parsed field is editable in-app with correct embedding invalidation, every application carries a match score, and a wedged background job can no longer block the queue for days unnoticed.
+**Requirements**: [CLT-01, CLT-02, CLT-03, CLT-04, CLT-05, CLT-06, CLT-07, CLT-08]
 **Depends on:** Phase 6
-**Plans:** 0 plans
+**Plans:** 8 plans
+
+Requirements:
+
+- **CLT-01** — Stored CV files are viewable and downloadable from the candidate page — on the Latest CV panel and on every version row, for single- and multi-CV candidates alike — with filename and upload date, and an honest disabled state where no stored object exists.
+- **CLT-02** — Every CV file access writes an `export` audit row against the candidate, with PII-free metadata, before the signed URL reaches the browser.
+- **CLT-03** — Low/medium-confidence parsed fields are surfaced proactively outside the review sheet: a count badge beside the Review button and a line naming the fields.
+- **CLT-04** — Every AI-parsed candidate field is editable in-app (seniority, years, both salaries, headline, about, skills, sectors, work history, education), with Postgres-safe writes and embedding invalidation left to the DB trigger, guarded by a contract test.
+- **CLT-05** — Applications predating auto-scoring are backfilled with match scores across all orgs — idempotent, tenant-verified and cap-guarded, reusing the existing scorer rather than duplicating its guards.
+- **CLT-06** — Match-score freshness: the Explain action refreshes its own card instead of instructing a page reload, and a bulk `Score all` affordance exists on the matches page.
+- **CLT-07** — Neither concurrency-1 cron can block the background queue indefinitely, and the liveness of both is observable same-day via Sentry heartbeats plus a documented monitor setup.
+- **CLT-08** — Acceptance and closure: full autonomous gates, mechanical code review, and an authenticated browser pre-smoke — all green — before any founder UAT, with the Phase-6 frozen CV-intake suite still passing unchanged.
 
 Plans:
 
-- [ ] TBD (run /gsd:plan-phase 7 to break down)
+- [ ] 07-01-PLAN.md — CV file access: signed-URL action, export audit, CV files section (wave 1)
+- [ ] 07-02-PLAN.md — Proactive low-confidence flagging on the Latest CV panel (wave 2)
+- [ ] 07-03-PLAN.md — Parsed-field editing: schema, action, and the embedding-invalidation contract test (wave 1)
+- [ ] 07-04-PLAN.md — Parsed-field editing: tag input, repeating-row editors, expanded edit form (wave 2)
+- [ ] 07-05-PLAN.md — Cron hardening: function timeouts, Sentry heartbeats, monitoring runbook (wave 1)
+- [ ] 07-06-PLAN.md — Match-score backfill sweep + super-admin trigger (wave 1)
+- [ ] 07-07-PLAN.md — Match freshness: self-refreshing Explain + `Score all` (wave 1)
+- [ ] 07-08-PLAN.md — Acceptance gate: full gates, code review, authed browser pre-smoke (wave 3)
+
+**Design note:** This phase needs NO migration — `export` already exists in the
+`audit_action` enum (migration 20260513152244:77), and the
+`invalidate_candidate_embedding` trigger (20260519092951) already watches
+exactly the eight columns `candidateEmbeddingText` consumes, so the newly
+editable search-relevant fields invalidate correctly with zero app-side code
+and the newly editable non-search fields correctly do not.
 
 ---
 
 *Roadmap created: 2026-05-17*
-*Last updated: 2026-08-09 — Phase 6 planned (10 plans, 8 waves)*
+*Last updated: 2026-08-11 — Phase 7 planned (8 plans, 3 waves)*
