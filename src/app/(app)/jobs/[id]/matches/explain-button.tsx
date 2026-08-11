@@ -1,5 +1,6 @@
 'use client'
 
+import { useRouter } from 'next/navigation'
 import { useTransition } from 'react'
 import { Loader2, Sparkles } from 'lucide-react'
 import { toast } from 'sonner'
@@ -14,8 +15,13 @@ import { explainCandidateMatchAction } from './actions'
 // Renders inside each <MatchCard> when the cache is missing the row. Calls
 // the synchronous explainCandidateMatchAction (3-6s typical wait, see W-1
 // documented exception in actions.ts). useTransition keeps the button
-// disabled during pending; the matches page revalidates on success so the
-// card upgrades on the next render.
+// disabled during pending.
+//
+// Plan 07-07 Task 1: the server action already calls revalidatePath on
+// every success path, but that only invalidates the Next.js cache — it does
+// not tell THIS client to re-fetch. router.refresh() is the missing half
+// (identical pattern to cv-review-panel.tsx's onAcceptAll), so the card
+// upgrades in place instead of asking the recruiter to refresh manually.
 // ---------------------------------------------------------------------------
 
 export type ExplainButtonProps = {
@@ -24,6 +30,7 @@ export type ExplainButtonProps = {
 }
 
 export function ExplainButton({ jobId, candidateId }: ExplainButtonProps) {
+  const router = useRouter()
   const [isPending, startTransition] = useTransition()
 
   const onClick = () => {
@@ -33,7 +40,8 @@ export function ExplainButton({ jobId, candidateId }: ExplainButtonProps) {
         toast.error(result.error)
         return
       }
-      toast.success('Match explained — refresh to see details')
+      toast.success('Match explained')
+      router.refresh()
     })
   }
 
