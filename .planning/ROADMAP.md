@@ -95,6 +95,9 @@ Plans:
 - [x] 07-05-PLAN.md — Cron hardening: function timeouts, Sentry heartbeats, monitoring runbook (wave 1)
 - [ ] 07-06-PLAN.md — Match-score backfill sweep + super-admin trigger (wave 1)
 - [x] 07-07-PLAN.md — Match freshness: self-refreshing Explain + `Score all` (wave 1)
+- [ ] 07-05-PLAN.md — Cron hardening: function timeouts, Sentry heartbeats, monitoring runbook (wave 1)
+- [x] 07-06-PLAN.md — Match-score backfill sweep + super-admin trigger (wave 1)
+- [ ] 07-07-PLAN.md — Match freshness: self-refreshing Explain + `Score all` (wave 1)
 - [ ] 07-08-PLAN.md — Acceptance gate: full gates, code review, authed browser pre-smoke (wave 3)
 
 **Design note:** This phase needs NO migration — `export` already exists in the

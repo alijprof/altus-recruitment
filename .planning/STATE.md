@@ -3,7 +3,7 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: Milestone complete — awaiting next milestone
-last_updated: "2026-08-11T14:15:55.793Z"
+last_updated: "2026-08-11T14:17:37.736Z"
 progress:
   total_phases: 2
   completed_phases: 0
@@ -120,6 +120,7 @@ Items acknowledged and deferred at milestone close on 2026-06-12. All 21 quick t
 | Phase 07 P07 | 25min | 2 tasks | 4 files |
 | Phase 07 P03 | 15min | 3 tasks | 5 files |
 | Phase 07 P05 | 25min | 3 tasks | 4 files |
+| Phase 07-cv-lifecycle-trust-make-stored-cvs-visible-downloadable-with P06 | 30min | 2 tasks | 6 files |
 
 ## Decisions
 
@@ -135,3 +136,4 @@ Items acknowledged and deferred at milestone close on 2026-06-12. All 21 quick t
 - [Phase 07]: 07-05: timeouts.start=5m / timeouts.finish=10m on embed-batch + reconcile-cv-parses — ~10x healthy runtime, bounds a wedged concurrency-1 run without falsely cancelling legitimate slow runs
 - [Phase 07]: 07-05: regression test uses source inspection (node:fs + regex) rather than importing the Inngest function modules, since import pulls in @/lib/supabase/service, @/lib/env and the Sentry SDK requiring a populated server env the unit suite doesn't have
 - [Phase 07]: 07-05: cron-monitoring runbook recommends a Sentry Metric Alert (Number of Events, "is below 1") keyed on each heartbeat message string, not the native Sentry Crons/check-in product — the existing heartbeats use plain Sentry.captureMessage not Sentry.captureCheckIn
+- [Phase 07-06]: Backfill sweep is event-triggered only, no cron — spend never happens on a schedule nobody asked for
