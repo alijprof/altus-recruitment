@@ -3,7 +3,7 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: Milestone complete — awaiting next milestone
-last_updated: "2026-08-11T14:13:16.774Z"
+last_updated: "2026-08-11T14:15:55.793Z"
 progress:
   total_phases: 2
   completed_phases: 0
@@ -119,6 +119,7 @@ Items acknowledged and deferred at milestone close on 2026-06-12. All 21 quick t
 | Phase 06 P05 | 30min | 3 tasks | 5 files |
 | Phase 07 P07 | 25min | 2 tasks | 4 files |
 | Phase 07 P03 | 15min | 3 tasks | 5 files |
+| Phase 07 P05 | 25min | 3 tasks | 4 files |
 
 ## Decisions
 
@@ -131,3 +132,6 @@ Items acknowledged and deferred at milestone close on 2026-06-12. All 21 quick t
 - [Phase 07]: scoreAllMatchesAction reuses precompute's spend ceiling and AI cap guards rather than duplicating them; the action layer only adds a fail-fast RLS-scoped tenant check before spending an Inngest attempt
 - [Phase 07]: 07-03: undefined-preserving null coercion (toNullableString/toNullableNumber) for the 10 new edit-schema scalar fields, not the existing eight's bare x||null — the unmodified edit form omits these keys until 07-04, and x||null would silently null out real candidate data on every save — data-safety on a live-prod system with real candidate rows
 - [Phase 07]: 07-03: Record<keyof T, true> exhaustiveness assertion (not the plan-suggested satisfies-array) for the embedding-invalidation contract test's compile-time binding to CandidateEmbedFields — catches both field-added and field-removed drift at typecheck time; satisfies-array only catches removal
+- [Phase 07]: 07-05: timeouts.start=5m / timeouts.finish=10m on embed-batch + reconcile-cv-parses — ~10x healthy runtime, bounds a wedged concurrency-1 run without falsely cancelling legitimate slow runs
+- [Phase 07]: 07-05: regression test uses source inspection (node:fs + regex) rather than importing the Inngest function modules, since import pulls in @/lib/supabase/service, @/lib/env and the Sentry SDK requiring a populated server env the unit suite doesn't have
+- [Phase 07]: 07-05: cron-monitoring runbook recommends a Sentry Metric Alert (Number of Events, "is below 1") keyed on each heartbeat message string, not the native Sentry Crons/check-in product — the existing heartbeats use plain Sentry.captureMessage not Sentry.captureCheckIn

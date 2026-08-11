@@ -92,7 +92,7 @@ Plans:
 - [ ] 07-02-PLAN.md — Proactive low-confidence flagging on the Latest CV panel (wave 2)
 - [x] 07-03-PLAN.md — Parsed-field editing: schema, action, and the embedding-invalidation contract test (wave 1)
 - [ ] 07-04-PLAN.md — Parsed-field editing: tag input, repeating-row editors, expanded edit form (wave 2)
-- [ ] 07-05-PLAN.md — Cron hardening: function timeouts, Sentry heartbeats, monitoring runbook (wave 1)
+- [x] 07-05-PLAN.md — Cron hardening: function timeouts, Sentry heartbeats, monitoring runbook (wave 1)
 - [ ] 07-06-PLAN.md — Match-score backfill sweep + super-admin trigger (wave 1)
 - [x] 07-07-PLAN.md — Match freshness: self-refreshing Explain + `Score all` (wave 1)
 - [ ] 07-08-PLAN.md — Acceptance gate: full gates, code review, authed browser pre-smoke (wave 3)

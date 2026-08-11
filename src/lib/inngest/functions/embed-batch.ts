@@ -102,8 +102,25 @@ export const embedBatch = inngest.createFunction(
     concurrency: { limit: 1 },
     // Failures recover on the next 10-min run — no aggressive retry.
     retries: 1,
+    // Cron hardening (2026-08-11) — a wedged run sat holding this
+    // concurrency-1 slot for days (4-9 Aug) and silently blocked every
+    // later cron tick behind it. `finish` bounds a run's total time and
+    // RELEASES the slot if it wedges; `start` cancels a tick that never
+    // got to run at all, so ticks stop queueing up behind a blocked one.
+    // Healthy runs finish in seconds; these windows are ~10x that.
+    timeouts: { start: '5m', finish: '10m' },
   },
   async ({ event, step }) => {
+    // Cron hardening (2026-08-11) — top-of-handler heartbeat, before any
+    // step.run, so the tick is provable even when the sweep finds nothing
+    // to do. This also fires on the event-driven `embed/backfill-org`
+    // trigger (embed-batch has two triggers) — acceptable, not gated
+    // behind a cron check, since the point is proving liveness of ticks.
+    Sentry.captureMessage('embed-batch:cron:heartbeat', {
+      level: 'info',
+      tags: { layer: 'inngest', function: 'embed-batch' },
+    })
+
     const eventData = isEmbedBatchEvent(event.data) ? event.data : {}
     const scopeOrgId =
       typeof eventData.organization_id === 'string' && eventData.organization_id.length > 0
