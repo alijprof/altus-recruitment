@@ -1198,3 +1198,84 @@ assertion still in place. The four minor items above are optional cleanups.
 ---
 
 _Final ack: 2026-08-11 · Range `bf854cf..d6dc6ac` · Reviewer: Claude (gsd-code-reviewer)_
+
+---
+
+# Final ack (2) — `39866f3`
+
+**Verdict: SHIP-CONFIRMED.**
+
+## WR-R4 — landed, and non-vacuous
+
+`git diff bf854cf..39866f3 -- tests/smoke/authed/cv-lifecycle.smoke.ts` now shows
+the Explain block (lines 442-455), not just the WR-R6 guard. Verified it can
+actually fire rather than always taking the skip branch:
+
+- `getByRole('button', { name: 'Explain match', exact: true })` — the real
+  control renders `{isPending ? 'Scoring…' : 'Explain match'}` with an
+  `aria-hidden` icon (`explain-button.tsx:60-62`), so the accessible name is
+  exactly `Explain match`. Matches.
+- `getByText('Match explained')` — the action toasts exactly
+  `toast.success('Match explained')` (`explain-button.tsx:43`). Matches, and it
+  is correctly **not** scoped to `main`, since sonner portals to a body-level
+  region.
+- 60 s budget covers the documented 3-6 s synchronous action; the skip branch
+  logs rather than passing silently.
+
+This assertion can now distinguish fixed from unfixed code, which the previous
+`not.toContain('refresh to see')` grep could not.
+
+## WR-R5 — landed
+
+The hard `toBeVisible()` and the NOTE conceding its own flakiness are gone,
+replaced by `count() > 0 → toBeEnabled()`, else a logged skip. The all-fresh
+edge can no longer produce a false red on a release-gating smoke.
+
+## Final-ack caveat — closed, proven by mutation
+
+The pin now also asserts `code.slice(firstStepRunIdx, firstStepRunIdx + 300)`
+contains `Sentry.captureMessage(` (comments are stripped first, so the window is
+ample). Re-ran both mutations against `embed-batch.ts`:
+
+| Mutation | Before | Now |
+|---|---|---|
+| heartbeat → bare top-of-handler | FAIL | **FAIL** (unchanged) |
+| heartbeat → after the first step's real work | PASS (the gap) | **FAIL** — "the heartbeat must be the FIRST statement of the first step, not after its real work" |
+
+Source restored after each; working tree clean.
+
+## Housekeeping items — all done
+
+Orphaned CR-03 comment blocks replaced in both cron files with an accurate
+three-line pointer; `docs/cron-monitoring.md` §2 now says "the FIRST STATEMENT of
+each cron's first real step" with the WR-R2 rationale; `07-FIXES.md` carries an
+addendum that states the d6dc6ac overclaim and the `cv-intake.smoke.ts` WR-R6
+deviation plainly.
+
+## Gates re-run on `39866f3`
+
+`tsc --noEmit` clean · `vitest run` **952 passed / 28 todo / 0 failed** · `eslint`
+**0 errors** · `prettier --check` clean on every file touched since `bf854cf` ·
+the seven frozen Phase-6 files byte-identical to `5144ec7` · no migrations, no
+dependency changes, `tests/fixtures/**` untouched · no `role="alert"` on any code
+line · no control bytes · the new `.gitignore` entries exclude no tracked file
+(`git ls-files -i -c` empty).
+
+## Non-blocking observations (no action required)
+
+- `reconcile-cv-parses.ts` lost its `// Step A — sweep-stuck-pending` banner in
+  the comment replacement while Step B (line 276) and Step C (line 390) keep
+  theirs. Cosmetic only.
+- The Explain click writes one real `ai_summaries` match_score row (~1p) for a
+  real candidate/job pair in the founder's org, which the scratch-prefix sweep
+  does not remove. Indistinguishable from ordinary product use, and disclosed in
+  the spec's own comment — an acceptable trade for a non-vacuous D-07 guard.
+- If the founder's org is at its AI cap when the smoke runs, the Explain
+  assertion times out at 60 s with a D-07-flavoured message rather than naming
+  the cap. Unlike WR-R5's all-fresh case (a healthy state), being capped is
+  something the founder should see fail — so failing is the right behaviour, if
+  not the clearest message.
+
+---
+
+_Final ack 2: 2026-08-11 · Range `d6dc6ac..39866f3` (smoke verified `bf854cf..39866f3`) · **SHIP-CONFIRMED** · Reviewer: Claude (gsd-code-reviewer)_
