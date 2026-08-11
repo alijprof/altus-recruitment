@@ -5,6 +5,7 @@ import { ActivityTimeline, type ActivityEntry } from '@/components/app/activity-
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Separator } from '@/components/ui/separator'
+import { summariseConfidence } from '@/lib/cv/confidence-summary'
 import { formatDateLong, formatTimeAgo } from '@/lib/date'
 import { listApplicationsForCandidate } from '@/lib/db/applications'
 import { listCandidateCVs } from '@/lib/db/candidate-cvs'
@@ -148,6 +149,14 @@ export default async function CandidateDetailPage({
   const cvsResult = await listCandidateCVs(supabase, id)
   const cvRows = cvsResult.ok ? cvsResult.data : []
   const latestCv = cvRows[0] ?? null
+
+  // D-02: server-side computation of the "N fields unsure" cue — only when
+  // there's a completed parse to summarise. PendingState/FailedState never
+  // see this prop, so there's no reason to compute it for those rows.
+  const confidenceSummary =
+    latestCv && latestCv.parsing_status === 'complete'
+      ? summariseConfidence(latestCv.extracted_data)
+      : undefined
 
   // Applications across all jobs — best-effort. Drives the inline stage-
   // change section. If this errors we just hide the section.
@@ -407,6 +416,7 @@ export default async function CandidateDetailPage({
             <CvReviewPanel
               candidateCv={latestCv}
               candidateFullName={candidate.full_name}
+              confidence={confidenceSummary}
             />
           ) : null}
 
