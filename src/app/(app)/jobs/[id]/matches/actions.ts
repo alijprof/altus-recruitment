@@ -260,7 +260,10 @@ const scoreAllInputSchema = z.object({
 // reconciler's REQUEUE_BUCKET_MS: Inngest dedups on `id` for 24h, so a
 // bucket is what keeps a collapsed double-click from becoming a day-long
 // block on ever scoring this job again.
-const SCORE_ALL_DEDUP_BUCKET_MS = 60 * 60 * 1000
+// WR-R3 (re-review): an hour-wide bucket silently swallowed a legitimate
+// retry for up to 59 min while toasting "Scoring started". Two minutes
+// still collapses double-clicks/fast repeats without lying to the user.
+const SCORE_ALL_DEDUP_BUCKET_MS = 2 * 60 * 1000
 
 export async function scoreAllMatchesAction(jobId: string): Promise<ScoreAllMatchesActionResult> {
   const parsed = scoreAllInputSchema.safeParse({ jobId })

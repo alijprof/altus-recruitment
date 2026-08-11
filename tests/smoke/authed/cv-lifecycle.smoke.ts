@@ -195,6 +195,18 @@ test.describe.serial('@smoke-auth cv-lifecycle', () => {
         const target = hrefs.find((h) => /^\/candidates\/[0-9a-f-]{36}$/i.test(h))
         if (!target) break
         await page.goto(target)
+        // WR-R6 (re-review): NEVER delete a row whose name lacks the scratch
+        // prefix — search can surface partial matches, and deletion in a
+        // live org is irreversible. Verify on the detail page itself and
+        // fail LOUD rather than deleting the wrong candidate.
+        const detailHeading = page.locator('main h1, main h2').first()
+        await detailHeading.waitFor({ timeout: 10_000 })
+        const headingText = (await detailHeading.innerText()).trim()
+        if (!headingText.includes(SCRATCH_NAME_PREFIX)) {
+          throw new Error(
+            `sweep landed on a NON-SCRATCH candidate at ${target} ("${headingText.slice(0, 40)}") — refusing to delete; investigate the search results`,
+          )
+        }
         const deleteButton = page.getByRole('button', { name: 'Delete' })
         await deleteButton.waitFor({ timeout: 10_000 })
         await deleteButton.click()

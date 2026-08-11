@@ -174,18 +174,20 @@ export const reconcileCvParses = inngest.createFunction(
     // depends on. Keeping it FIRST preserves the original intent (visible
     // even when there is nothing to do); see docs/cron-monitoring.md §2 for
     // the residual monthly volume against the free tier.
-    await step.run('heartbeat', async () => {
-      Sentry.captureMessage('reconcile-cv-parses:cron:heartbeat', {
-        level: 'info',
-        tags: { layer: 'inngest', function: 'reconcile-cv-parses' },
-      })
-      return { ok: true }
-    })
-
     // -------------------------------------------------------------------
     // Step A — sweep-stuck-pending.
     // -------------------------------------------------------------------
     await step.run('sweep-stuck-pending', async () => {
+      // WR-R2 (re-review 2026-08-11): heartbeat lives INSIDE the first real
+      // step rather than as its own step — a dedicated step cost +1 step
+      // execution per run (~7.3k/month across both crons, ~42% more of the
+      // same Inngest step quota whose exhaustion caused the 4-9 Aug outage).
+      // First statement, so a run that wedges later in this step has already
+      // heartbeat-ed, and memoization still guarantees exactly one per run.
+      Sentry.captureMessage('reconcile-cv-parses:cron:heartbeat', {
+        level: 'info',
+        tags: { layer: 'inngest', function: 'reconcile-cv-parses' },
+      })
       const supabase = createServiceClient()
       const cutoff = new Date(Date.now() - STUCK_PENDING_GRACE_MS).toISOString()
       const { data: rawRows, error } = await supabase

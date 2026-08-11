@@ -135,14 +135,6 @@ export const embedBatch = inngest.createFunction(
     // depends on. Keeping it FIRST preserves the original intent (visible
     // even when there is nothing to do); see docs/cron-monitoring.md §2 for
     // the residual monthly volume against the free tier.
-    await step.run('heartbeat', async () => {
-      Sentry.captureMessage('embed-batch:cron:heartbeat', {
-        level: 'info',
-        tags: { layer: 'inngest', function: 'embed-batch' },
-      })
-      return { ok: true }
-    })
-
     const eventData = isEmbedBatchEvent(event.data) ? event.data : {}
     const scopeOrgId =
       typeof eventData.organization_id === 'string' && eventData.organization_id.length > 0
@@ -157,6 +149,16 @@ export const embedBatch = inngest.createFunction(
     // Step A: candidates sweep.
     // ------------------------------------------------------------------
     await step.run('sweep-candidates', async () => {
+      // WR-R2 (re-review 2026-08-11): heartbeat lives INSIDE the first real
+      // step rather than as its own step — a dedicated step cost +1 step
+      // execution per run (~7.3k/month across both crons, ~42% more of the
+      // same Inngest step quota whose exhaustion caused the 4-9 Aug outage).
+      // First statement, so a run that wedges later in this step has already
+      // heartbeat-ed, and memoization still guarantees exactly one per run.
+      Sentry.captureMessage('embed-batch:cron:heartbeat', {
+        level: 'info',
+        tags: { layer: 'inngest', function: 'embed-batch' },
+      })
       const supabase = createServiceClient()
 
       let query = supabase

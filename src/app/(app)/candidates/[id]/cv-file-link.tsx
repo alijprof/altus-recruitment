@@ -66,7 +66,18 @@ export function CvFileLink({
     }
 
     startTransition(async () => {
-      const result = await getCvFileUrlAction({ candidateCvId })
+      // WR-R1 (re-review): the awaited action can REJECT (network drop,
+      // server crash), not just resolve {ok:false} — without this catch the
+      // recruiter is left staring at an orphan blank tab with no feedback,
+      // the exact silent-failure class this control exists to kill.
+      let result: Awaited<ReturnType<typeof getCvFileUrlAction>>
+      try {
+        result = await getCvFileUrlAction({ candidateCvId })
+      } catch {
+        win?.close()
+        toast.error("Couldn't open the CV — please try again.")
+        return
+      }
       if (!result.ok) {
         win?.close()
         toast.error(result.error)

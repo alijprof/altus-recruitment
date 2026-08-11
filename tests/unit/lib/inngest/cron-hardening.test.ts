@@ -35,10 +35,12 @@ const TARGETS = [
   {
     name: 'embed-batch',
     path: resolve(process.cwd(), 'src/lib/inngest/functions/embed-batch.ts'),
+    expectedFirstStep: 'sweep-candidates',
   },
   {
     name: 'reconcile-cv-parses',
     path: resolve(process.cwd(), 'src/lib/inngest/functions/reconcile-cv-parses.ts'),
+    expectedFirstStep: 'sweep-stuck-pending',
   },
 ]
 
@@ -104,12 +106,13 @@ describe('cron-hardening — timeouts + heartbeat regression (Phase 07 Plan 05)'
         // intent (emitted before any real work, so a tick that finds nothing
         // to do is still provably alive) while making it memoized.
         const firstStepRunId = /step\.run\(\s*'([^']+)'/.exec(code.slice(firstStepRunIdx))?.[1]
+        // WR-R2: the heartbeat is the FIRST STATEMENT inside the first REAL
+        // step (a dedicated heartbeat step cost +1 step execution per run
+        // against the same quota whose exhaustion caused the 4-9 Aug outage).
         expect(
           firstStepRunId,
-          `${target.name}: the FIRST step.run must be the heartbeat. Any earlier step means a run ` +
-            'that wedges in that step never emits a heartbeat — precisely the silent 4-9 Aug outage ' +
-            'this phase closes.',
-        ).toBe('heartbeat')
+          `${target.name}: the first step.run must be the expected sweep step that opens with the heartbeat`,
+        ).toBe(target.expectedFirstStep)
 
         // …and it must be INSIDE that step, not bare handler code. Inngest
         // replays every non-step statement once per step boundary, so a
