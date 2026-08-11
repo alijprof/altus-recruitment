@@ -68,6 +68,17 @@ Plans:
 - [ ] 06-09-PLAN.md — Verification gate: full green, code review, browser pre-smoke + layer-3 spot-check (wave 7)
 - [ ] 06-10-PLAN.md — Customer closure: retry the 12, founder handoff, permanent runbook (wave 8)
 
+### Phase 7: CV Lifecycle & Trust — make stored CVs visible/downloadable with version history, proactively flag low-confidence parsed fields, full editing of AI-parsed fields with re-embed-on-change, match-score backfill + auto-freshness, and background-job hardening (cron timeouts + heartbeats)
+
+**Goal:** [To be planned]
+**Requirements**: TBD
+**Depends on:** Phase 6
+**Plans:** 0 plans
+
+Plans:
+
+- [ ] TBD (run /gsd:plan-phase 7 to break down)
+
 ---
 
 *Roadmap created: 2026-05-17*
