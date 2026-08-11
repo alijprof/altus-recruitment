@@ -5,7 +5,10 @@ import { redirect } from 'next/navigation'
 import * as Sentry from '@sentry/nextjs'
 import { z } from 'zod'
 
-import { CV_FILE_UPLOAD_INCOMPLETE_DISABLED_COPY, isCvFileDownloadable } from '@/lib/cv/cv-file-display'
+import {
+  CV_FILE_UPLOAD_INCOMPLETE_DISABLED_COPY,
+  isCvFileDownloadable,
+} from '@/lib/cv/cv-file-display'
 import { assertUploadableCV } from '@/lib/cv/file-signature'
 import { isUnretryableParseFailure, isUploadIncomplete } from '@/lib/cv/parse-messages'
 import { createActivity } from '@/lib/db/activities'

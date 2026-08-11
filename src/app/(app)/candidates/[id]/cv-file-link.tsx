@@ -30,7 +30,12 @@ type CvFileLinkProps = {
  * this is the client half of the same isCvFileDownloadable gate
  * getCvFileUrlAction enforces server-side.
  */
-export function CvFileLink({ candidateCvId, filename, downloadable, disabledReason }: CvFileLinkProps) {
+export function CvFileLink({
+  candidateCvId,
+  filename,
+  downloadable,
+  disabledReason,
+}: CvFileLinkProps) {
   const [isPending, startTransition] = useTransition()
 
   if (!downloadable) {

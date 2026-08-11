@@ -1,6 +1,10 @@
 import { Badge } from '@/components/ui/badge'
 import { formatDateLong } from '@/lib/date'
-import { CV_FILE_UPLOAD_INCOMPLETE_DISABLED_COPY, cvDisplayFilename, isCvFileDownloadable } from '@/lib/cv/cv-file-display'
+import {
+  CV_FILE_UPLOAD_INCOMPLETE_DISABLED_COPY,
+  cvDisplayFilename,
+  isCvFileDownloadable,
+} from '@/lib/cv/cv-file-display'
 import type { CandidateCvRow } from '@/lib/db/candidate-cvs'
 
 import { CvFileLink } from './cv-file-link'
