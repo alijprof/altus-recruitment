@@ -15,6 +15,17 @@
 import { useTransition } from 'react'
 import { toast } from 'sonner'
 
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from '@/components/ui/alert-dialog'
 import { Button } from '@/components/ui/button'
 import { backfillMatchScoresAction } from '@/app/admin/actions'
 
@@ -41,22 +52,47 @@ export function BackfillMatchScoresForm() {
     <div className="rounded-lg border bg-white p-5">
       <h2 className="text-sm font-semibold text-slate-900">Backfill match scores</h2>
       <p className="mt-1 text-xs text-slate-500">
-        Queues a one-off sweep that scores every application that predates auto-scoring, across all
-        organisations. Costs roughly a penny per unscored application. Safe to run more than once —
-        already-scored applications are skipped and nothing is spent twice. Scores appear on job and
-        application screens as the sweep finishes.
+        Queues a one-off sweep that scores applications predating auto-scoring, across all
+        organisations. Costs roughly a penny per unscored application, up to 500 per run. Safe to
+        run more than once — already-scored applications are skipped and nothing is spent twice, and
+        each run picks up where the last one left off, so re-run it until nothing new appears.
+        Scores appear on job and application screens as the sweep finishes.
       </p>
 
-      <Button
-        type="button"
-        aria-label="Backfill match scores"
-        onClick={handleSubmit}
-        disabled={isPending}
-        size="sm"
-        className="mt-4"
-      >
-        {isPending ? 'Queuing…' : 'Backfill match scores (all orgs)'}
-      </Button>
+      {/* IN-06 (review 2026-08-11): one click queues Sonnet spend across
+          EVERY organisation. It is bounded (500 enqueues per run, ~£5, with
+          per-org ceilings enforced downstream) and super-admin gated, but
+          every other spend/destructive control in this admin area asks for
+          a confirmation first — matching that is cheap, and an accidental
+          click here bills real customers. */}
+      <AlertDialog>
+        <AlertDialogTrigger asChild>
+          <Button
+            type="button"
+            aria-label="Backfill match scores"
+            disabled={isPending}
+            size="sm"
+            className="mt-4"
+          >
+            {isPending ? 'Queuing…' : 'Backfill match scores (all orgs)'}
+          </Button>
+        </AlertDialogTrigger>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Queue the match-score backfill?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This scores unscored applications across <span className="font-medium">every</span>{' '}
+              organisation, up to 500 per run at roughly a penny each. Already-scored applications
+              are skipped and nothing is spent twice, and each org&apos;s own AI budget still
+              applies. Run it again later to continue through any remaining backlog.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={handleSubmit}>Queue backfill</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   )
 }
