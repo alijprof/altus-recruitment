@@ -68,7 +68,7 @@ export function CvFileLink({
       <a
         href={`/candidates/${candidateId}/cv-file/${candidateCvId}`}
         target="_blank"
-        rel="noopener noreferrer"
+        rel="noopener noreferrer nofollow"
       >
         View
       </a>

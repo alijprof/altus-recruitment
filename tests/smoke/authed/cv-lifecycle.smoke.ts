@@ -287,31 +287,48 @@ test.describe.serial('@smoke-auth cv-lifecycle', () => {
 
     const viewButton = cvFilesSection.getByRole('link', { name: 'View', exact: true })
     await expect(viewButton).toBeVisible()
-    await expect(viewButton).toBeEnabled()
-    // The disabled-state literal (imported, not hand-copied) must NOT be
-    // sitting on an enabled control — proves this is the real "downloadable"
-    // path, not a control that merely looks enabled.
+    // toHaveAttribute('href') carries real weight on an anchor (toBeEnabled
+    // is vacuous for <a> — reviewer nit): the live control must actually
+    // point at the cv-file route, and the disabled-state literal must not be
+    // sitting on it.
+    await expect(viewButton).toHaveAttribute('href', /\/cv-file\//)
     await expect(viewButton).not.toHaveAttribute('title', CV_FILE_UPLOAD_INCOMPLETE_DISABLED_COPY)
 
-    const [popup] = await Promise.all([
-      context.waitForEvent('page', { timeout: 15_000 }),
-      viewButton.click(),
+    // Live-run discovery (2026-08-12): the signed Supabase URL serves the
+    // file as a DOWNLOAD (Content-Disposition), so the popup never commits a
+    // document — popup.url() stays blank forever and any URL-wait races a
+    // window that never closes. The correct observable is Playwright's
+    // download event. target=_blank downloads surface on the popup page in
+    // some Chromium versions and on the opener in others — race both.
+    const popupPromise = context.waitForEvent('page', { timeout: 15_000 }).catch(() => null)
+    const openerDownload = page.waitForEvent('download', { timeout: 25_000 }).catch(() => null)
+    await viewButton.click()
+    const popup = await popupPromise
+    const popupDownload = popup
+      ? popup.waitForEvent('download', { timeout: 25_000 }).catch(() => null)
+      : Promise.resolve(null)
+    const download = await Promise.race([
+      openerDownload.then((d) => d && (['opener', d] as const)),
+      popupDownload.then((d) => d && (['popup', d] as const)),
+      new Promise<null>((r) => setTimeout(() => r(null), 26_000)),
     ])
-    await popup.waitForURL(/^https?:\/\//, { timeout: 15_000 }).catch(() => {})
-    const openedUrl = popup.url()
-    expect(openedUrl, 'View must open a real URL, not about:blank').not.toBe('about:blank')
+    expect(download, 'clicking View must start a real file download').not.toBeNull()
+    const [, dl] = download!
+    // The download's source URL must be the real storage origin — a dead
+    // link or an app-origin error page can't produce this.
     expect(
-      new URL(openedUrl).origin,
-      'the opened URL must be the real storage origin, not a dead link back to our own app',
+      new URL(dl.url()).origin,
+      'the download must come from the storage origin, not our own app',
     ).not.toBe(new URL(BASE_URL).origin)
-    // Re-request the exact signed URL to confirm it is genuinely live, not
-    // merely a plausible-looking string — proves the signed URL is real.
-    const fileResponse = await popup.request.get(openedUrl)
-    expect(
-      fileResponse.status(),
-      `signed URL responded ${fileResponse.status()}, expected 200`,
-    ).toBe(200)
-    await popup.close()
+    expect(dl.url(), 'download URL must be a signed storage object URL').toContain(
+      '/storage/v1/object/sign/',
+    )
+    const suggested = dl.suggestedFilename()
+    expect(suggested, `downloaded filename should be a document (got "${suggested}")`).toMatch(
+      /\.(pdf|docx)$/i,
+    )
+    await dl.cancel().catch(() => {})
+    if (popup && !popup.isClosed()) await popup.close().catch(() => {})
   })
 
   test('Confidence cue (07-02): Review button unchanged; unsure badge and named-field line appear together or not at all', async () => {

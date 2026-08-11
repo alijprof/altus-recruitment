@@ -183,3 +183,17 @@ No migrations. No new dependencies. No production access.
    document and `popup.url()` should be the storage URL — but if that assertion
    ever flakes, this is the reason, and the fix is to wait for a URL matching
    the storage origin rather than any `https?://`.
+
+
+## Addendum (post-ack, 2026-08-12)
+
+- HF-3: cv-intake.smoke.ts was touched a second time on main (bc3eb0a,
+  streaming-paint sweep hardening) — additive/safety-only, recorded here as
+  the reviewer requested.
+- Live-run discovery: the signed URL serves as a DOWNLOAD; the popup never
+  commits a document. The lifecycle spec's View test now asserts Playwright's
+  download event (origin + signed path + filename) — the honest observable.
+  The feature itself was verified working the whole time (302 → storage 200).
+- HF-1: playwright-report/** + test-results/** added to eslint globalIgnores.
+- Reviewer nits: toHaveAttribute('href') replaces vacuous toBeEnabled on the
+  anchor; rel gains nofollow (audit-row prefetch insurance).

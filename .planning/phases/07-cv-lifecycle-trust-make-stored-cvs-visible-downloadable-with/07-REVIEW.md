@@ -1279,3 +1279,169 @@ line · no control bytes · the new `.gitignore` entries exclude no tracked file
 ---
 
 _Final ack 2: 2026-08-11 · Range `d6dc6ac..39866f3` (smoke verified `bf854cf..39866f3`) · **SHIP-CONFIRMED** · Reviewer: Claude (gsd-code-reviewer)_
+
+---
+
+# Hotfix ack — `d821e4f..327a716` (CV View → GET route handler)
+
+**Verdict: SHIP-CONFIRMED** on the code. One repo-config defect found that is not
+in this diff but breaks a mandated gate — see HF-1.
+
+## (1) Tenancy — preserved, and the URL change is a net improvement
+
+Every gate from `getCvFileUrlAction` survives the port, in the same order:
+UUID shape-gate on both path segments before any DB call (route.ts:45,59) →
+`createClient()` RLS-scoped SSR client → `getCandidateCV` under the
+`candidate_cvs` "tenant select" policy, so a cross-tenant `cvId` is `not_found`
+→ `isCvFileDownloadable` server mirror → `createSignedUrl` under the
+`Tenant select own org CVs` bucket policy as the second independent gate. Every
+failure collapses to a bare 404, so the route is not an existence oracle for
+another org's rows. Auth is covered twice: the middleware matcher reaches this
+path (it excludes only static assets, and `/candidates` is not in
+`PUBLIC_PATHS`) and the handler re-checks `getUser()` — correctly noted as
+necessary because route handlers do not run layouts.
+
+New `cv.candidate_id !== candidateId` check: correctly described as hygiene, not
+security. Both call sites pass the row's own `candidate_id`
+(`cv-files-panel.tsx:92`, `cv-review-panel.tsx:406`), so it cannot false-negative
+from the UI.
+
+**Stable, shareable route URL — acceptable, and safer than what it replaced.**
+The route URL is not a bearer credential: it is authed-only and re-authorised per
+request through RLS, so a leaked URL yields `/sign-in` for a stranger and a 404
+for a member of a different org. The only bearer credential — the 60 s signed URL
+— now exists solely in a `no-store` 302 `Location` for one hop, instead of being
+handed to client JavaScript where it could be logged, retained in a toast action,
+or held in memory. A same-org colleague receiving the URL can open the CV, but
+they can already open the candidate page: no privilege escalation. Two caveats
+worth recording (neither blocking):
+
+- **GET with a side effect.** A cross-site page can make the victim's browser
+  issue this GET; it cannot read the response, so there is no exfiltration, but
+  it can cause an `export` audit row and an unused signed URL — only if the
+  attacker already knows both UUIDs, which are unguessable.
+- **Speculative prefetch.** `export` rows are deliberately excluded from the
+  per-hour dedupe (migration 20260804140000), so any browser or extension that
+  prefetches the anchor files a real audit row for a file nobody opened. A plain
+  `<a target="_blank">` is not prefetched by `next/link` and is unlikely to trip
+  browser heuristics, but the consequence lands on the compliance artifact this
+  phase cares about. Cheap insurance if wanted: add `nofollow` to the existing
+  `rel`.
+
+## (2) Audit semantics + PII — intact, and the honesty gap is genuinely closed
+
+Same call, same metadata (`candidate_cv_id` + integer `version`), same entity
+(`cv.candidate_id`, never the path segment), still awaited before the response.
+Sentry carries `signError.name`, fixed tags and `cv.id` only — never
+`storage_path`. The 502 body is a fixed string.
+
+The structural argument is correct and worth keeping: release and delivery are
+now the same HTTP response, so the row can no longer be filed for a URL the
+recruiter never received — which is exactly what the production incident
+produced under the old client contract. Pinned by tests (`302s…`, `files the
+export audit row… before responding`, `502s… files no audit row`).
+
+## (3) Disabled-state parity — preserved
+
+`!downloadable` renders the identical disabled `<Button title={disabledReason}>
+View</Button>` with no `href`. Accessible name stays the literal "View" in both
+states, honouring the frozen 07-08 note. The only difference is the enabled
+control's role: `button` → `link`.
+
+## (4) Smoke selector — coherent, and now a stronger assertion
+
+`getByRole('link', { name: 'View', exact: true })` matches the anchor.
+`context.waitForEvent('page')` still fires on `target="_blank"`. A server 302
+never commits an intermediate document, so `popup.url()` resolves to the storage
+origin — and the existing `origin !== BASE_URL origin` + `status() === 200`
+assertions now also catch a route-level 404/502, which would commit on our own
+origin. Nit: `await expect(viewButton).toBeEnabled()` is vacuous on an `<a>`
+(Playwright treats non-form elements as always enabled); `toHaveAttribute('href',
+…)` would carry real weight.
+
+## (5) New defects
+
+### HF-1 (WARNING) — `pnpm lint` fails on any tree where the mandated smoke has run
+
+Not in this diff, but it surfaces because of it. `playwright-report/` and
+`test-results/` are gitignored (`.gitignore:16`) but absent from
+`eslint.config.mjs`'s `globalIgnores`, so ESLint lints the minified bundles in
+the generated HTML report:
+
+```
+npx eslint                              → 3023 problems (164 errors)
+npx eslint --ignore-pattern 'playwright-report/**' \
+           --ignore-pattern 'test-results/**'     → 25 problems (0 errors)
+```
+
+The report directory here was created at 18:48 today by the live smoke run. This
+is WR-13 recurring in a sibling directory, and it bites precisely because
+HARD RULE #1 mandates running the browser smoke before UAT — the mandated
+workflow breaks the mandated gate. The hotfix's own source lints clean.
+
+**Fix:** add `'playwright-report/**'` and `'test-results/**'` to `globalIgnores`,
+next to `.claude/**`.
+
+### HF-2 (INFO) — `notFound()` in a route handler has no in-repo production precedent
+
+The cited precedent, `src/app/admin/[orgId]/export/route.ts`, returns
+`NextResponse.json(…, { status: 404 })` — it does not call `notFound()`.
+`notFound()`/`redirect()` are documented as supported in Route Handlers and the
+unit tests mock them faithfully (both throw, both return `never`), but a mock
+cannot prove Next's real response. Given this hotfix exists *because* a
+unit-tested primitive behaved differently in production, one manual check is
+worth it: request the route with a valid-shaped but non-existent `cvId` and
+confirm a 404, not a 500. Only reachable by a hand-typed URL or a stale tab —
+never on the happy path.
+
+### HF-3 (INFO) — `cv-intake.smoke.ts` modified a second time
+
+`bc3eb0a` hardens the WR-R6 guard against streaming paint (anchor on the Delete
+button, skip on a stale `Candidates` h1). Additive and safety-only again — the
+delete condition is unchanged, so the "never delete a non-scratch row" guarantee
+holds, and the new `continue` branches fail toward leaving residue, which the
+final residue assertion reports loudly. Worth recording in `07-HOTFIX.md` the way
+the `07-FIXES.md` addendum recorded the first deviation.
+
+## CLAUDE.md route-handler exception — adequately justified in-code
+
+`route.ts:4-10` names the convention ("route handlers only for webhooks/public
+APIs"), states why this is a narrow exception (a navigable GET is the only thing
+an `<a href>` can target, and a Server Action cannot be an anchor target), and
+cites in-repo precedent for a file-delivery GET. Lines 12-23 record the
+production incident that forced it. That exceeds what the convention asks for.
+
+## Gates re-run on `327a716`
+
+`tsc --noEmit` clean · `vitest run` **959 passed / 28 todo / 0 failed** ·
+`prettier --check` clean on every touched file · `eslint` **0 errors on source**
+(see HF-1 for the generated-report caveat) · seven frozen Phase-6 files
+byte-identical to `5144ec7` · no migrations, no dependency changes,
+`tests/fixtures/**` untouched · no `role="alert"` on any code line · no control
+bytes · no dangling references to the deleted `getCvFileUrlAction` (comments
+only) · `createSignedUrl` returns an absolute URL, so `NextResponse.redirect` is
+valid (verified in `@supabase/storage-js@2.105.4`).
+
+---
+
+## Note — uncommitted edit in flight (outside this ack's range)
+
+At ack time `tests/smoke/authed/cv-lifecycle.smoke.ts` carries an **uncommitted**
+working-tree change replacing
+`popup.waitForURL(/^https?:\/\//).catch(() => {})` with
+`popup.waitForURL(/supabase\.co\/storage\//, { timeout: 20_000 })` and no
+`.catch()`. It is not mine and is not in `d821e4f..327a716`, so it is not covered
+by this ack.
+
+For the record it looks right, and it confirms rather than contradicts the
+analysis above: a server-side 302 never commits an intermediate document, so
+`popup.url()` stays uncommitted (readable as `''`) until the storage URL lands —
+the old any-https wait raced that window and the swallowing `.catch()` then let
+`new URL('')` throw further down. Waiting for the storage origin and failing
+loudly there is the correct fix. One small cost: it hardcodes the Supabase
+storage hostname, so fronting storage with a custom domain or CDN later would
+break the spec.
+
+---
+
+_Hotfix ack: 2026-08-11 · Range `d821e4f..327a716` · **SHIP-CONFIRMED** · Reviewer: Claude (gsd-code-reviewer)_
