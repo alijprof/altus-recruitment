@@ -92,9 +92,54 @@ export function CandidateEditForm({ candidateId, defaultValues }: CandidateEditF
     defaultValues,
   })
 
+  // CR-01 (review 2026-08-11) — READ DURING RENDER, deliberately.
+  // react-hook-form's `formState` is a Proxy that only starts tracking a key
+  // once that key has been read in a RENDER pass; a key read exclusively
+  // inside an event handler is never subscribed, so its value is not
+  // guaranteed to be current by submit time. This destructure IS the
+  // subscription — it is load-bearing, not a convenience alias. Do not
+  // inline it into onSubmit.
+  const { dirtyFields } = form.formState
+
+  // CR-01 — submit ONLY the fields the recruiter actually changed.
+  //
+  // `defaultValues` is a snapshot page.tsx took at page load. Between that
+  // read and this submit, four live writers can legitimately fill this
+  // candidate's AI-parsed columns: the `parse-cv` Inngest job finishing,
+  // "Accept all" in the review sheet (possibly in another tab), the
+  // `reconcile-cv-parses` heal-unmerged-profiles sweep (every 15 min), and a
+  // second recruiter editing the same record. Submitting the whole snapshot
+  // would send `skills: []`, `work_experience: []`, `headline: ''` … for
+  // every field the recruiter never touched, and the action correctly treats
+  // a present-but-empty value as a deliberate CLEAR — so a one-character
+  // phone correction would silently wipe the entire parsed profile (and, via
+  // the invalidate_candidate_embedding trigger, blank the embedding too).
+  //
+  // Omitting an untouched key makes it arrive as `undefined`, which the
+  // action's toNullableString/toNullableNumber helpers and the `?.map` on the
+  // two jsonb arrays already treat as "leave this column alone". That
+  // omitted-vs-cleared machinery has existed since 07-03; this restores the
+  // only caller that can actually reach it.
+  //
+  // A field the recruiter deliberately CLEARED is dirty (its value differs
+  // from the page-load default), so it still arrives as '' / [] and still
+  // persists as a clear. That distinction is the whole point.
   const onSubmit = (data: EditCandidateInput) => {
+    const patch = Object.fromEntries(Object.entries(data).filter(([key]) => key in dirtyFields))
+    // full_name / market_status / source are REQUIRED by the action's zod
+    // schema, so they must be present on every submit even when untouched.
+    // They are also the three the form always renders as populated controls,
+    // so a last-write-wins on them matches exactly what the recruiter has on
+    // screen. Every other key is optional-by-omission.
+    const payload = {
+      ...patch,
+      full_name: data.full_name,
+      market_status: data.market_status,
+      source: data.source,
+    }
+
     startTransition(async () => {
-      const result = await updateCandidateAction(candidateId, data)
+      const result = await updateCandidateAction(candidateId, payload)
       if (!result) return
       if ('fieldErrors' in result) {
         for (const [field, messages] of Object.entries(result.fieldErrors)) {
