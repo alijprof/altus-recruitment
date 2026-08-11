@@ -66,14 +66,32 @@ describe('editCandidateSchema — seniority_level', () => {
 })
 
 describe('editCandidateSchema — years_experience', () => {
-  it.each(['0', '7', '7.5', ''])('accepts %s', (value) => {
+  it.each(['0', '7', '7.5', '999.9', '999', ''])('accepts %s', (value) => {
     const r = editCandidateSchema.safeParse({ ...basePayload, years_experience: value })
     expect(r.success).toBe(true)
   })
 
-  it.each(['-1', 'abc', '1000'])('rejects %s', (value) => {
-    const r = editCandidateSchema.safeParse({ ...basePayload, years_experience: value })
+  // WR-07: the column is numeric(4,1) and Postgres rounds to scale 1 BEFORE
+  // checking precision, so 999.95-999.99 all become 1000.0 and raise 22003 —
+  // surfacing to the recruiter as a generic 'Something went wrong', forever,
+  // with no clue which field was at fault. IN-08: Number('0x10') is 16 and
+  // Number('1e3') is 1000, both Number.isFinite, so the old refine let a
+  // direct action call write a surprising-but-legal value.
+  it.each(['-1', 'abc', '1000', '999.95', '999.99', '1e3', '0x10', '7.25', ' 7 . 5'])(
+    'rejects %s',
+    (value) => {
+      const r = editCandidateSchema.safeParse({ ...basePayload, years_experience: value })
+      expect(r.success).toBe(false)
+    },
+  )
+
+  it('explains the real numeric(4,1) grid rather than failing generically', () => {
+    const r = editCandidateSchema.safeParse({ ...basePayload, years_experience: '999.95' })
     expect(r.success).toBe(false)
+    if (!r.success) {
+      expect(r.error.issues[0]?.message).toContain('999.9')
+      expect(r.error.issues[0]?.message).toContain('one decimal place')
+    }
   })
 })
 
@@ -85,7 +103,8 @@ describe('editCandidateSchema — salary_current_estimate / salary_expectation',
         expect(r.success).toBe(true)
       })
 
-      it.each(['-1', '45000.5'])('rejects %s', (value) => {
+      // '0x10' (16) and '1e3' (1000) both pass Number.isInteger — IN-08.
+      it.each(['-1', '45000.5', '0x10', '1e3', '4.5e4'])('rejects %s', (value) => {
         const r = editCandidateSchema.safeParse({ ...basePayload, [field]: value })
         expect(r.success).toBe(false)
       })
