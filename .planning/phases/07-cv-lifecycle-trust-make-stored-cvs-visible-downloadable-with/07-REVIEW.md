@@ -1,8 +1,10 @@
 ---
 phase: 07-cv-lifecycle-trust-make-stored-cvs-visible-downloadable-with
 reviewed: 2026-08-11T16:40:00Z
+re_reviewed: 2026-08-11T17:35:00Z
 depth: deep
 diff_range: 5144ec7..526cb40
+re_review_range: 526cb40..bf854cf
 files_reviewed: 34
 files_reviewed_list:
   - docs/cron-monitoring.md
@@ -44,8 +46,48 @@ findings:
   warning: 13
   info: 8
   total: 24
-status: issues_found
-verdict: FIX-FIRST
+status: resolved
+verdict: SHIP
+original_findings_closed: 24
+re_review_findings:
+  blocker: 0
+  warning: 6
+  info: 2
+  total: 8
+re_review_files_reviewed_list:
+  - docs/cron-monitoring.md
+  - eslint.config.mjs
+  - src/app/(app)/candidates/[id]/actions.ts
+  - src/app/(app)/candidates/[id]/cv-file-link.tsx
+  - src/app/(app)/candidates/[id]/cv-files-panel.tsx
+  - src/app/(app)/candidates/[id]/edit/actions.ts
+  - src/app/(app)/candidates/[id]/edit/candidate-edit-form.tsx
+  - src/app/(app)/candidates/[id]/edit/page.tsx
+  - src/app/(app)/candidates/[id]/edit/parse-rows.ts
+  - src/app/(app)/candidates/[id]/edit/schema.ts
+  - src/app/(app)/jobs/[id]/matches/actions.ts
+  - src/app/(app)/jobs/[id]/matches/match-card.tsx
+  - src/app/(app)/jobs/[id]/matches/page.tsx
+  - src/app/(app)/jobs/[id]/matches/score-all-button.tsx
+  - src/app/admin/BackfillMatchScoresForm.tsx
+  - src/components/app/repeating-rows.tsx
+  - src/components/app/tag-input.tsx
+  - src/lib/cv/confidence-summary.ts
+  - src/lib/cv/cv-file-display.ts
+  - src/lib/inngest/functions/backfill-application-match-scores.ts
+  - src/lib/inngest/functions/embed-batch.ts
+  - src/lib/inngest/functions/reconcile-cv-parses.ts
+  - tests/smoke/authed/cv-lifecycle.smoke.ts
+  - tests/unit/app/candidates/candidate-edit-form-dirty-fields.test.tsx
+  - tests/unit/app/candidates/cv-file-link.test.tsx
+  - tests/unit/app/candidates/edit-parse-rows.test.ts
+  - tests/unit/app/candidates/edit-schema.test.ts
+  - tests/unit/components/repeating-rows.test.tsx
+  - tests/unit/components/tag-input.test.tsx
+  - tests/unit/lib/ai/embedding-invalidation-contract.test.ts
+  - tests/unit/lib/cv/cv-file-display.test.ts
+  - tests/unit/lib/inngest/backfill-application-match-scores.test.ts
+  - tests/unit/lib/inngest/cron-hardening.test.ts
 ---
 
 # Phase 7: CV Lifecycle & Trust — Adversarial Code Review
@@ -716,3 +758,443 @@ These were actively hunted, not assumed:
 _Reviewed: 2026-08-11_
 _Reviewer: Claude (gsd-code-reviewer), adversarial pass_
 _Depth: deep_
+
+---
+
+# Re-review — 2026-08-11 (post-fix)
+
+**Range:** `526cb40..bf854cf` (17 fix commits + the separately-authored
+`tests/smoke/authed/cv-lifecycle.smoke.ts`)
+**Fix report:** `07-FIXES.md` (claims 24/24 closed, 0 residual)
+**Verdict:** **SHIP** — 0 blockers. 6 warnings + 2 info raised as follow-ups,
+none of which block this phase.
+
+## Summary
+
+All 24 original findings are genuinely closed — verified against the code, not
+against the fix report. Every gate is green on the merged tree: `tsc --noEmit`
+clean, 952 unit tests pass (0 failed), `eslint` 0 errors, `prettier --check`
+clean on all 33 touched files, all 8 frozen Phase-6 files byte-identical to
+`5144ec7`, no migrations, no dependency changes, no `role="alert"` in any
+changed component, no raw control bytes.
+
+**The fixer's three deviations from my suggested patches were all correct, and
+in all three cases my patch was the buggy one.** Details below — I verified each
+against the HTML spec, the base commit, and by executing the regression suite
+against the pre-fix source.
+
+## Deviation audit — the fixer's claims against my patches
+
+### D-1 — CR-01: my dirty-fields patch would have nulled five columns. **CLAIM UPHELD.**
+
+At `5144ec7`, `edit/actions.ts` built five of the eight basics as
+`email: parsed.data.patch.email || null` (etc. for `phone`, `location`,
+`current_role_title`, `current_company`). My patch omitted non-dirty keys from
+the payload, so those five would arrive `undefined`, and `undefined || null`
+evaluates to `null` — a write. My fix for a wipe of the ten parsed columns would
+have introduced a wipe of five basic ones. The fixer converting all five to
+`toNullableString` in the same commit (`29a2782`) is not optional; it is what
+makes dirty-field submission safe at all.
+
+**Independently verified, not taken on trust:** I restored the pre-fix form
+(`git show 526cb40:…/candidate-edit-form.tsx`) over the current one and ran the
+new regression suite:
+
+```
+Tests  6 failed | 4 passed (10)
+```
+
+Six of ten cases fail against the pre-fix payload (the fix report claims four of
+five — it undercounts its own coverage). The failures are the right ones:
+untouched parsed keys present in the payload, the pre-parse stale-snapshot case,
+the WR-08 unmapped-error toast, and the WR-12 read-only guarantee. The test
+asserts payload *shape* via `Object.hasOwn`, which is the actual contract
+(`undefined` vs absent matters only after JSON serialisation). Working tree
+restored; `git status` clean.
+
+### D-2 — CR-02: `noopener` makes `window.open` return `null`. **CLAIM UPHELD, and the replacement is safe here.**
+
+Per the HTML standard's window-open steps, a feature string containing
+`noopener` (or `noreferrer`, which implies it) causes `window.open` to **return
+null**. My snippet opened the placeholder with `'noopener,noreferrer'` and then
+branched on `if (win)` — so it would have taken the popup-blocked path 100% of
+the time, on every browser. My patch was inert.
+
+I verified the fixer's replacement is safe rather than merely different:
+
+- **Opener severing works and survives navigation.** `window.open('', '_blank')`
+  yields a same-origin `about:blank` handle, so `win.opener = null` is reachable
+  (no cross-origin `SecurityError`), and the `opener` setter clears the *browsing
+  context's* opener — it is not a property shadow, so the subsequently-navigated
+  Supabase Storage document sees `window.opener === null`. This is the standard
+  pre-`noopener` mitigation. No reverse-tabnabbing residual.
+- **No COOP concern today.** `next.config.ts` sets only
+  `X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy` and
+  `X-DNS-Prefetch-Control` — **no `Cross-Origin-Opener-Policy`**. This matters:
+  under `COOP: same-origin` the returned proxy is severed and `opener` is
+  get-only cross-origin, so `win.opener = null` would throw synchronously inside
+  the click handler and kill the feature. See IN-R2 for the one-line insurance.
+- **Dropping `noreferrer` leaks nothing.** `Referrer-Policy:
+  strict-origin-when-cross-origin` is set app-wide, so the cross-origin
+  navigation to Storage sends only `https://altusrecruit.com` — never the
+  `/candidates/{uuid}` path.
+- **The fallback uses `noopener` correctly** — `window.open(url, '_blank',
+  'noopener,noreferrer')` inside the toast action, where no handle is needed and
+  the null return is irrelevant.
+
+The accompanying `cv-file-link.test.tsx` pins call ordering (open *before* the
+action), the navigation, the opener severing, the failed-sign close, the
+blocked-popup toast action — and, pointedly, asserts the placeholder open is
+**not** passed `noopener`, encoding exactly why my patch was wrong.
+
+### D-3 — WR-05: my dedupe-for-display patch removes the wrong chip. **CLAIM UPHELD.**
+
+My `removeAt(i)` used the **chip** index against the **raw value** array. With
+`value = ['React','React','Node']`, chips render as `['React','Node']`; clicking
+X on `Node` (chip index 1) would have spliced value index 1 — the second
+`'React'` — leaving `Node` on screen. The fixer's `removeChip` filters every
+stored entry whose trimmed-lowercased form matches the chip, which is the
+correct contract ("a chip is the only control for its value"), keeps keys unique
+via `${index}-${lower}`, and makes Backspace remove the last *chip* rather than
+the last array entry.
+
+## Fix verification — does each one close my failure scenario?
+
+| ID | Closes the scenario? | Evidence |
+|----|---|---|
+| CR-01 | **Yes** | Dirty-field payload + `toNullableString` on all five basics + WR-12's structural read-only. Regression suite fails 6/10 against pre-fix source (executed). `dirtyFields` is destructured **during render**, which is the RHF Proxy subscription — RHF mutates `_formState.dirtyFields` in place, so the handler closure reads live state. Deliberate clears stay dirty and still persist as clears (pinned by test). |
+| CR-02 | **Yes** (residual WR-R1) | Tab opened synchronously in the gesture; all three branches deliver the URL; audit-ordering comment now states what the `export` row means and why that is honest. |
+| CR-03 | **Yes** (residual WR-R2) | Heartbeat is `step.run('heartbeat')` and is the first step in both functions → memoized → exactly one event per run. Volume math recomputed correctly (144 + 96 = 240/day ≈ 7,300/month) and the runbook states honestly that this **still exceeds** a 5,000/month free-tier errors quota, with the two legitimate remedies. `cron-hardening.test.ts` was updated in the same commit and now asserts the first `step.run` id is `'heartbeat'` and that `captureMessage` appears *after* `step.run(` — it would fail if a bare top-of-handler heartbeat returned. |
+| WR-01 | **Yes** | Chunking is by **rows** (50), bounding *both* `.in()` lists to ~100 uuids ≈ 4.5 kB, under postgrest-js's 8,000-char `urlLengthLimit`. A chunk error now marks every pair in that chunk `unknown` and **skips** it (fail closed) instead of `continue`-ing into "nothing is scored, enqueue everything". Cross-product hits from other chunks are still recorded — correctly, since each returned row is a real `(candidate, job)` summary. |
+| WR-02 | **Yes** | The cap moved from the **scan** to **enqueues**; a bounded 20×500 scan walks past already-scored rows, so each re-run advances. `.gte` cursor + `seenApplicationIds` handles bulk-import `created_at` ties, with an explicit warning if a page is entirely already-seen (cursor cannot advance). `truncated` is now truthful and carries `next_cursor`, which the event accepts as `created_after`. |
+| WR-03 | **Yes** (residual WR-R3) | `disabled={isPending \|\| isPolling}` + hour-bucketed `score-top:{jobId}:{hour}` dedup id. Confirmed the other three producers send no id, so JD-change/creation rescores are unaffected. |
+| WR-04 | **Yes** | Read-only pre-flight on both the spend ceiling and `checkCap(orgId, 'match_score')` (signature and purpose verified against `cap-enforcement.ts`; `checkCap` fails open on error so it can never block scoring). Unscorable cards say "Profile too sparse to score" and drop the Explain button; `scorableMatches` excludes them from `allCardsFresh`, so "Score all" can no longer be pinned on forever. The `?? row` fallback is safe — `HybridCandidateRow` lacks the four optional fields and `ProfileCompletenessFields` marks them optional, so it agrees with the card's explicit-null fallback. |
+| WR-05 | **Yes** | See D-3. |
+| WR-06 | **Yes** | Native `required` removed; the flag drives an `aria-hidden` asterisk rendered as a **sibling** of `<Label>`, so the accessible name stays exactly "Title"/"School" (which the smoke spec's `getByLabel('Title', { exact: true })` depends on). The schema's documented blank-row drop is now reachable. |
+| WR-07 | **Yes** | `/^\d{1,3}(\.\d)?$/` *is* the `numeric(4,1)` grid, so 999.95 is rejected at validation instead of raising `22003` behind a generic formError. The `Math.round(n*10)/10` check is kept as belt-and-braces. |
+| WR-08 | **Yes** | `toFieldErrors` flattens `['patch', 'work_experience', 0, 'title']` → `work_experience`; the form only `setError`s on keys in `form.getValues()` and toasts anything unmapped. Both branches pinned by test. |
+| WR-09 | **Yes** | Globs `supabase/migrations/*.sql`, filters on the marker, takes the **last** by filename sort (Supabase's own ordering), uses `lastIndexOf` within that file, and throws loudly if none match. |
+| WR-10 | **Yes (documentation)** | Runbook §7 added with the exact dashboard check, a status line to edit, and what changes if `timeouts` proves paid-only; §4's cancelled-run signal now points at it instead of implying it works. Correctly recorded as a founder action — no code can close it. |
+| WR-11 | **Yes** | `id` / `aria-describedby` / `aria-invalid` accepted and applied to the `role="group"` container, matching `TagInput`. |
+| WR-12 | **Yes** | Parsers moved to a pure, tested `edit/parse-rows.ts` and now report `editable`; a lossy round trip renders a read-only notice instead of an editor. The guarantee is structural, as claimed: no editor → the field can never be dirty → CR-01's submission never sends it (pinned by test). |
+| WR-13 | **Yes** | `.claude/**` in `globalIgnores`; `eslint` now exits **0 errors** on this tree with worktrees present (re-run, confirmed). |
+| IN-01…IN-08 | **Yes** | All verified in code. IN-03 is the one I would have deleted and the fixer kept — with a better rationale than mine (runtime guard for the window where the PG enum has a new value but `database.ts` has not been regenerated, while the exhaustive `Record` still fails the build once it is). IN-07's regex now matches the real 8-4-4-4-12 grouping, case-insensitively. |
+
+## Smoke spec review — `tests/smoke/authed/cv-lifecycle.smoke.ts` (441 lines)
+
+Measured against the frozen `cv-intake.smoke.ts` bar:
+
+**Meets the bar.** Fail-closed session guard present and verbatim (storageState
+exists → `SMOKE_ALLOWED_USER_ID` required → JWT `sub` must match, else refuse to
+run), so it can only ever write in the founder's own org. Hydration-aware
+locators throughout (`.first().or(empty-state).first().waitFor()` unions before
+any one-shot `evaluateAll`). Cleanup sweep is bounded (10), filters hrefs to
+`/^\/candidates\/[0-9a-f-]{36}$/i` so `/candidates/new` can't loop it, and ends
+with a hard residue assertion. Its own scratch prefix (`GSD Phase07 Smoke`) is
+disjoint from Phase 6's, so the two sweeps can't touch each other's rows.
+Load-bearing copy is **imported** from `cv-file-display.ts`, not hand-copied.
+The signed-URL test is the strongest thing in the file: it asserts the popup is
+not `about:blank`, that its origin is not the app's own, and re-requests the
+exact URL expecting HTTP 200 — that would catch a CR-02 regression directly.
+
+Three defects found: WR-R4 (vacuous D-07 assertion), WR-R5 (self-documented
+flaky assertion), WR-R6 (sweep deletes without a name check). None can write
+outside the founder's org.
+
+## New findings
+
+### WR-R1 (WARNING) — A rejected server action leaves an orphan blank tab and no toast
+
+**File:** `src/app/(app)/candidates/[id]/cv-file-link.tsx:68-101`
+
+`startTransition(async () => { const result = await getCvFileUrlAction(...) … })`
+has no `try`/`catch`. The action is written to never throw, but the *transport*
+can reject: a network drop, a 500 from the server-action endpoint, a deploy
+swapping the action id mid-flight. On rejection the placeholder tab — already
+opened synchronously — is never closed and no toast fires. The recruiter is left
+staring at a blank tab with no explanation. Pre-fix this path produced no tab and
+no toast; the fix makes it produce an orphan tab and no toast, which is the same
+silent-failure class CR-02 set out to eliminate.
+
+**Fix:**
+```tsx
+startTransition(async () => {
+  let result: GetCvFileUrlResult
+  try {
+    result = await getCvFileUrlAction({ candidateCvId })
+  } catch {
+    win?.close()
+    toast.error('Couldn’t open this file. Please try again.')
+    return
+  }
+  …
+})
+```
+
+### WR-R2 (WARNING) — CR-03 trades Sentry errors quota for Inngest step quota, undisclosed
+
+**Files:** `src/lib/inngest/functions/embed-batch.ts:134-140`,
+`src/lib/inngest/functions/reconcile-cv-parses.ts:176-182`,
+`docs/cron-monitoring.md` §2 / §6
+
+Making the heartbeat its own `step.run` is the right call for correctness, but it
+adds **one Inngest step per run**: `embed-batch` 2→3 steps, `reconcile-cv-parses`
+3→4. That is +240 steps/day ≈ **+7,300 steps/month**, taking these two crons from
+~17,300 to ~24,600 steps/month — a ~42% increase in the consumption of the exact
+quota this runbook's own §6 identifies as the root cause of the 4–9 Aug
+account-wide outage ("idle crons alone consume roughly half of the Inngest free
+tier's monthly step quota"). §2 discloses the Sentry-side cost in full and says
+nothing about the Inngest-side cost, so the trade reads as free when it is not.
+
+**Fix (zero added steps, identical semantics):** emit the heartbeat as the first
+statement *inside* the existing first step (`sweep-candidates` /
+`sweep-stuck-pending`) rather than in a step of its own. It still fires before
+any real work and still exactly once per successful run; the only difference is
+that a retry of that step re-fires it (bounded by `retries: 1`). If the separate
+step is kept for the cleaner retry semantics, add its step cost to §6 so the
+founder's quota decision is made on complete information.
+
+### WR-R3 (WARNING) — The hour-bucketed dedup id silently swallows a legitimate retry for up to 59 minutes
+
+**File:** `src/app/(app)/jobs/[id]/matches/actions.ts:340-347`
+
+Inngest drops a duplicate event `id` for 24h, so within one wall-clock hour the
+second `Score all` on a job is discarded — while the action still returns
+`{ ok: true }` and the button still toasts "Scoring started". The button is
+disabled for the 90-second poll, so the swallowed window is roughly minutes
+1.5–60 of each hour.
+
+**Failure scenario:** a card reads "Profile too sparse to score" (new WR-04
+copy). The recruiter does exactly what that message asks — adds skills to the
+candidate — comes back, clicks Score all, is told scoring started, and nothing
+happens for up to an hour. This is the pattern CLAUDE.md forbids: claiming
+success for work that is not happening. The borrowed precedent
+(`enqueue-match-score.ts`) is a *system*-fired event where a blind spot only
+delays; this one is user-initiated with a success toast.
+
+**Fix:** shrink the bucket to just wider than the poll window — the anti-double-
+click intent is fully preserved and the blind spot drops from 60 minutes to two:
+```ts
+const SCORE_ALL_DEDUP_BUCKET_MS = 2 * 60 * 1000
+```
+
+### WR-R4 (WARNING) — The smoke spec's D-07 assertion is vacuous
+
+**File:** `tests/smoke/authed/cv-lifecycle.smoke.ts:408-412`
+
+```ts
+expect(mainText, 'stale "refresh to see" copy must not appear …').not.toContain('refresh to see')
+```
+
+At the base commit that string existed in exactly one place:
+`explain-button.tsx:36`'s `toast.success('Match explained — refresh to see
+details')` — copy that only ever appeared **after clicking Explain**
+(`git grep -n "refresh to see" 5144ec7 -- src`, confirmed). The spec deliberately
+never clicks Explain, so this assertion would have passed identically against the
+unfixed code. It proves nothing about D-07.
+
+**Fix:** either click Explain on one card that needs it and assert the toast text
+plus the in-place card upgrade (accepting ~1p of Sonnet spend, which is the only
+way to actually exercise the fix), or relabel the line as a copy-scan and stop
+presenting it as the D-07 regression guard.
+
+### WR-R5 (WARNING) — A known-flaky assertion shipped as a hard expect on a prod smoke
+
+**File:** `tests/smoke/authed/cv-lifecycle.smoke.ts:420-434`
+
+The inline NOTE concedes it: "an org whose top-10 happen to be entirely fresh at
+smoke time would fail this specific line". A prod smoke that can go red for a
+legitimate state is a false-alarm generator, and under HARD RULE #1 a red smoke
+blocks UAT.
+
+**Fix:** derive the same freshness condition the page uses (a card with no score
+badge ⇒ `Score all` must be visible), or `test.skip` when every visible card
+already carries a score badge. Do not leave a documented-flaky hard assertion in
+the suite that gates releases.
+
+### WR-R6 (WARNING) — The cleanup sweep deletes the first search hit without checking the name
+
+**File:** `tests/smoke/authed/cv-lifecycle.smoke.ts:180-200`
+
+The sweep navigates to `/candidates?q=GSD Phase07 Smoke`, takes the first
+`/candidates/<uuid>` link, and deletes it — **without asserting that candidate's
+name carries the scratch prefix**. `/candidates` searches through
+`search_candidates`, which matches with pg_trgm's `%` operator (a 0.3 similarity
+threshold on `full_name` / `email` / `current_role_title`), so a false positive is
+very unlikely — but the blast radius is the irreversible deletion of a real
+candidate from a live customer org, ten times over, with the sweep's final
+"no residue" assertion still passing.
+
+This is inherited verbatim from the frozen `cv-intake.smoke.ts`, so the fixer did
+not introduce it — but this phase doubles the number of specs carrying it, and
+the browser pre-smoke is about to run against production.
+
+**Fix (in the new spec only — Phase 6's is frozen):**
+```ts
+await page.goto(target)
+const heading = await page.getByRole('heading', { level: 1 }).first().innerText()
+if (!heading.startsWith(SCRATCH_NAME_PREFIX)) break // never delete a row we did not create
+```
+
+### IN-R1 (INFO) — Read-only sections are still validated from `defaultValues`
+
+**Files:** `src/app/(app)/candidates/[id]/edit/candidate-edit-form.tsx:119-124`,
+`edit/page.tsx:64-70`
+
+When `workExperienceEditable === false` the editor is not rendered, but the key
+still exists in `defaultValues`, so it stays in RHF's `_formValues` and is
+validated by the resolver on every submit. A legacy row carrying a `dates` string
+over 100 chars (or a title over 255) would fail validation for a field with no
+rendered `FormMessage` — `handleSubmit` aborts, and the user sees Save do
+nothing, with no message anywhere. Doubly latent today (needs a malformed row
+*and* an over-length value), and it is the same silent-no-op class WR-08 closed.
+
+**Fix:** omit the key from `defaultValues` entirely when the section is
+read-only, so nothing about that column is validated or submitted.
+
+### IN-R2 (INFO) — `win.opener = null` would throw if COOP is ever added
+
+**File:** `src/app/(app)/candidates/[id]/cv-file-link.tsx:63-66`
+
+Safe today because `next.config.ts` sets no `Cross-Origin-Opener-Policy` (checked).
+Under `COOP: same-origin` the handle becomes a severed proxy where `opener` is
+get-only cross-origin, and the assignment throws **synchronously inside the click
+handler** — before `startTransition` — killing the View button outright with no
+toast. `next.config.ts` already flags a CSP rollout as pending, so security
+headers on this app are a live area.
+
+**Fix:** `try { win.opener = null } catch { /* COOP already severed it */ }` —
+one line, and the mitigation is redundant under COOP anyway.
+
+## CLEAN checks re-verified on the merged tree
+
+All 28 original CLEAN checks were re-run or re-reasoned; none regressed. Spot
+evidence:
+
+- **Frozen Phase-6 files byte-identical** at `5144ec7`, `bf854cf` and the working
+  tree — `cv-write-path.test.ts`, `candidate-write-siblings.test.ts`,
+  `parsed-cv-schema.test.ts`, `profile-completeness.ts`, `embed-text.ts`,
+  `parse-messages.ts`, `postgres-safe-text.ts`, **and** `cv-intake.smoke.ts`
+  (hash-compared). `tests/fixtures/**` untouched.
+- **Tenancy on `getCvFileUrlAction` unchanged** — the fix range adds 19 lines to
+  that function, all comments. The RLS-scoped `getCandidateCV` read and the
+  Storage-policy second gate are byte-identical.
+- **No migrations, no `package.json`/lockfile changes** (`git diff --stat` empty).
+- **No `role="alert"`** on any code line of any changed `.tsx` (scanned). The new
+  `AlertDialog` uses `role="alertdialog"`, portals outside `<main>`, and is on
+  `/admin` — no interaction with the frozen `main >> role=alert` heuristic.
+- **Confidence badge still a DOM sibling** — `cv-review-panel.tsx` is untouched
+  by the fix range.
+- **No raw control bytes** in any of the 33 changed files.
+- **Super-admin gate intact** — `requireSuperAdmin()` remains the first statement
+  of `backfillMatchScoresAction`; the new confirmation is client-side only and
+  adds no bypass.
+- **Gates:** `tsc --noEmit` clean · `vitest run` 952 passed / 28 todo / 0 failed
+  (890 → 952, +62, zero regressions) · `eslint` 0 errors · `prettier --check` all
+  33 touched files clean.
+
+## Verdict
+
+**SHIP.**
+
+All 24 findings closed and verified; the three deviations were correct and better
+than my patches. The 6 new warnings are follow-ups, not blockers — none is a data-
+loss, security or tenancy issue. Two are worth doing before the production browser
+pre-smoke runs: **WR-R6** (sweep deletes an unverified row in a live org) and
+**WR-R5** (documented-flaky assertion that will produce a false red). **WR-R1**,
+**WR-R3** and **IN-R2** are each a few lines and close residual silent-failure
+paths on flows this phase owns. **WR-R2** is a disclosure gap the founder needs
+before making the Inngest plan decision that §6 already asks of them.
+
+---
+
+_Re-reviewed: 2026-08-11_
+_Reviewer: Claude (gsd-code-reviewer), adversarial pass 2_
+_Range: 526cb40..bf854cf_
+
+---
+
+# Final ack — `d6dc6ac` (WR-R1..R6)
+
+**Verdict: NOT CONFIRMED.** Four of six follow-ups are genuinely closed. **WR-R4
+and WR-R5 are not implemented** although `d6dc6ac`'s message claims both.
+
+## Per-item verification
+
+| ID | Claimed | Actual |
+|----|---------|--------|
+| WR-R1 | try/catch + orphan-tab close | **CLOSED.** `cv-file-link.tsx:68-80` — `try/catch` around the await, `win?.close()`, toast. Rejection path no longer leaves a blank tab. |
+| WR-R2 | heartbeat inside first real step | **CLOSED.** First statement of `sweep-candidates` / `sweep-stuck-pending`; dedicated steps deleted. Memoization intact → exactly one event per run, zero added Inngest steps. |
+| WR-R3 | 60min → 2min bucket | **CLOSED.** `SCORE_ALL_DEDUP_BUCKET_MS = 2 * 60 * 1000`; wider than the 90 s poll, so worst-case swallow is <2 min. |
+| WR-R4 | smoke clicks Explain, asserts "Match explained" | **NOT DONE.** No `Explain` click and no `Match explained` string anywhere in `cv-lifecycle.smoke.ts`. The vacuous `not.toContain('refresh to see')` at line 421-424 is unchanged. |
+| WR-R5 | Score-all assertion tolerant of all-fresh | **NOT DONE.** Lines 432-444 are byte-identical to `bf854cf` — same hard `toBeVisible()` under the same NOTE conceding it fails on an all-fresh org. |
+| WR-R6 | both sweeps verify the heading | **CLOSED, and the locator is correct.** |
+
+**Evidence WR-R4/R5 did not land:** `git diff bf854cf..HEAD -- tests/smoke/authed/cv-lifecycle.smoke.ts` is 12 insertions / 0 deletions — exactly the WR-R6 guard. No other commit in the range touches the file.
+
+## WR-R2 — the two things asked about
+
+- **Memoization preserved.** The heartbeat is the first statement inside a
+  `step.run` body. Inngest executes a step body once and memoizes the result, so
+  the replay invocations do not re-enter it: exactly one event per successful
+  run (a retry of that step re-fires, bounded by `retries: 1`). Zero added steps,
+  which was the point.
+- **A bare top-of-handler capture cannot satisfy the test — proven by mutation.**
+  I moved the heartbeat back out to top-of-handler in `embed-batch.ts` and ran
+  the suite: `1 failed | 5 passed`, failing on
+  "emits its Sentry.captureMessage heartbeat INSIDE the first step.run". Source
+  restored.
+- **But the pin is weaker than before (new, minor).** Second mutation: heartbeat
+  left inside `sweep-candidates` yet moved *after all its real work* →
+  `6 passed`. The test now only proves the first `captureMessage` appears
+  textually after the first `step.run(`; it can no longer distinguish
+  "first statement" from "buried at the end", so the property the WR-R2 comment
+  relies on ("a run that wedges later in this step has already heartbeat-ed") is
+  unpinned. Tighten with a proximity check, e.g.
+  `expect(code.slice(firstStepRunIdx, firstStepRunIdx + 300)).toContain('Sentry.captureMessage(')`.
+
+## WR-R6 — the heading locator cannot false-positive
+
+`page.locator('main h1, main h2').first()` resolves to the candidate name:
+`<main>` in `(app)/layout.tsx:96` wraps only `{children}`, `TopNav` sits outside
+it and contains **no** `h1`/`h2` at all, and on the detail page
+`CandidateDetailHeader`'s `<h1>{candidate.full_name}</h1>` (page.tsx:209) precedes
+every section `h2` (309+) in DOM order. If the header fails to render, the
+`waitFor` times out and the sweep aborts — the safe direction. `includes()` rather
+than `startsWith()` is fine and slightly more tolerant.
+
+## Other new defects in `d6dc6ac` (all minor)
+
+- **Orphaned comment blocks.** `embed-batch.ts:114-137` and
+  `reconcile-cv-parses.ts:155-176` still carry the 24-line CR-03 block ending
+  "**IT MUST BE THE FIRST step.run, NOT bare top-of-handler code**" — but the
+  heartbeat it describes is no longer there, and its instruction now contradicts
+  WR-R2. A maintainer following it would recreate the dedicated step this commit
+  deleted. Same class as IN-02, which this phase already fixed once.
+- **Runbook drift.** `docs/cron-monitoring.md:68-69` still says the heartbeats
+  "had to be moved *inside* a step of their own". They are now inside the first
+  *real* step. §2's volume table stays correct.
+- **Freeze deviation (acceptable, but undisclosed).** `cv-intake.smoke.ts` — a
+  Phase-6 spec the plan calls frozen, and which `07-FIXES.md`'s gate table
+  asserted as "tests/smoke/** untouched" — gained the WR-R6 guard. The change is
+  additive only, weakens no assertion, and prevents irreversible deletion of a
+  real candidate, so I would keep it; it just needs stating rather than leaving
+  the earlier gate claim standing.
+
+## Gates re-run on `d6dc6ac`
+
+`tsc --noEmit` clean · `vitest run` **952 passed / 0 failed** · three red-suite
+files + `profile-completeness.ts` / `embed-text.ts` / `parse-messages.ts` /
+`postgres-safe-text.ts` byte-identical to `5144ec7` · no migrations, no
+dependency changes.
+
+## To confirm
+
+Implement WR-R4 and WR-R5 as described, or explicitly withdraw them and correct
+`d6dc6ac`'s message — the current record claims smoke coverage that does not
+exist, and the production pre-smoke is about to run with the known-flaky
+assertion still in place. The four minor items above are optional cleanups.
+
+---
+
+_Final ack: 2026-08-11 · Range `bf854cf..d6dc6ac` · Reviewer: Claude (gsd-code-reviewer)_

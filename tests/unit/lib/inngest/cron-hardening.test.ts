@@ -121,6 +121,12 @@ describe('cron-hardening — timeouts + heartbeat regression (Phase 07 Plan 05)'
         // quota that real production alerting depends on (CR-03). Because
         // indexOf finds the FIRST captureMessage, reintroducing a bare
         // top-of-handler heartbeat fails this assertion.
+        // Final-ack caveat: also pin FIRST-STATEMENT placement — a heartbeat
+        // after the step's real work would miss wedges inside the step.
+        expect(
+          code.slice(firstStepRunIdx, firstStepRunIdx + 300),
+          `${target.name}: the heartbeat must be the FIRST statement of the first step, not after its real work`,
+        ).toContain('Sentry.captureMessage(')
         expect(
           heartbeatIdx > firstStepRunIdx,
           `${target.name}: the heartbeat must live INSIDE step.run('heartbeat'), not outside it — ` +

@@ -65,8 +65,11 @@ stall.
 
 "Exactly once per run" is load-bearing, not a detail. Inngest re-runs a
 function's handler once per step boundary, replaying everything that isn't
-inside a step. The heartbeats therefore had to be moved *inside* a step of
-their own — before that they fired once per step boundary, which is 3-4×
+inside a step. The heartbeats therefore live *inside* a step — specifically as
+the FIRST STATEMENT of each cron's first real step (WR-R2: a dedicated
+heartbeat step would cost +1 step execution per run against the same step
+quota whose exhaustion caused the 4-9 Aug outage). Before that they fired
+once per step boundary, which is 3-4×
 per tick and, worse, silently changed meaning every time a step was added
 or removed. The "is below 1" alert below only works if the count is stable.
 

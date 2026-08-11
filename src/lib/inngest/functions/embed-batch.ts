@@ -117,24 +117,9 @@ export const embedBatch = inngest.createFunction(
     // triggers) — acceptable, not gated behind a cron check, since the
     // point is proving liveness of ticks.
     //
-    // CR-03 (review 2026-08-11) — IT MUST BE THE FIRST step.run, NOT bare
-    // top-of-handler code. Inngest re-invokes the handler once per step
-    // boundary, replaying every non-step statement with memoized step
-    // results, so anything outside a step runs (steps + 1) times per run:
-    //
-    //   before: 2 steps -> 3 heartbeats x 144 ticks/day = 432/day
-    //           (reconcile-cv-parses: 4 x 96 = 384/day; ~816/day combined)
-    //   after:  exactly 1 per run   x 144 ticks/day = 144/day
-    //           (reconcile-cv-parses: 96/day; 240/day combined)
-    //
-    // Sentry.captureMessage consumes the ERRORS quota, and once that quota
-    // is exhausted Sentry drops real production errors — on a live system
-    // where Sentry is the only alerting channel. Being a step also makes
-    // the count stable: it no longer changes meaning whenever a step is
-    // added or removed, which the alert recipe in docs/cron-monitoring.md
-    // depends on. Keeping it FIRST preserves the original intent (visible
-    // even when there is nothing to do); see docs/cron-monitoring.md §2 for
-    // the residual monthly volume against the free tier.
+    // Heartbeat now lives as the FIRST STATEMENT inside the first real step
+    // (WR-R2) — see the comment inside that step; the cron-hardening test
+    // pins both the placement and the once-per-run memoization.
     const eventData = isEmbedBatchEvent(event.data) ? event.data : {}
     const scopeOrgId =
       typeof eventData.organization_id === 'string' && eventData.organization_id.length > 0

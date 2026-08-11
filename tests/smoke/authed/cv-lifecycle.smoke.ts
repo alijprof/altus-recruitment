@@ -430,17 +430,29 @@ test.describe.serial('@smoke-auth cv-lifecycle', () => {
     await candidateCardLink.first().or(notIndexedAlert).first().waitFor({ timeout: 15_000 })
     const cardsPresent = (await candidateCardLink.count()) > 0
     if (cardsPresent) {
-      // NOTE: showScoreAll (page.tsx) is false when every visible card is
-      // already fresh, which this assertion cannot distinguish from the
-      // "no cards" case without reading score-freshness state itself. In
-      // the steady state (a live org with an unscored backlog or with newer
-      // applications still to catch up) at least one card is expected to be
-      // non-fresh, but an org whose top-10 happen to be entirely fresh at
-      // smoke time would fail this specific line — see 07-08-SUMMARY.md.
-      await expect(
-        page.getByRole('button', { name: 'Score all', exact: true }),
-        'Score all should be offered whenever match cards are present',
-      ).toBeVisible()
+      // WR-R5 (re-review): "Score all" renders only when at least one card
+      // is non-fresh — indistinguishable from all-fresh without reading
+      // score state, so its absence is an ACCEPTED edge, not a failure.
+      const scoreAll = page.getByRole('button', { name: 'Score all', exact: true })
+      if ((await scoreAll.count()) > 0) {
+        await expect(scoreAll, 'Score all, when offered, must be enabled').toBeEnabled()
+      } else {
+        console.log('[cv-lifecycle] Score all not offered — all cards fresh (accepted edge)')
+      }
+
+      // WR-R4 (re-review): the no-stale-copy grep alone is vacuous — prove
+      // D-07 by CLICKING Explain where offered (one Sonnet call, pennies,
+      // founder org) and asserting the outcome arrives with NO manual reload.
+      const explain = page.getByRole('button', { name: 'Explain match', exact: true }).first()
+      if ((await explain.count()) > 0) {
+        await explain.click()
+        await expect(
+          page.getByText('Match explained'),
+          'Explain must confirm via toast and self-refresh (D-07) — no manual reload',
+        ).toBeVisible({ timeout: 60_000 })
+      } else {
+        console.log('[cv-lifecycle] no unexplained card — Explain click skipped (accepted edge)')
+      }
     }
 
     // Do NOT click Score all — that spends real Sonnet budget on real data

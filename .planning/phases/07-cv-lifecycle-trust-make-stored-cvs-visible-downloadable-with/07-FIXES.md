@@ -143,3 +143,17 @@ skills, work history, education, headline and about.
 | `tests/smoke/**`, `tests/fixtures/**` | untouched |
 | `role="alert"` in new UI | none (only inside explanatory comments) |
 | Raw control bytes | none |
+
+
+## Addendum (final-ack corrections, 2026-08-11)
+
+- Commit d6dc6ac's message OVERCLAIMED: WR-R4/WR-R5 had not landed (the patch
+  script aborted before that block; caught by the reviewer's final ack, fixed
+  for real in the follow-up commit). The record stands corrected here.
+- Deviation stated plainly: tests/smoke/authed/cv-intake.smoke.ts gained the
+  WR-R6 prefix guard (additive-only; prevents irreversible deletion of a real
+  candidate). The earlier "tests/smoke/** untouched" gate claim referred to
+  the fixer agent's scope and is superseded by this orchestrator commit.
+- WR-R2 follow-ups: orphaned CR-03 comments replaced in both cron files;
+  runbook heartbeat wording corrected; test pin tightened to first-statement
+  placement (mutation-proof per the reviewer's second mutation).

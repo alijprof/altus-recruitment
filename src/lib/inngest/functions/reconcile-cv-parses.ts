@@ -156,27 +156,9 @@ export const reconcileCvParses = inngest.createFunction(
     // Cron hardening (2026-08-11) — heartbeat, so the tick is provable even
     // when all three steps find nothing to do.
     //
-    // CR-03 (review 2026-08-11) — IT MUST BE THE FIRST step.run, NOT bare
-    // top-of-handler code. Inngest re-invokes the handler once per step
-    // boundary, replaying every non-step statement with memoized step
-    // results, so anything outside a step runs (steps + 1) times per run:
-    //
-    //   before: 3 steps -> 4 heartbeats x 96 ticks/day = 384/day
-    //           (embed-batch: 3 x 144 = 432/day; ~816/day combined)
-    //   after:  exactly 1 per run  x 96 ticks/day = 96/day
-    //           (embed-batch: 144/day; 240/day combined)
-    //
-    // Sentry.captureMessage consumes the ERRORS quota, and once that quota
-    // is exhausted Sentry drops real production errors — on a live system
-    // where Sentry is the only alerting channel. Being a step also makes
-    // the count stable: it no longer changes meaning whenever a step is
-    // added or removed, which the alert recipe in docs/cron-monitoring.md
-    // depends on. Keeping it FIRST preserves the original intent (visible
-    // even when there is nothing to do); see docs/cron-monitoring.md §2 for
-    // the residual monthly volume against the free tier.
-    // -------------------------------------------------------------------
-    // Step A — sweep-stuck-pending.
-    // -------------------------------------------------------------------
+    // Heartbeat now lives as the FIRST STATEMENT inside the first real step
+    // (WR-R2) — see the comment inside that step; the cron-hardening test
+    // pins both the placement and the once-per-run memoization.
     await step.run('sweep-stuck-pending', async () => {
       // WR-R2 (re-review 2026-08-11): heartbeat lives INSIDE the first real
       // step rather than as its own step — a dedicated step cost +1 step
