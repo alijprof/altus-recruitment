@@ -14,6 +14,7 @@ import { createClient } from '@/lib/supabase/server'
 import { CandidateApplications } from './candidate-applications'
 import { CandidateDeleteButton } from './candidate-delete-button'
 import { CandidateDetailHeader } from './candidate-detail-header'
+import { CvFilesPanel } from './cv-files-panel'
 import { CvReviewPanel } from './cv-review-panel'
 import { CvUpload } from './cv-upload'
 import { LogActivityForm } from './log-activity-form'
@@ -147,7 +148,6 @@ export default async function CandidateDetailPage({
   const cvsResult = await listCandidateCVs(supabase, id)
   const cvRows = cvsResult.ok ? cvsResult.data : []
   const latestCv = cvRows[0] ?? null
-  const olderCvs = cvRows.slice(1)
 
   // Applications across all jobs — best-effort. Drives the inline stage-
   // change section. If this errors we just hide the section.
@@ -410,43 +410,9 @@ export default async function CandidateDetailPage({
             />
           ) : null}
 
-          {olderCvs.length > 0 ? (
-            <section className="bg-card space-y-2 rounded-md border p-4">
-              <h2 className="text-sm font-semibold">Previous CVs</h2>
-              <ul className="space-y-2">
-                {olderCvs.map((cv) => {
-                  // Derive a human filename from the storage path. Path
-                  // shape is `{org}/{candidate}/{uuid}-{slug}.{ext}` —
-                  // strip up to the uuid prefix for readability.
-                  const filename =
-                    cv.storage_path.split('/').pop()?.replace(/^[0-9a-f-]{36}-/, '') ??
-                    'CV'
-                  const statusLabel =
-                    cv.parsing_status === 'complete'
-                      ? 'Parsed'
-                      : cv.parsing_status === 'failed'
-                        ? 'Failed'
-                        : 'Pending'
-                  return (
-                    <li
-                      key={cv.id}
-                      className="flex items-center justify-between gap-3"
-                    >
-                      <span
-                        className="text-muted-foreground truncate text-xs font-normal"
-                        title={filename}
-                      >
-                        v{cv.version} · {filename}
-                      </span>
-                      <Badge variant="outline" className="text-xs font-normal">
-                        {statusLabel}
-                      </Badge>
-                    </li>
-                  )
-                })}
-              </ul>
-            </section>
-          ) : null}
+          {/* D-01: always render for every candidate with 1+ CVs, not just
+              multi-version ones — see cv-files-panel.tsx's header comment. */}
+          {cvRows.length > 0 ? <CvFilesPanel cvs={cvRows} /> : null}
         </aside>
       </div>
     </div>
