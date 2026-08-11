@@ -5,9 +5,11 @@ import { redirect } from 'next/navigation'
 import * as Sentry from '@sentry/nextjs'
 import { z } from 'zod'
 
+import { CV_FILE_UPLOAD_INCOMPLETE_DISABLED_COPY, isCvFileDownloadable } from '@/lib/cv/cv-file-display'
 import { assertUploadableCV } from '@/lib/cv/file-signature'
 import { isUnretryableParseFailure, isUploadIncomplete } from '@/lib/cv/parse-messages'
 import { createActivity } from '@/lib/db/activities'
+import { recordExportAudit } from '@/lib/db/audit'
 import {
   createCandidateCV,
   getCandidateCV,
@@ -267,6 +269,105 @@ export async function uploadCVAction(formData: FormData): Promise<UploadCVResult
 
   revalidatePath(`/candidates/${candidateId}`)
   return { ok: true, candidateCvId }
+}
+
+// ---------------------------------------------------------------------------
+// Signed-URL file access (D-01, Plan 07-01). The customer's #1 trust
+// complaint was "I can't see the CV you're holding for me" — the file has
+// been in private Storage since Phase 1 and tenant SELECT was already
+// granted (migration 20260517204501:17-22); nothing anywhere calls
+// createSignedUrl for it. This is that call.
+// ---------------------------------------------------------------------------
+
+const getCvFileUrlSchema = z.object({
+  candidateCvId: z.string().uuid('Invalid CV id.'),
+})
+
+export type GetCvFileUrlInput = z.infer<typeof getCvFileUrlSchema>
+export type GetCvFileUrlResult = { ok: true; url: string } | { ok: false; error: string }
+
+// Matches the existing prior art at apply/[orgSlug]/actions.ts:155 — short
+// enough that a leaked/logged URL is worthless within minutes, long enough
+// that window.open(url) always completes before it expires.
+const CV_SIGNED_URL_TTL_SECONDS = 60
+
+export async function getCvFileUrlAction(rawInput: unknown): Promise<GetCvFileUrlResult> {
+  const parsed = getCvFileUrlSchema.safeParse(rawInput)
+  if (!parsed.success) {
+    const first = parsed.error.issues[0]?.message ?? 'Invalid request.'
+    return { ok: false, error: first }
+  }
+
+  // Deliberately NO requireEntitledOrg() gate here, unlike every mutation
+  // action in this file. Every other gate guards a mutation or AI spend;
+  // this is a tenant reading back a document they already gave us.
+  // Withholding a customer's own file behind a billing state is a
+  // data-hostage posture we do not take — same reasoning as the
+  // erasure/export paths (deleteCandidateAction, /admin org export).
+
+  const supabase = await createClient()
+  const {
+    data: { user },
+  } = await supabase.auth.getUser()
+  if (!user) return { ok: false, error: 'Not signed in.' }
+
+  // getCandidateCV reads under the RLS-scoped SSR client — a cross-tenant id
+  // surfaces as `not_found`, which IS the tenancy barrier. Return a generic
+  // message for any non-ok result; never echo the DbResult detail (internal
+  // vs not_found) to the client.
+  const cvResult = await getCandidateCV(supabase, parsed.data.candidateCvId)
+  if (!cvResult.ok) {
+    return { ok: false, error: 'CV not found.' }
+  }
+  const cv = cvResult.data
+
+  // Server-side mirror of the UI's disabled state — same
+  // server-mirrors-client-guard pattern retryParseAction already uses at
+  // actions.ts:318 (isUnretryableParseFailure), applied here to
+  // isCvFileDownloadable. A direct call to this action bypassing the UI
+  // can't sign a URL for a row with no stored file.
+  if (!isCvFileDownloadable(cv)) {
+    return { ok: false, error: CV_FILE_UPLOAD_INCOMPLETE_DISABLED_COPY }
+  }
+
+  const { data: signed, error: signError } = await supabase.storage
+    .from('cvs')
+    .createSignedUrl(cv.storage_path, CV_SIGNED_URL_TTL_SECONDS)
+
+  // Storage RLS ('Tenant select own org CVs', migration 20260517204501) is
+  // the second, independent tenancy gate — even if the RLS-scoped read
+  // above were ever bypassed, the bucket policy alone still blocks a
+  // cross-tenant sign. On error or a missing signedUrl, capture a PII-free
+  // Error (name + a fixed subop label only — NEVER cv.storage_path, which
+  // embeds a slugified candidate name) and return a generic failure.
+  if (signError || !signed?.signedUrl) {
+    Sentry.captureException(new Error(signError?.name ?? 'MissingSignedUrl'), {
+      tags: {
+        layer: 'action',
+        helper: 'getCvFileUrlAction',
+        subop: 'createSignedUrl',
+        candidate_cv_id: cv.id,
+      },
+    })
+    return { ok: false, error: 'Couldn’t open this file. Please try again.' }
+  }
+
+  // Audited BEFORE the URL is returned — a failed audit write must never
+  // block a customer reading their own document (recordExportAudit's
+  // never-throw contract), but a successful signed URL must never reach the
+  // browser without a row filed first. Filing against the CANDIDATE (not
+  // the cv row) is deliberate: it makes the download appear in that
+  // candidate's access history through the existing
+  // audit_log_org_entity_idx, which is how "who accessed this candidate's
+  // data" stays answerable. Metadata carries ids + an integer version
+  // ONLY — no filename, no storage path, no candidate name.
+  await recordExportAudit(supabase, 'candidate', cv.candidate_id, {
+    candidate_cv_id: cv.id,
+    version: cv.version,
+  })
+
+  // No revalidatePath — this action mutates nothing.
+  return { ok: true, url: signed.signedUrl }
 }
 
 // ---------------------------------------------------------------------------
