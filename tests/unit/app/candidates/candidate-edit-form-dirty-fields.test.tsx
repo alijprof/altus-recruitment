@@ -28,8 +28,9 @@ vi.mock('next/navigation', () => ({
   useRouter: () => ({ push: vi.fn(), refresh: vi.fn() }),
 }))
 
+const toastError = vi.fn()
 vi.mock('sonner', () => ({
-  toast: { success: vi.fn(), error: vi.fn() },
+  toast: { success: vi.fn(), error: (message: string) => toastError(message) },
 }))
 
 const updateCandidateAction = vi.fn()
@@ -90,6 +91,7 @@ function lastPayload(): Record<string, unknown> {
 beforeEach(() => {
   updateCandidateAction.mockReset()
   updateCandidateAction.mockResolvedValue({ ok: true })
+  toastError.mockReset()
 })
 
 describe('CandidateEditForm — dirty-field submission (CR-01)', () => {
@@ -182,6 +184,41 @@ describe('CandidateEditForm — dirty-field submission (CR-01)', () => {
     // …and clearing one field must still not touch the others.
     expect(Object.hasOwn(payload, 'phone')).toBe(false)
     expect(Object.hasOwn(payload, 'skills')).toBe(false)
+  })
+
+  // --- WR-08: server-side field errors must reach the user --------------
+
+  it('renders a server field error against the real field', async () => {
+    const user = userEvent.setup()
+    updateCandidateAction.mockResolvedValue({
+      ok: false,
+      fieldErrors: { phone: ['That phone number is not valid.'] },
+    })
+    render(<CandidateEditForm candidateId="cand-1" defaultValues={parsedSnapshot()} />)
+
+    await user.type(screen.getByLabelText('Phone'), '9')
+    await user.click(screen.getByRole('button', { name: 'Save changes' }))
+
+    expect(await screen.findByText('That phone number is not valid.')).toBeInTheDocument()
+    expect(toastError).not.toHaveBeenCalled()
+  })
+
+  it('never swallows an error keyed under a field the form does not render', async () => {
+    const user = userEvent.setup()
+    // The exact pre-fix shape: zod's flatten() keyed every issue under
+    // `patch`, setError('patch') was a silent no-op, and the save looked
+    // like it did nothing at all.
+    updateCandidateAction.mockResolvedValue({
+      ok: false,
+      fieldErrors: { patch: ['Invalid candidate id.'] },
+    })
+    render(<CandidateEditForm candidateId="cand-1" defaultValues={parsedSnapshot()} />)
+
+    await user.type(screen.getByLabelText('Phone'), '9')
+    await user.click(screen.getByRole('button', { name: 'Save changes' }))
+
+    await waitFor(() => expect(toastError).toHaveBeenCalledTimes(1))
+    expect(toastError.mock.calls[0]?.[0]).toBe('Invalid candidate id.')
   })
 
   it('sends a field back to its original value as NOT dirty (no needless write)', async () => {

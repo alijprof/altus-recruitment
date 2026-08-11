@@ -49,16 +49,42 @@ function toNullableNumber(v: string | undefined): number | null | undefined {
   return v === '' ? null : Number(v)
 }
 
+/**
+ * WR-08 (review 2026-08-11) — flatten the NESTED issue path.
+ *
+ * updateCandidateActionSchema wraps the payload as `{ id, patch }`, and
+ * `error.flatten().fieldErrors` only ever keys on `path[0]`. Every field
+ * error therefore arrived as `fieldErrors.patch`, and the form called
+ * `form.setError('patch', …)` — a field that does not exist, so no
+ * FormMessage rendered and no toast fired. The save appeared to do nothing
+ * at all.
+ *
+ * Pre-existing shape, but 07-03/07-04 took the number of server-side
+ * rejectable fields from 8 to 18 and added paths where client validation
+ * does not run first (a direct action invocation, a future non-RHF caller).
+ *
+ * `['patch', 'work_experience', 0, 'title']` keys under `work_experience`,
+ * which is the name react-hook-form knows.
+ */
+function toFieldErrors(
+  issues: ReadonlyArray<{ path: ReadonlyArray<PropertyKey>; message: string }>,
+): Record<string, string[]> {
+  const fieldErrors: Record<string, string[]> = {}
+  for (const issue of issues) {
+    const [first, second] = issue.path
+    const key = first === 'patch' ? String(second ?? 'patch') : String(first ?? 'patch')
+    ;(fieldErrors[key] ??= []).push(issue.message)
+  }
+  return fieldErrors
+}
+
 export async function updateCandidateAction(
   id: string,
   rawPatch: unknown,
 ): Promise<UpdateCandidateResult> {
   const parsed = updateCandidateActionSchema.safeParse({ id, patch: rawPatch })
   if (!parsed.success) {
-    return {
-      ok: false,
-      fieldErrors: parsed.error.flatten().fieldErrors as Record<string, string[] | undefined>,
-    }
+    return { ok: false, fieldErrors: toFieldErrors(parsed.error.issues) }
   }
 
   // Entitlement gate — block CRM mutations for non-entitled orgs (audit blocker 1).

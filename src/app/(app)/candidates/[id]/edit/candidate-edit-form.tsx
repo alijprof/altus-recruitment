@@ -142,10 +142,27 @@ export function CandidateEditForm({ candidateId, defaultValues }: CandidateEditF
       const result = await updateCandidateAction(candidateId, payload)
       if (!result) return
       if ('fieldErrors' in result) {
+        // WR-08 — only set errors on fields this form actually renders.
+        // setError on an unknown name is a silent no-op: no FormMessage, no
+        // toast, and a save that looks like it did nothing. The action now
+        // flattens `{ id, patch }` paths down to real field names, and
+        // anything that still fails to map falls through to a toast so the
+        // failure can never be invisible.
+        const knownFields = new Set(Object.keys(form.getValues()))
+        let mappedToAField = false
         for (const [field, messages] of Object.entries(result.fieldErrors)) {
-          if (messages && messages.length > 0) {
-            form.setError(field as keyof EditCandidateInput, { message: messages[0] })
+          const message = messages?.[0]
+          if (!message) continue
+          if (knownFields.has(field)) {
+            form.setError(field as keyof EditCandidateInput, { message })
+            mappedToAField = true
           }
+        }
+        if (!mappedToAField) {
+          const firstMessage = Object.values(result.fieldErrors)
+            .flatMap((messages) => messages ?? [])
+            .at(0)
+          toast.error(firstMessage ?? 'Some fields need attention.')
         }
         return
       }
