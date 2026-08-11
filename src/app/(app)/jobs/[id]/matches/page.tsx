@@ -14,6 +14,7 @@ import { getJob } from '@/lib/db/jobs'
 import { createClient as createSupabaseClient } from '@/lib/supabase/server'
 
 import { MatchCard } from './match-card'
+import { ScoreAllButton } from './score-all-button'
 
 // Plan 2 Task 2.2 — top matches with Sonnet-generated explanations.
 //
@@ -100,6 +101,27 @@ export default async function JobMatchesPage({ params }: { params: Promise<{ id:
     }
   }
 
+  // Plan 07-07 Task 2 — only offer "Score all" when there's something to
+  // score. `matches.length === 0` already means "Not indexed yet" (or the
+  // vector lookup errored, which also yields an empty array) — a scoring
+  // button there would promise work that can't happen yet. Beyond that,
+  // hide it once every visible card already carries a fresh (non-stale)
+  // summary, using the SAME identity comparison as MatchCard's `isStale` so
+  // the two never disagree; derived from data already fetched above, no
+  // extra query.
+  const allCardsFresh =
+    matches.length > 0 &&
+    matches.every((row) => {
+      const summary = summaryByCandidate.get(row.id)
+      if (!summary) return false
+      const candidateEmbeddingVersion = candidateVersions.get(row.id) ?? 0
+      return (
+        (summary.candidate_embedding_version ?? 0) === candidateEmbeddingVersion &&
+        (summary.job_embedding_version ?? 0) === jobEmbeddingVersion
+      )
+    })
+  const showScoreAll = matches.length > 0 && !allCardsFresh
+
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -110,6 +132,7 @@ export default async function JobMatchesPage({ params }: { params: Promise<{ id:
           <ChevronLeft className="mr-1 size-4" />
           Back to job
         </Link>
+        {showScoreAll ? <ScoreAllButton jobId={id} /> : null}
       </div>
 
       <header className="space-y-1">

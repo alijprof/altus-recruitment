@@ -73,7 +73,7 @@ Plans:
 **Goal:** The CV data the customer already trusts us with becomes visible, correctable and trustworthy — every stored CV file is viewable and downloadable with its version history and an audit trail, low-confidence parsed fields are flagged before the recruiter has to go looking, every AI-parsed field is editable in-app with correct embedding invalidation, every application carries a match score, and a wedged background job can no longer block the queue for days unnoticed.
 **Requirements**: [CLT-01, CLT-02, CLT-03, CLT-04, CLT-05, CLT-06, CLT-07, CLT-08]
 **Depends on:** Phase 6
-**Plans:** 8 plans
+**Plans:** 1/8 plans executed
 
 Requirements:
 
@@ -94,7 +94,7 @@ Plans:
 - [ ] 07-04-PLAN.md — Parsed-field editing: tag input, repeating-row editors, expanded edit form (wave 2)
 - [ ] 07-05-PLAN.md — Cron hardening: function timeouts, Sentry heartbeats, monitoring runbook (wave 1)
 - [ ] 07-06-PLAN.md — Match-score backfill sweep + super-admin trigger (wave 1)
-- [ ] 07-07-PLAN.md — Match freshness: self-refreshing Explain + `Score all` (wave 1)
+- [x] 07-07-PLAN.md — Match freshness: self-refreshing Explain + `Score all` (wave 1)
 - [ ] 07-08-PLAN.md — Acceptance gate: full gates, code review, authed browser pre-smoke (wave 3)
 
 **Design note:** This phase needs NO migration — `export` already exists in the
