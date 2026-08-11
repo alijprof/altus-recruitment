@@ -403,6 +403,7 @@ function CompleteState({
           {filename} · {formatDateLong(candidateCv.created_at)}
         </p>
         <CvFileLink
+          candidateId={candidateCv.candidate_id}
           candidateCvId={candidateCv.id}
           filename={filename}
           downloadable={downloadable}

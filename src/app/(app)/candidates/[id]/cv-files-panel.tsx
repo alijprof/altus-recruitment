@@ -89,6 +89,7 @@ export function CvFilesPanel({ cvs }: CvFilesPanelProps) {
                 </p>
               </div>
               <CvFileLink
+                candidateId={cv.candidate_id}
                 candidateCvId={cv.id}
                 filename={filename}
                 downloadable={downloadable}

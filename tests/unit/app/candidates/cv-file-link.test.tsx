@@ -1,194 +1,105 @@
-import { render, screen, waitFor } from '@testing-library/react'
-import userEvent from '@testing-library/user-event'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { render, screen } from '@testing-library/react'
+import { describe, expect, it } from 'vitest'
 
 import { CvFileLink } from '@/app/(app)/candidates/[id]/cv-file-link'
 
 // ---------------------------------------------------------------------------
-// CR-02 regression (review 2026-08-11) — the blocked-popup silent failure.
+// PRODUCTION INCIDENT REWORK (2026-08-11).
 //
-// window.open used to run AFTER the server-action await, so the click's
-// transient activation was already gone (Safari/WebKit, and any strict popup
-// blocker). window.open returned null, the return value was never checked,
-// and the button flickered "Opening…" then did nothing — on the feature this
-// whole phase exists to deliver. Worse, the signed URL had been minted and an
-// `export` audit row written, so the audit recorded an access that never
-// happened.
+// This control used to be a Button that opened a blank popup and awaited
+// getCvFileUrlAction inside startTransition. Verified live on production: the
+// action responded 200 with a valid signed URL and the client promise NEVER
+// SETTLED — no branch ran, no toast, no pending state, popup orphaned at
+// about:blank. The previous version of this file passed all seven of its
+// tests while the feature was completely dead in the customer's browser,
+// because jsdom cannot reproduce the popup + async-action interaction at all.
 //
-// These tests pin all three branches: navigate the synchronously-opened tab,
-// close it + toast on a failed sign, and — when the popup was blocked —
-// surface the URL in a toast the recruiter can activate.
+// The lesson is baked into the design, not into more mocks: there is no async
+// client path left to test. The control is a plain anchor to a GET route
+// handler, so what these tests pin is exactly what the browser needs to be
+// correct — the href the route actually serves, new-tab semantics, and a
+// disabled state that is genuinely non-navigable.
 // ---------------------------------------------------------------------------
 
-const toastError = vi.fn()
-vi.mock('sonner', () => ({
-  toast: {
-    success: vi.fn(),
-    error: (message: string, opts?: unknown) => toastError(message, opts),
-  },
-}))
+const CANDIDATE_ID = '11111111-1111-4111-8111-111111111111'
+const CV_ID = '22222222-2222-4222-8222-222222222222'
+const DISABLED_COPY = 'The upload never finished, so there is no stored file.'
 
-const getCvFileUrlAction = vi.fn()
-vi.mock('@/app/(app)/candidates/[id]/actions', () => ({
-  getCvFileUrlAction: (...args: unknown[]) => getCvFileUrlAction(...args),
-}))
-
-type FakeWindow = {
-  location: { href: string }
-  closed: boolean
-  opener: unknown
-  close: () => void
-}
-
-function fakeWindow(): FakeWindow {
-  const win: FakeWindow = {
-    location: { href: '' },
-    closed: false,
-    opener: {},
-    close: () => {
-      win.closed = true
-    },
-  }
-  return win
-}
-
-const SIGNED_URL = 'https://storage.example.test/signed/cv.pdf?token=abc'
-
-let openSpy: ReturnType<typeof vi.spyOn>
-
-beforeEach(() => {
-  toastError.mockReset()
-  getCvFileUrlAction.mockReset()
-  getCvFileUrlAction.mockResolvedValue({ ok: true, url: SIGNED_URL })
-})
-
-afterEach(() => {
-  openSpy?.mockRestore()
-})
-
-function renderLink() {
+function renderEnabled() {
   render(
     <CvFileLink
-      candidateCvId="cv-1"
+      candidateId={CANDIDATE_ID}
+      candidateCvId={CV_ID}
       filename="dana-okafor-cv.pdf"
       downloadable
-      disabledReason="unused"
+      disabledReason={DISABLED_COPY}
     />,
   )
 }
 
-describe('CvFileLink — popup handling (CR-02)', () => {
-  it('opens the tab synchronously, BEFORE the server round trip', async () => {
-    const user = userEvent.setup()
-    const win = fakeWindow()
-    const order: string[] = []
-    // reason: jsdom's window.open is a no-op returning null; the spy is the
-    // only way to observe the call ordering this fix turns on.
-    openSpy = vi.spyOn(window, 'open').mockImplementation(() => {
-      order.push('window.open')
-      return win as unknown as Window
-    })
-    getCvFileUrlAction.mockImplementation(async () => {
-      order.push('action')
-      return { ok: true, url: SIGNED_URL }
-    })
+describe('CvFileLink — anchor semantics', () => {
+  it('renders a link (not a button) so the browser owns the navigation', () => {
+    renderEnabled()
 
-    renderLink()
-    await user.click(screen.getByRole('button', { name: 'View' }))
-
-    await waitFor(() => expect(getCvFileUrlAction).toHaveBeenCalledTimes(1))
-    // If these ever swap, the popup blocker wins and the feature is dead.
-    expect(order).toEqual(['window.open', 'action'])
+    // A LINK is the whole fix: the tab is opened by the browser from the
+    // user's gesture, with no JS, no popup handle, and no promise to hang.
+    expect(screen.getByRole('link', { name: 'View' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'View' })).toBeNull()
   })
 
-  it('navigates the opened tab to the signed URL and shows no error', async () => {
-    const user = userEvent.setup()
-    const win = fakeWindow()
-    openSpy = vi.spyOn(window, 'open').mockReturnValue(win as unknown as Window)
+  it('points at the candidate-scoped CV route that mints the signed URL', () => {
+    renderEnabled()
 
-    renderLink()
-    await user.click(screen.getByRole('button', { name: 'View' }))
-
-    await waitFor(() => expect(win.location.href).toBe(SIGNED_URL))
-    expect(toastError).not.toHaveBeenCalled()
-    expect(win.closed).toBe(false)
+    // Drift pin: this literal must stay in step with the file path
+    // src/app/(app)/candidates/[id]/cv-file/[cvId]/route.ts. If someone moves
+    // or renames that route without updating the anchor, the control silently
+    // 404s in production — the same "looks fine, does nothing" class of bug
+    // this rework exists to kill.
+    expect(screen.getByRole('link', { name: 'View' })).toHaveAttribute(
+      'href',
+      `/candidates/${CANDIDATE_ID}/cv-file/${CV_ID}`,
+    )
   })
 
-  it('severs window.opener before navigating (reverse-tabnabbing)', async () => {
-    const user = userEvent.setup()
-    const win = fakeWindow()
-    openSpy = vi.spyOn(window, 'open').mockReturnValue(win as unknown as Window)
+  it('opens in a new tab with the opener severed', () => {
+    renderEnabled()
+    const link = screen.getByRole('link', { name: 'View' })
 
-    renderLink()
-    await user.click(screen.getByRole('button', { name: 'View' }))
-
-    await waitFor(() => expect(win.location.href).toBe(SIGNED_URL))
-    expect(win.opener).toBeNull()
+    expect(link).toHaveAttribute('target', '_blank')
+    const rel = link.getAttribute('rel') ?? ''
+    expect(rel).toContain('noopener')
+    expect(rel).toContain('noreferrer')
   })
 
-  it('does not pass noopener to the placeholder open — that would return null', async () => {
-    const user = userEvent.setup()
-    openSpy = vi.spyOn(window, 'open').mockReturnValue(fakeWindow() as unknown as Window)
+  it('shows the filename as the tooltip while keeping "View" as the accessible name', () => {
+    renderEnabled()
+    const link = screen.getByRole('link', { name: 'View' })
 
-    renderLink()
-    await user.click(screen.getByRole('button', { name: 'View' }))
-
-    const features = openSpy.mock.calls[0]?.[2]
-    expect(String(features ?? '')).not.toContain('noopener')
+    // The accessible name is load-bearing for the smoke spec's
+    // getByRole('link', { name: 'View', exact: true }) lookup — the filename
+    // must stay in `title` and never leak into the name.
+    expect(link).toHaveAttribute('title', 'dana-okafor-cv.pdf')
+    expect(link).toHaveTextContent('View')
   })
 
-  it('closes the placeholder tab and toasts when the sign fails', async () => {
-    const user = userEvent.setup()
-    const win = fakeWindow()
-    openSpy = vi.spyOn(window, 'open').mockReturnValue(win as unknown as Window)
-    getCvFileUrlAction.mockResolvedValue({ ok: false, error: 'CV not found.' })
-
-    renderLink()
-    await user.click(screen.getByRole('button', { name: 'View' }))
-
-    await waitFor(() => expect(toastError).toHaveBeenCalledTimes(1))
-    expect(toastError.mock.calls[0]?.[0]).toBe('CV not found.')
-    expect(win.closed).toBe(true)
-    expect(win.location.href).toBe('')
-  })
-
-  it('never fails silently when the popup is blocked — toasts a usable link', async () => {
-    const user = userEvent.setup()
-    // A blocked popup is exactly this: window.open returns null.
-    openSpy = vi.spyOn(window, 'open').mockReturnValue(null)
-
-    renderLink()
-    await user.click(screen.getByRole('button', { name: 'View' }))
-
-    await waitFor(() => expect(toastError).toHaveBeenCalledTimes(1))
-    const [message, opts] = toastError.mock.calls[0] ?? []
-    expect(String(message)).toMatch(/blocked/i)
-
-    // The toast must carry an action that opens the URL from a fresh user
-    // gesture — the whole point is that the recruiter is not left stranded.
-    const action = (opts as { action?: { label: string; onClick: () => void } } | undefined)?.action
-    expect(action?.label).toBe('Open CV')
-    openSpy.mockClear()
-    action?.onClick()
-    expect(openSpy).toHaveBeenCalledWith(SIGNED_URL, '_blank', 'noopener,noreferrer')
-  })
-
-  it('renders disabled with the shared reason and never calls the action', async () => {
-    const user = userEvent.setup()
-    openSpy = vi.spyOn(window, 'open').mockReturnValue(null)
+  it('renders a disabled, non-navigable control when the upload never finished', () => {
     render(
       <CvFileLink
-        candidateCvId="cv-1"
+        candidateId={CANDIDATE_ID}
+        candidateCvId={CV_ID}
         filename="dana-okafor-cv.pdf"
         downloadable={false}
-        disabledReason="The upload never finished."
+        disabledReason={DISABLED_COPY}
       />,
     )
 
     const button = screen.getByRole('button', { name: 'View' })
     expect(button).toBeDisabled()
-    expect(button).toHaveAttribute('title', 'The upload never finished.')
-    await user.click(button)
-    expect(getCvFileUrlAction).not.toHaveBeenCalled()
+    expect(button).toHaveAttribute('title', DISABLED_COPY)
+
+    // There must be NO href in this state — a disabled-looking anchor is
+    // still clickable, and would hand the user a 404 instead of the reason.
+    expect(screen.queryByRole('link', { name: 'View' })).toBeNull()
+    expect(button).not.toHaveAttribute('href')
   })
 })
