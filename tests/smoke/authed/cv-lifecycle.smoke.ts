@@ -285,7 +285,7 @@ test.describe.serial('@smoke-auth cv-lifecycle', () => {
     // a relative "2 minutes ago" that could tick over mid-assertion.
     await expect(cvRow).toContainText(/\d{1,2} [A-Za-z]+ \d{4}/)
 
-    const viewButton = cvFilesSection.getByRole('button', { name: 'View', exact: true })
+    const viewButton = cvFilesSection.getByRole('link', { name: 'View', exact: true })
     await expect(viewButton).toBeVisible()
     await expect(viewButton).toBeEnabled()
     // The disabled-state literal (imported, not hand-copied) must NOT be
