@@ -15,6 +15,7 @@ import { getCandidateEmbeddingVersion, getJobEmbeddingVersion } from '@/lib/db/e
 import { getJob } from '@/lib/db/jobs'
 import { env } from '@/lib/env'
 import { inngest } from '@/lib/inngest/client'
+import { checkCap } from '@/lib/stripe/cap-enforcement'
 import { ENTITLEMENT_BLOCKED_MESSAGE, requireEntitledOrg } from '@/lib/stripe/require-entitlement'
 import { createClient as createSupabaseClient } from '@/lib/supabase/server'
 
@@ -231,9 +232,10 @@ export async function explainCandidateMatchAction(
 // `precompute-matches-for-job` (registered separately) does the actual
 // work: tenant-boundary check, month-to-date spend ceiling, up to 10
 // candidates, cache-lookup + Sonnet + upsert per candidate. This action
-// deliberately does NOT duplicate the spend ceiling or the AI cap check —
-// precompute owns both, and a second copy here would be a second place to
-// drift out of sync (see plan interfaces block).
+// does NOT re-implement the spend ceiling or the AI cap — precompute owns
+// both and still enforces both; what it now does (WR-04) is READ them
+// before sending, purely so a refusal can be explained to the recruiter
+// instead of surfacing as a 90-second spinner over unchanged cards.
 //
 // Order of operations mirrors explainCandidateMatchAction:
 //   1. validate jobId
@@ -291,6 +293,38 @@ export async function scoreAllMatchesAction(jobId: string): Promise<ScoreAllMatc
   const jobResult = await getJob(supabase, parsed.data.jobId)
   if (!jobResult.ok || jobResult.data.organization_id !== organizationId) {
     return { ok: false, error: 'Job not found in your organisation.' }
+  }
+
+  // WR-04 (review 2026-08-11) — READ-ONLY pre-flight, not a second
+  // enforcement point. precompute-matches-for-job remains the authority on
+  // both of these and still re-checks them; the problem this solves is that
+  // when it bails, it does so SILENTLY — it writes no summary and returns.
+  // The recruiter got a "Scoring started" toast, a 90-second spinner, the
+  // same "Not scored yet" cards, and an ambiguous "may still be running"
+  // message, with no path from this UI to "you have hit your AI budget" (a
+  // documented live watch-list item: the £-cap silent freeze). They then
+  // click again, and again.
+  //
+  // Mirrors what explainCandidateMatchAction already does on the same two
+  // conditions, so the two scoring entry points give the same answer.
+  const spendResult = await getOrgMatchSpendThisMonth(supabase, organizationId)
+  if (spendResult.ok && spendResult.data >= env.MAX_MONTHLY_MATCH_SPEND_PENCE) {
+    return {
+      ok: false,
+      error:
+        'Match scoring is paused this month — monthly spend limit reached. Contact the org owner to lift the limit.',
+    }
+  }
+
+  // checkCap is read-only and fails OPEN on any billing/DB error, so a
+  // misconfiguration can never block scoring here — it only ever converts an
+  // already-certain refusal into an honest message.
+  const cap = await checkCap(organizationId, 'match_score')
+  if (!cap.allow) {
+    return {
+      ok: false,
+      error: 'Monthly AI usage limit reached — upgrade your plan or wait for the reset.',
+    }
   }
 
   try {

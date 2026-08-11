@@ -3,6 +3,7 @@ import { notFound } from 'next/navigation'
 import { ChevronLeft } from 'lucide-react'
 
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
+import { isProfileEffectivelyEmpty } from '@/lib/ai/profile-completeness'
 import { listMatchSummariesForJob } from '@/lib/db/ai-summaries'
 import { listCandidatesByIds, type CandidateByIdRow } from '@/lib/db/candidates'
 import {
@@ -109,9 +110,19 @@ export default async function JobMatchesPage({ params }: { params: Promise<{ id:
   // summary, using the SAME identity comparison as MatchCard's `isStale` so
   // the two never disagree; derived from data already fetched above, no
   // extra query.
+  //
+  // WR-04 (review 2026-08-11): candidates precompute REFUSES to score
+  // (effectively-empty profiles, isProfileEffectivelyEmpty) must be excluded
+  // from this calculation. Including them made `allCardsFresh` unreachable
+  // whenever a job's top-10 contained one, so "Score all" showed forever and
+  // every click was a guaranteed no-op on that card — permanent, on every
+  // visit. Their card now says so explicitly (MatchCard's isUnscorable).
+  const scorableMatches = matches.filter(
+    (row) => !isProfileEffectivelyEmpty(candidatesById.get(row.id) ?? row),
+  )
   const allCardsFresh =
-    matches.length > 0 &&
-    matches.every((row) => {
+    scorableMatches.length > 0 &&
+    scorableMatches.every((row) => {
       const summary = summaryByCandidate.get(row.id)
       if (!summary) return false
       const candidateEmbeddingVersion = candidateVersions.get(row.id) ?? 0
@@ -120,7 +131,7 @@ export default async function JobMatchesPage({ params }: { params: Promise<{ id:
         (summary.job_embedding_version ?? 0) === jobEmbeddingVersion
       )
     })
-  const showScoreAll = matches.length > 0 && !allCardsFresh
+  const showScoreAll = scorableMatches.length > 0 && !allCardsFresh
 
   return (
     <div className="space-y-6">

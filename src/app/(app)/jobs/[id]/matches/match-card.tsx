@@ -64,6 +64,14 @@ export function MatchCard({
   // founder's, out of scope here).
   const isIncompleteProfile = summary !== null && isProfileEffectivelyEmpty(candidate)
 
+  // WR-04 (review 2026-08-11): the same predicate on an UNSCORED card means
+  // this candidate will never be scored — precompute skips effectively-empty
+  // profiles before it even checks the cache. Rendering "Not scored yet" +
+  // an Explain button there is a permanent lie: the recruiter clicks Score
+  // all, waits 90s, sees no change, and repeats, on every visit. Say what is
+  // actually true and what would fix it.
+  const isUnscorable = summary === null && isProfileEffectivelyEmpty(candidate)
+
   return (
     <Card>
       <CardHeader>
@@ -83,6 +91,14 @@ export function MatchCard({
           <div className="flex items-center gap-2">
             {summary ? (
               <MatchScoreBadge score={summary.content.score} />
+            ) : isUnscorable ? (
+              <Badge
+                variant="outline"
+                className="text-muted-foreground text-xs font-normal"
+                title="Match scoring is skipped for profiles with no role, skills, seniority or sector data — there is no signal to score against."
+              >
+                Profile too sparse to score
+              </Badge>
             ) : (
               <Badge variant="outline" className="text-muted-foreground text-xs font-normal">
                 Not scored yet
@@ -161,6 +177,14 @@ export function MatchCard({
             </ol>
           </section>
         </CardContent>
+      ) : isUnscorable ? (
+        <CardContent>
+          <p className="text-muted-foreground text-sm">
+            There isn&apos;t enough on this profile to score against the job — no current role,
+            skills, seniority or sectors. Add those to the candidate (or upload a CV and accept the
+            parsed fields) and they&apos;ll be scored on the next run.
+          </p>
+        </CardContent>
       ) : (
         <CardContent>
           <p className="text-muted-foreground text-sm">
@@ -182,7 +206,13 @@ export function MatchCard({
         ) : (
           <span />
         )}
-        {!summary || isStale ? <ExplainButton jobId={jobId} candidateId={candidate.id} /> : null}
+        {/* No Explain button on an unscorable profile — precompute refuses
+            these by design (SF-1: no signal to explain), so offering a
+            control that would buy a Sonnet call for a contaminated score
+            would contradict the badge directly above it. */}
+        {(!summary || isStale) && !isUnscorable ? (
+          <ExplainButton jobId={jobId} candidateId={candidate.id} />
+        ) : null}
       </CardFooter>
     </Card>
   )

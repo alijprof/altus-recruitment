@@ -108,8 +108,14 @@ export function ScoreAllButton({ jobId }: ScoreAllButtonProps) {
         Score all
       </Button>
       {pollTimedOut ? (
+        // WR-04: the two honest possibilities, not just the optimistic one.
+        // A card that stays unscored after a completed run is a profile
+        // precompute refuses to score, and its own card now says so — the
+        // AI-budget and spend-ceiling cases are caught up front by the
+        // action and surfaced as a specific toast instead of landing here.
         <p className="text-muted-foreground text-xs font-normal">
-          Scoring may still be running — reload to see the rest.
+          Still running, or the remaining profiles are too sparse to score — reload to see where it
+          got to.
         </p>
       ) : null}
     </div>
