@@ -70,15 +70,40 @@ const seniorityLevelSchema = z.enum([...SENIORITY_LEVEL_VALUES, '']).optional()
 // STRING form directly.
 const YEARS_EXPERIENCE_EXCLUSIVE_MAX = 1000
 
+// WR-07 + IN-08 (review 2026-08-11). Two holes in the old `Number.isFinite(n)
+// && n >= 0 && n < 1000` refine:
+//
+//   1. It validated the TYPED value, but Postgres rounds to scale 1 BEFORE
+//      checking precision — so 999.95 through 999.99 all round to 1000.0 and
+//      raise `22003 numeric field overflow`. The user saw
+//      'Something went wrong. Please try again.' (edit/actions.ts's generic
+//      formError) with no indication which field was at fault, forever.
+//      Same class of bug as the Phase-6 coercion cliff: validate the value
+//      the DATABASE will actually store, not the one the user typed.
+//   2. Number('0x10') is 16 and Number('1e3') is 1000, and both satisfy
+//      Number.isFinite — so a direct action call (bypassing the type="number"
+//      input) could write a surprising-but-legal value.
+//
+// The pattern below IS the numeric(4,1) grid, stated once: up to three
+// integral digits and at most one decimal place, which caps the value at
+// exactly 999.9 and admits nothing Postgres would silently re-round.
+const YEARS_EXPERIENCE_PATTERN = /^\d{1,3}(\.\d)?$/
+
+const YEARS_EXPERIENCE_MESSAGE = 'Enter years between 0 and 999.9, using at most one decimal place'
+
 const yearsExperienceSchema = z
   .string()
   .trim()
   .max(10, 'Too long')
   .refine((v) => {
     if (v === '') return true
+    if (!YEARS_EXPERIENCE_PATTERN.test(v)) return false
     const n = Number(v)
-    return Number.isFinite(n) && n >= 0 && n < YEARS_EXPERIENCE_EXCLUSIVE_MAX
-  }, 'Enter a number of years between 0 and 999.9')
+    // Redundant while the pattern caps at three integral digits, but kept
+    // explicit so the Postgres rounding cliff survives any future loosening
+    // of the pattern.
+    return Number.isFinite(n) && Math.round(n * 10) / 10 < YEARS_EXPERIENCE_EXCLUSIVE_MAX
+  }, YEARS_EXPERIENCE_MESSAGE)
   .optional()
 
 // candidates.salary_current_estimate / salary_expectation are `integer`
@@ -89,12 +114,19 @@ const yearsExperienceSchema = z
 // recruiter is typing deliberately, unlike a CV-parse guess.
 const SALARY_CEILING = 10_000_000
 
+// IN-08: plain digits only. `Number.isInteger(Number('0x10'))` is true and
+// `Number('1e3')` is 1000, so the old refine accepted both from a direct
+// action call. type="number" prevents it from the UI; the schema should be
+// the authority regardless.
+const SALARY_PATTERN = /^\d+$/
+
 const salaryStringSchema = z
   .string()
   .trim()
   .max(12, 'Too long')
   .refine((v) => {
     if (v === '') return true
+    if (!SALARY_PATTERN.test(v)) return false
     const n = Number(v)
     return Number.isFinite(n) && Number.isInteger(n) && n >= 0 && n <= SALARY_CEILING
   }, 'Enter a whole non-negative number')
@@ -118,7 +150,13 @@ const TAG_ENTRY_MAX_CHARS = 100
 const tagArraySchema = z
   .array(z.string())
   .transform((arr) => arr.map((s) => s.trim()).filter((s) => s.length > 0))
-  .pipe(z.array(z.string().max(TAG_ENTRY_MAX_CHARS, `Each entry must be ${TAG_ENTRY_MAX_CHARS} characters or fewer`)))
+  .pipe(
+    z.array(
+      z
+        .string()
+        .max(TAG_ENTRY_MAX_CHARS, `Each entry must be ${TAG_ENTRY_MAX_CHARS} characters or fewer`),
+    ),
+  )
   .optional()
 
 // work_experience / education — jsonb not null default '[]'. Row shape

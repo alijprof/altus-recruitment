@@ -364,6 +364,25 @@ export async function getCvFileUrlAction(rawInput: unknown): Promise<GetCvFileUr
   // audit_log_org_entity_idx, which is how "who accessed this candidate's
   // data" stays answerable. Metadata carries ids + an integer version
   // ONLY — no filename, no storage path, no candidate name.
+  //
+  // WHAT THIS ROW MEANS (CR-02, review 2026-08-11): "a signed URL for this
+  // document was RELEASED to this user" — not "the bytes were fetched",
+  // which no server-side code here can observe. That distinction is only
+  // honest if every success path actually delivers the URL, so the client
+  // contract is load-bearing: cv-file-link.tsx opens its tab synchronously
+  // inside the click and, if the popup is blocked, surfaces the URL in a
+  // toast the recruiter can activate. It must never mint-and-discard.
+  //
+  // KNOWN, ACCEPTED GAP (IN-05, decided rather than left implied):
+  // recordExportAudit swallows its own failures into Sentry and resolves
+  // void, so a signed URL is still returned when the audit write itself
+  // fails. This is an availability-over-completeness trade consistent with
+  // recordViewAudit and getCandidate's inline audit — a customer is never
+  // locked out of their own document by our logging. The cost is that a
+  // GDPR "who accessed this CV" answer can be incomplete, with the only
+  // trace in Sentry. If that ever becomes unacceptable for document
+  // exports specifically, the change is: have recordExportAudit return a
+  // success flag and fail this action closed on false.
   await recordExportAudit(supabase, 'candidate', cv.candidate_id, {
     candidate_cv_id: cv.id,
     version: cv.version,

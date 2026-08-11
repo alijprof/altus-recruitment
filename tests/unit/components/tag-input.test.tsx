@@ -82,4 +82,81 @@ describe('TagInput', () => {
     expect(screen.getByText('React')).toBeInTheDocument()
     expect(screen.getByText('Node')).toBeInTheDocument()
   })
+
+  // --- WR-05 (review 2026-08-11): stored duplicates ----------------------
+  //
+  // mergeTags stops the component ADDING a duplicate, but `value` arrives
+  // from candidates.skills and nothing dedupes on write — coerceStringArray
+  // only drops non-strings and blanks, and the LinkedIn ingest writes the
+  // scraped array verbatim. `["React","React"]` out of Claude is ordinary.
+
+  it('renders one chip per distinct value when the stored array has duplicates', () => {
+    render(
+      <TagInput
+        value={['React', 'React', 'Node']}
+        onChange={() => {}}
+        placeholder="Add a skill…"
+      />,
+    )
+    expect(screen.getAllByText('React')).toHaveLength(1)
+    expect(screen.getAllByRole('button', { name: /^Remove/ })).toHaveLength(2)
+  })
+
+  it('dedupes case-insensitive stored duplicates, keeping first-seen casing', () => {
+    render(
+      <TagInput
+        value={['React', 'REACT', 'react']}
+        onChange={() => {}}
+        placeholder="Add a skill…"
+      />,
+    )
+    expect(screen.getAllByRole('button', { name: /^Remove/ })).toHaveLength(1)
+    expect(screen.getByText('React')).toBeInTheDocument()
+  })
+
+  it('removing a duplicated chip removes exactly that one chip, and it stays gone', async () => {
+    const user = userEvent.setup()
+    render(<ControlledTagInput initial={['React', 'React', 'Node']} />)
+
+    await user.click(screen.getByRole('button', { name: 'Remove React' }))
+
+    // The bug this pins: the chip visibly disappeared and then came back,
+    // because only one of the two stored copies had been dropped.
+    expect(screen.queryByText('React')).not.toBeInTheDocument()
+    expect(screen.getByText('Node')).toBeInTheDocument()
+  })
+
+  it('does not remove a sibling chip when a duplicate is removed', async () => {
+    const user = userEvent.setup()
+    const calls: string[][] = []
+    render(
+      <TagInput
+        value={['React', 'React', 'Node']}
+        onChange={(v) => calls.push(v)}
+        placeholder="Add a skill…"
+      />,
+    )
+
+    await user.click(screen.getByRole('button', { name: 'Remove React' }))
+
+    expect(calls).toEqual([['Node']])
+  })
+
+  it('Backspace removes the last CHIP even when it is stored twice', async () => {
+    const user = userEvent.setup()
+    render(<ControlledTagInput initial={['Node', 'React', 'React']} />)
+    const input = screen.getByPlaceholderText('Add a skill…')
+    await user.click(input)
+    await user.keyboard('{Backspace}')
+
+    // Slicing the raw array would have left one 'React' behind, so the chip
+    // would have looked unresponsive.
+    expect(screen.queryByText('React')).not.toBeInTheDocument()
+    expect(screen.getByText('Node')).toBeInTheDocument()
+  })
+
+  it('hides blank stored entries rather than rendering an empty chip', () => {
+    render(<TagInput value={['React', '', '  ']} onChange={() => {}} placeholder="Add a skill…" />)
+    expect(screen.getAllByRole('button', { name: /^Remove/ })).toHaveLength(1)
+  })
 })

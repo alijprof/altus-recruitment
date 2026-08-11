@@ -15,6 +15,7 @@ import { getCandidateEmbeddingVersion, getJobEmbeddingVersion } from '@/lib/db/e
 import { getJob } from '@/lib/db/jobs'
 import { env } from '@/lib/env'
 import { inngest } from '@/lib/inngest/client'
+import { checkCap } from '@/lib/stripe/cap-enforcement'
 import { ENTITLEMENT_BLOCKED_MESSAGE, requireEntitledOrg } from '@/lib/stripe/require-entitlement'
 import { createClient as createSupabaseClient } from '@/lib/supabase/server'
 
@@ -231,9 +232,10 @@ export async function explainCandidateMatchAction(
 // `precompute-matches-for-job` (registered separately) does the actual
 // work: tenant-boundary check, month-to-date spend ceiling, up to 10
 // candidates, cache-lookup + Sonnet + upsert per candidate. This action
-// deliberately does NOT duplicate the spend ceiling or the AI cap check —
-// precompute owns both, and a second copy here would be a second place to
-// drift out of sync (see plan interfaces block).
+// does NOT re-implement the spend ceiling or the AI cap — precompute owns
+// both and still enforces both; what it now does (WR-04) is READ them
+// before sending, purely so a refusal can be explained to the recruiter
+// instead of surfacing as a 90-second spinner over unchanged cards.
 //
 // Order of operations mirrors explainCandidateMatchAction:
 //   1. validate jobId
@@ -252,6 +254,13 @@ export type ScoreAllMatchesActionResult = { ok: true } | { ok: false; error: str
 const scoreAllInputSchema = z.object({
   jobId: z.string().uuid(),
 })
+
+// Hour-granularity bucket for the "Score all" Inngest dedup id (WR-03).
+// Same value and same reasoning as enqueue-match-score.ts's bucket and the
+// reconciler's REQUEUE_BUCKET_MS: Inngest dedups on `id` for 24h, so a
+// bucket is what keeps a collapsed double-click from becoming a day-long
+// block on ever scoring this job again.
+const SCORE_ALL_DEDUP_BUCKET_MS = 60 * 60 * 1000
 
 export async function scoreAllMatchesAction(jobId: string): Promise<ScoreAllMatchesActionResult> {
   const parsed = scoreAllInputSchema.safeParse({ jobId })
@@ -286,8 +295,59 @@ export async function scoreAllMatchesAction(jobId: string): Promise<ScoreAllMatc
     return { ok: false, error: 'Job not found in your organisation.' }
   }
 
+  // WR-04 (review 2026-08-11) — READ-ONLY pre-flight, not a second
+  // enforcement point. precompute-matches-for-job remains the authority on
+  // both of these and still re-checks them; the problem this solves is that
+  // when it bails, it does so SILENTLY — it writes no summary and returns.
+  // The recruiter got a "Scoring started" toast, a 90-second spinner, the
+  // same "Not scored yet" cards, and an ambiguous "may still be running"
+  // message, with no path from this UI to "you have hit your AI budget" (a
+  // documented live watch-list item: the £-cap silent freeze). They then
+  // click again, and again.
+  //
+  // Mirrors what explainCandidateMatchAction already does on the same two
+  // conditions, so the two scoring entry points give the same answer.
+  const spendResult = await getOrgMatchSpendThisMonth(supabase, organizationId)
+  if (spendResult.ok && spendResult.data >= env.MAX_MONTHLY_MATCH_SPEND_PENCE) {
+    return {
+      ok: false,
+      error:
+        'Match scoring is paused this month — monthly spend limit reached. Contact the org owner to lift the limit.',
+    }
+  }
+
+  // checkCap is read-only and fails OPEN on any billing/DB error, so a
+  // misconfiguration can never block scoring here — it only ever converts an
+  // already-certain refusal into an honest message.
+  const cap = await checkCap(organizationId, 'match_score')
+  if (!cap.allow) {
+    return {
+      ok: false,
+      error: 'Monthly AI usage limit reached — upgrade your plan or wait for the reset.',
+    }
+  }
+
   try {
     await inngest.send({
+      // WR-03 (review 2026-08-11) — dedup id, mirroring the prior art in
+      // enqueue-match-score.ts:58. Without one, an impatient double/triple
+      // click during the 90-second poll started 2-3 concurrent
+      // precompute-matches-for-job runs (per-org concurrency is 2), and the
+      // scorer's cache guard only helps once a PRIOR run has finished
+      // WRITING — so the same uncached candidates each bought 2-3 Sonnet
+      // calls. That is the exact failure review 2026-08-04 M1 already paid
+      // for on the other event.
+      //
+      // Hour-bucketed for the same reason as the match-score id: several
+      // precompute outcomes write no summary (empty profile, spend ceiling,
+      // AI cap), so a bare per-job key would turn a transient skip into a
+      // 24h scoring blind spot. The bucket collapses the double-click
+      // (seconds apart) while capping any blind spot at one hour.
+      //
+      // The other three producers of this event (jobs/new, clients/[id]/
+      // jobs/new, embed-job-on-jd-change) deliberately send no id, so this
+      // never dedups a legitimate JD-change or job-creation rescore.
+      id: `score-top:${parsed.data.jobId}:${Math.floor(Date.now() / SCORE_ALL_DEDUP_BUCKET_MS)}`,
       name: 'job/score-top-candidates',
       data: {
         organization_id: organizationId,

@@ -25,18 +25,20 @@ export type UpdateCandidateResult =
 
 // '' -> null (explicit clear); `undefined` -> `undefined` (the key was
 // omitted from the submitted payload, so the write must leave the column
-// untouched). This is DELIBERATELY NOT the bare `x || null` the original
-// eight fields below use — that pattern is only safe for them because
-// candidate-edit-form.tsx's current `defaultValues` (page.tsx) always
-// includes all eight keys, so `undefined` never actually occurs there in
-// practice. The ten Plan 07-03 fields are not wired into that form yet
-// (07-04 does that); until it ships, this same action is still reachable
-// from the UNCHANGED 8-field form, whose submitted payload genuinely omits
-// these keys. `x || null` would collapse that omission into null and
-// silently wipe every candidate's parsed profile (seniority, salary,
-// headline, about, skills, sector_tags, work history, education) on every
-// save made through the old form — a live-data-loss bug, not a stylistic
-// choice. See SUMMARY "Deviations" for this plan.
+// untouched).
+//
+// This is DELIBERATELY NOT the bare `x || null` pattern, which collapses an
+// omission into an explicit NULL. Since CR-01 (review 2026-08-11) the edit
+// form submits ONLY react-hook-form's dirty fields, so an omitted key is now
+// the NORMAL case for every field the recruiter did not touch — not a
+// theoretical one. `x || null` on any of these would turn a one-character
+// phone correction into a wipe of every other column the form renders.
+//
+// That is exactly why the five optional BASIC scalars (email, phone,
+// location, current_role_title, current_company) were converted to
+// toNullableString in the same commit as CR-01: they previously relied on
+// the form always submitting all eight basics, and that assumption is now
+// deliberately false.
 function toNullableString(v: string | undefined): string | null | undefined {
   if (v === undefined) return undefined
   return v === '' ? null : v
@@ -47,16 +49,42 @@ function toNullableNumber(v: string | undefined): number | null | undefined {
   return v === '' ? null : Number(v)
 }
 
+/**
+ * WR-08 (review 2026-08-11) — flatten the NESTED issue path.
+ *
+ * updateCandidateActionSchema wraps the payload as `{ id, patch }`, and
+ * `error.flatten().fieldErrors` only ever keys on `path[0]`. Every field
+ * error therefore arrived as `fieldErrors.patch`, and the form called
+ * `form.setError('patch', …)` — a field that does not exist, so no
+ * FormMessage rendered and no toast fired. The save appeared to do nothing
+ * at all.
+ *
+ * Pre-existing shape, but 07-03/07-04 took the number of server-side
+ * rejectable fields from 8 to 18 and added paths where client validation
+ * does not run first (a direct action invocation, a future non-RHF caller).
+ *
+ * `['patch', 'work_experience', 0, 'title']` keys under `work_experience`,
+ * which is the name react-hook-form knows.
+ */
+function toFieldErrors(
+  issues: ReadonlyArray<{ path: ReadonlyArray<PropertyKey>; message: string }>,
+): Record<string, string[]> {
+  const fieldErrors: Record<string, string[]> = {}
+  for (const issue of issues) {
+    const [first, second] = issue.path
+    const key = first === 'patch' ? String(second ?? 'patch') : String(first ?? 'patch')
+    ;(fieldErrors[key] ??= []).push(issue.message)
+  }
+  return fieldErrors
+}
+
 export async function updateCandidateAction(
   id: string,
   rawPatch: unknown,
 ): Promise<UpdateCandidateResult> {
   const parsed = updateCandidateActionSchema.safeParse({ id, patch: rawPatch })
   if (!parsed.success) {
-    return {
-      ok: false,
-      fieldErrors: parsed.error.flatten().fieldErrors as Record<string, string[] | undefined>,
-    }
+    return { ok: false, fieldErrors: toFieldErrors(parsed.error.issues) }
   }
 
   // Entitlement gate — block CRM mutations for non-entitled orgs (audit blocker 1).
@@ -91,14 +119,19 @@ export async function updateCandidateAction(
   // tests/unit/lib/ai/embedding-invalidation-contract.test.ts (Task 3) is
   // the permanent guard that keeps these two field sets in sync.
   const patch: UpdateCandidateInput = {
+    // The three the schema REQUIRES — always present, always written.
     full_name: parsed.data.patch.full_name,
-    email: parsed.data.patch.email || null,
-    phone: parsed.data.patch.phone || null,
-    location: parsed.data.patch.location || null,
-    current_role_title: parsed.data.patch.current_role_title || null,
-    current_company: parsed.data.patch.current_company || null,
     market_status: parsed.data.patch.market_status,
     source: parsed.data.patch.source,
+
+    // The five optional basics. toNullableString, NOT `x || null` — see the
+    // helper's comment: under CR-01's dirty-field submission an untouched
+    // key arrives `undefined`, and `undefined || null` would write NULL.
+    email: toNullableString(parsed.data.patch.email),
+    phone: toNullableString(parsed.data.patch.phone),
+    location: toNullableString(parsed.data.patch.location),
+    current_role_title: toNullableString(parsed.data.patch.current_role_title),
+    current_company: toNullableString(parsed.data.patch.current_company),
 
     // --- Plan 07-03 additions ---------------------------------------------
     seniority_level: toNullableString(parsed.data.patch.seniority_level),

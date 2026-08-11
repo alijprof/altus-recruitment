@@ -6,58 +6,14 @@ import { getCandidate } from '@/lib/db/candidates'
 import { createClient } from '@/lib/supabase/server'
 
 import { CandidateEditForm } from './candidate-edit-form'
+import { parseEducationRows, parseWorkExperienceRows } from './parse-rows'
 import { SENIORITY_LEVEL_VALUES, type EditCandidateInput } from './schema'
-
-// Permissive parsers for the jsonb work_experience/education columns —
-// mirrors candidates/[id]/page.tsx's parseWorkExperience/parseEducation
-// (same defensive shape: a malformed historical row is dropped rather than
-// crashing the page), but defaults missing sub-fields to '' instead of null.
-// RepeatingRows binds every field to a controlled <Input value=... />, which
-// cannot take null/undefined, so '' is the right default here specifically
-// (the display page's FieldRow, by contrast, wants null so it can render
-// its own '—' placeholder).
-type EditableWorkExperienceRow = { title: string; company: string; dates: string }
-type EditableEducationRow = { school: string; degree: string; dates: string }
-
-function parseWorkExperienceRows(raw: unknown): EditableWorkExperienceRow[] {
-  if (!Array.isArray(raw)) return []
-  return raw
-    .map((r): EditableWorkExperienceRow | null => {
-      if (!r || typeof r !== 'object') return null
-      const obj = r as Record<string, unknown>
-      const title = typeof obj.title === 'string' ? obj.title : ''
-      if (!title) return null
-      return {
-        title,
-        company: typeof obj.company === 'string' ? obj.company : '',
-        dates: typeof obj.dates === 'string' ? obj.dates : '',
-      }
-    })
-    .filter((e): e is EditableWorkExperienceRow => e !== null)
-}
-
-function parseEducationRows(raw: unknown): EditableEducationRow[] {
-  if (!Array.isArray(raw)) return []
-  return raw
-    .map((r): EditableEducationRow | null => {
-      if (!r || typeof r !== 'object') return null
-      const obj = r as Record<string, unknown>
-      const school = typeof obj.school === 'string' ? obj.school : ''
-      if (!school) return null
-      return {
-        school,
-        degree: typeof obj.degree === 'string' ? obj.degree : '',
-        dates: typeof obj.dates === 'string' ? obj.dates : '',
-      }
-    })
-    .filter((e): e is EditableEducationRow => e !== null)
-}
 
 // candidates.seniority_level is plain `text` (schema.ts:31-36), so a
 // historical/off-vocabulary value must not be handed straight to the
 // closed-enum Select — that would either crash or silently mismatch. Falls
 // back to '' ("Not set") for anything outside the known vocabulary, same
-// defensive-parse spirit as the jsonb rows above.
+// defensive-parse spirit as parse-rows.ts's jsonb handling.
 function toSeniorityLevelValue(raw: string | null): EditCandidateInput['seniority_level'] {
   if (raw && (SENIORITY_LEVEL_VALUES as readonly string[]).includes(raw)) {
     return raw as EditCandidateInput['seniority_level']
@@ -83,6 +39,9 @@ export default async function EditCandidatePage({ params }: { params: Promise<{ 
   }
   const candidate = result.data
 
+  const workExperience = parseWorkExperienceRows(candidate.work_experience)
+  const education = parseEducationRows(candidate.education)
+
   const defaultValues: EditCandidateInput = {
     full_name: candidate.full_name,
     email: candidate.email ?? '',
@@ -102,8 +61,8 @@ export default async function EditCandidatePage({ params }: { params: Promise<{ 
     about: candidate.about ?? '',
     skills: candidate.skills ?? [],
     sector_tags: candidate.sector_tags ?? [],
-    work_experience: parseWorkExperienceRows(candidate.work_experience),
-    education: parseEducationRows(candidate.education),
+    work_experience: workExperience.rows,
+    education: education.rows,
   }
 
   return (
@@ -122,7 +81,12 @@ export default async function EditCandidatePage({ params }: { params: Promise<{ 
           changes.
         </p>
       </div>
-      <CandidateEditForm candidateId={id} defaultValues={defaultValues} />
+      <CandidateEditForm
+        candidateId={id}
+        defaultValues={defaultValues}
+        workExperienceEditable={workExperience.editable}
+        educationEditable={education.editable}
+      />
     </div>
   )
 }

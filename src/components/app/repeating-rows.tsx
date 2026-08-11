@@ -16,6 +16,16 @@ export type RepeatingRowField = {
   key: string
   label: string
   placeholder?: string
+  // WR-06 (review 2026-08-11): a MARKER, never the native `required`
+  // attribute. workExperienceArraySchema/educationArraySchema deliberately
+  // DROP rows with a blank title/school ("there is nothing to save, not an
+  // error to surface"), but rendering `required` on the input handed the
+  // decision to the browser's constraint validation, which blocks submit
+  // before react-hook-form or zod ever runs. A recruiter who clicked "Add
+  // work history", changed their mind and pressed Save got a native "Please
+  // fill out this field" bubble on a control they considered empty on
+  // purpose — and the documented drop behaviour was unreachable whenever
+  // the section was open. This now only drives a visual hint.
   required?: boolean
 }
 
@@ -26,9 +36,26 @@ export type RepeatingRowsProps = {
   addLabel: string
   // Used to build accessible names: "{rowLabel} 1", "Remove {rowLabel} 1".
   rowLabel: string
+  // WR-11: shadcn's <FormControl> injects these three into its child via
+  // Slot. TagInput accepts and forwards all three; this component declared
+  // none, so they were silently dropped — the FormLabel's htmlFor pointed at
+  // an id that existed nowhere, and FormMessage was never announced for
+  // work_experience/education errors. Same prop shape as TagInput.
+  id?: string
+  'aria-describedby'?: string
+  'aria-invalid'?: boolean
 }
 
-export function RepeatingRows({ value, onChange, fields, addLabel, rowLabel }: RepeatingRowsProps) {
+export function RepeatingRows({
+  value,
+  onChange,
+  fields,
+  addLabel,
+  rowLabel,
+  id,
+  'aria-describedby': ariaDescribedBy,
+  'aria-invalid': ariaInvalid,
+}: RepeatingRowsProps) {
   function updateCell(rowIndex: number, key: string, next: string) {
     onChange(value.map((row, i) => (i === rowIndex ? { ...row, [key]: next } : row)))
   }
@@ -43,7 +70,18 @@ export function RepeatingRows({ value, onChange, fields, addLabel, rowLabel }: R
   }
 
   return (
-    <div className="space-y-3">
+    // The group container carries the FormControl-injected props so the
+    // FormLabel above it has something real to point at and FormMessage is
+    // announced. aria-label mirrors the visible FormLabel text, which is
+    // what a screen-reader user hears on entering the group.
+    <div
+      id={id}
+      role="group"
+      aria-label={rowLabel}
+      aria-describedby={ariaDescribedBy}
+      aria-invalid={ariaInvalid}
+      className="space-y-3"
+    >
       {value.map((row, rowIndex) => {
         const rowNumber = rowIndex + 1
         const rowName = `${rowLabel} ${rowNumber}`
@@ -72,14 +110,33 @@ export function RepeatingRows({ value, onChange, fields, addLabel, rowLabel }: R
                   .replace(/[^a-z0-9]+/g, '-')
                 return (
                   <div key={f.key} className="space-y-1">
-                    <Label htmlFor={inputId} className="text-muted-foreground text-xs font-normal">
-                      {f.label}
-                    </Label>
+                    <div className="flex items-center gap-1">
+                      <Label
+                        htmlFor={inputId}
+                        className="text-muted-foreground text-xs font-normal"
+                      >
+                        {f.label}
+                      </Label>
+                      {f.required ? (
+                        // Hint only, and a SIBLING of the Label rather than
+                        // a child so the label's text — and therefore the
+                        // input's accessible name — stays exactly "Title" /
+                        // "School". The field is not `required` in the
+                        // constraint-validation sense; it is the field that
+                        // decides whether the row is KEPT.
+                        <span
+                          aria-hidden="true"
+                          title={`Rows with no ${f.label.toLowerCase()} are discarded when you save`}
+                          className="text-muted-foreground text-xs"
+                        >
+                          *
+                        </span>
+                      ) : null}
+                    </div>
                     <Input
                       id={inputId}
                       value={row[f.key] ?? ''}
                       placeholder={f.placeholder}
-                      required={f.required}
                       onChange={(e) => updateCell(rowIndex, f.key, e.target.value)}
                     />
                   </div>

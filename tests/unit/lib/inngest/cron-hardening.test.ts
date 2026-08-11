@@ -7,9 +7,17 @@
  * concurrency:{limit:1} — sat holding its single slot for days
  * (4-9 Aug 2026) and silently blocked every later cron tick behind it.
  * This test pins the fix: both functions must carry a `timeouts` config
- * (so a wedged run is cancelled instead of blocking forever) and a
- * top-of-handler Sentry heartbeat (so a stall is visible same-day instead
- * of discovered by a customer).
+ * (so a wedged run is cancelled instead of blocking forever) and a Sentry
+ * heartbeat as their FIRST step (so a stall is visible same-day instead of
+ * discovered by a customer).
+ *
+ * Heartbeat placement changed in CR-03 (review 2026-08-11): it used to be
+ * asserted as bare code BEFORE the first step.run, which is exactly what
+ * made it fire (steps + 1) times per run under Inngest's replay model —
+ * ~816 Sentry events/day across these two functions, enough to exhaust the
+ * errors quota the same phase relies on for stall alerting. The heartbeat
+ * is now the first `step.run('heartbeat')`, which keeps "emitted before any
+ * real work" while firing exactly once per run.
  *
  * Source inspection via node:fs, rather than importing the two Inngest
  * function modules, is deliberate: importing embed-batch.ts or
@@ -81,7 +89,7 @@ describe('cron-hardening — timeouts + heartbeat regression (Phase 07 Plan 05)'
         ).toMatch(/concurrency:\s*{\s*limit:\s*1\s*}/)
       })
 
-      it('emits a Sentry.captureMessage heartbeat before the first step.run', () => {
+      it('emits its Sentry.captureMessage heartbeat INSIDE the first step.run', () => {
         const heartbeatIdx = code.indexOf('Sentry.captureMessage(')
         expect(
           heartbeatIdx,
@@ -92,11 +100,29 @@ describe('cron-hardening — timeouts + heartbeat regression (Phase 07 Plan 05)'
         const firstStepRunIdx = code.indexOf('step.run(')
         expect(firstStepRunIdx, `${target.name}: no step.run( call found`).toBeGreaterThan(-1)
 
+        // The heartbeat must be the FIRST step — that keeps the original
+        // intent (emitted before any real work, so a tick that finds nothing
+        // to do is still provably alive) while making it memoized.
+        const firstStepRunId = /step\.run\(\s*'([^']+)'/.exec(code.slice(firstStepRunIdx))?.[1]
         expect(
-          heartbeatIdx < firstStepRunIdx,
-          `${target.name}: the heartbeat must fire BEFORE the first step.run. A heartbeat placed ` +
-            'after the first step is worthless — a run that wedges IN that step never emits it, which ' +
-            'is precisely the silent 4-9 Aug outage this phase closes.',
+          firstStepRunId,
+          `${target.name}: the FIRST step.run must be the heartbeat. Any earlier step means a run ` +
+            'that wedges in that step never emits a heartbeat — precisely the silent 4-9 Aug outage ' +
+            'this phase closes.',
+        ).toBe('heartbeat')
+
+        // …and it must be INSIDE that step, not bare handler code. Inngest
+        // replays every non-step statement once per step boundary, so a
+        // top-of-handler heartbeat fires (steps + 1) times per run — ~816
+        // Sentry events/day across these two functions, against the ERRORS
+        // quota that real production alerting depends on (CR-03). Because
+        // indexOf finds the FIRST captureMessage, reintroducing a bare
+        // top-of-handler heartbeat fails this assertion.
+        expect(
+          heartbeatIdx > firstStepRunIdx,
+          `${target.name}: the heartbeat must live INSIDE step.run('heartbeat'), not outside it — ` +
+            'code outside a step is replayed once per step boundary, multiplying the event count ' +
+            'by (steps + 1) and silently changing what the docs/cron-monitoring.md alert measures.',
         ).toBe(true)
       })
     })

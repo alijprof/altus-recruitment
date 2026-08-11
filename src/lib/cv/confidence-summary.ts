@@ -40,7 +40,14 @@ export type ConfidenceSummary = {
   unsureFields: string[]
 }
 
-const EMPTY_SUMMARY: ConfidenceSummary = { unsureCount: 0, unsureFields: [] }
+// IN-04 (review 2026-08-11): a FACTORY, not a shared module-level constant.
+// The previous `const EMPTY_SUMMARY` handed the same `unsureFields` array
+// reference to every caller, so one caller pushing into it would corrupt the
+// result of every subsequent call. Nothing does that today; the allocation
+// is trivial and the class of bug is not worth leaving reachable.
+function emptySummary(): ConfidenceSummary {
+  return { unsureCount: 0, unsureFields: [] }
+}
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -66,9 +73,9 @@ function isUnsureLevel(value: unknown): value is Extract<ConfidenceLevel, 'mediu
  * is silently ignored — it can never produce an undefined label.
  */
 export function summariseConfidence(extracted: unknown): ConfidenceSummary {
-  if (!isPlainObject(extracted)) return EMPTY_SUMMARY
+  if (!isPlainObject(extracted)) return emptySummary()
   const confidencePerField = extracted.confidence_per_field
-  if (!isPlainObject(confidencePerField)) return EMPTY_SUMMARY
+  if (!isPlainObject(confidencePerField)) return emptySummary()
 
   const unsureFields: string[] = []
   for (const { key, label } of CV_FIELD_LABELS) {
