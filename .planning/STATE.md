@@ -3,12 +3,12 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: Milestone complete — awaiting next milestone
-last_updated: "2026-08-09T20:11:51.650Z"
+last_updated: "2026-08-11T14:17:37.736Z"
 progress:
-  total_phases: 1
+  total_phases: 2
   completed_phases: 0
-  total_plans: 10
-  completed_plans: 4
+  total_plans: 18
+  completed_plans: 10
   percent: 0
 ---
 
@@ -117,6 +117,7 @@ Items acknowledged and deferred at milestone close on 2026-06-12. All 21 quick t
 |-------|------|----------|-------|
 | Phase 06 P03 | 55min | 2 tasks | 22 files |
 | Phase 06 P05 | 30min | 3 tasks | 5 files |
+| Phase 07-cv-lifecycle-trust-make-stored-cvs-visible-downloadable-with P06 | 30min | 2 tasks | 6 files |
 
 ## Decisions
 
@@ -126,3 +127,4 @@ Items acknowledged and deferred at milestone close on 2026-06-12. All 21 quick t
 - [Phase 06]: 06-05: resolved local Supabase creds via node_modules/.bin/supabase directly (pnpm not on bare PATH in this env)
 - [Phase 06]: 06-05: C1/C2 (Unicode illegalities) target updateCandidateCVParse's extracted_data jsonb; C3/C4/C5 target markCandidateFieldsFromCV's typed candidates columns — matches which real Postgres column each verified-matrix row actually writes to
 - [Phase 06]: 06-05: BAD-ENUM is the one test where result.ok===false is the PERMANENT expected outcome — proves DbResult.detail will carry the SQLSTATE + column once 06-06/06-07 land
+- [Phase 07-06]: Backfill sweep is event-triggered only, no cron — spend never happens on a schedule nobody asked for
