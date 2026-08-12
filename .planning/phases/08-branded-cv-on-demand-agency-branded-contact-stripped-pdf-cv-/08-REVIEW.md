@@ -924,3 +924,124 @@ _Depth: deep (fix-range verification + new-defect sweep)_
 | RESID-02 | (this pass) | New `tests/unit/lib/db/organizations-missing-column.test.ts` (10 tests) covers all three CR-01 retry branches in `src/lib/db/organizations.ts`: `getOrganization`/`getOrganizationBySlug` retry-and-null-out on `42703`; a non-`42703` error does not retry and returns `internal`; `updateOrganization` retries only when `patch.logo_storage_path === undefined` and returns `{ ok: false }` (single update attempt, no silent drop) when the patch explicitly writes `logo_storage_path` (including explicit `null`) against a pre-migration DB; no retry when the first query succeeds. |
 
 Gates re-run after this pass: `pnpm typecheck` → exit 0; `pnpm lint` → exit 0, 0 errors (44 pre-existing-pattern warnings, none new-class); `pnpm exec vitest run` → 94 files passed | 4 skipped (98); 1172 tests passed | 1 skipped | 28 todo.
+
+---
+
+## Final re-review acknowledgement — 2026-08-12 (third pass, mutation-level)
+
+**Range verified:** `50d713d..6080ceb` (`3545a70` RESID-01, `df8b712` RESID-02).
+**Method:** I did not accept the pins at face value. For each claimed fix I broke
+the underlying code/migration on purpose and confirmed the new tests go red for
+the right reason and with the right message, then restored the tree.
+
+### RESID-01 — the trigger now sorts correctly, and the pins genuinely bind
+
+**End-state ordering is right.** After
+`20260812160000_branded_cvs_verify_same_org_rename.sql`, the surviving trigger is
+`candidate_branded_cvs_verify_same_org_check`. Against the stamping trigger
+`candidate_branded_cvs_set_org`, the discriminating character is `'s'` vs `'v'`
+(115 vs 118) — `set_org` sorts **first**, so `NEW.organization_id` is populated
+before `assert_same_org` reads it. That is the same `'v' > 's'` relation
+`20260518213836` established for the other four guard families, and it inverts
+the `'a' < 'e'` relation that made RESID-01 a blocker.
+
+I re-traced all four paths against the corrected order:
+
+| Insert | set_org | guard | RLS `WITH CHECK` | Outcome |
+|---|---|---|---|---|
+| Legit: own-org candidate, no `organization_id` (what `upsertBrandedCv` sends) | stamps A | A == A → pass | A == A | **commits** — the path that was 100 % broken now works |
+| CR-02 attack: victim candidate, no `organization_id` | stamps A | candidate is B ≠ A → **raise** | — | blocked |
+| CR-02 attack: victim candidate + forged `organization_id = B` | no-op (non-null) | B == B → pass | B ≠ A → **violation** | blocked |
+| Regeneration `UPDATE` | n/a | not fired (`update of candidate_id, organization_id` only) | A == A | commits |
+
+So the original CR-02 exploit stays closed *and* the feature works — the two
+outcomes RESID-01 said could not both be true under the old name.
+
+Migration hygiene is correct: `20260812150000` is not edited (append-only
+honoured), the guard **function** is not redeclared (pinned by a `.not.toMatch`),
+timing is identical, and both the bad and the good trigger names are dropped
+first so a re-push or a partially-applied branch converges either way.
+
+**Mutation results — the pins are load-bearing, not decorative:**
+
+| Mutation | Result |
+|---|---|
+| Delete `20260812160000` entirely | suite **fails hard** (file read throws — no silent skip) |
+| Revert `20260812160000`'s `create trigger` to the bare `_same_org_check` name | **3 tests fail**, incl. the invariant naming the guard family, the offending name and the file |
+| Add a *later* migration (`20260813000000`) re-creating the bare name | **2 tests fail**, correctly attributing the final state to the new file — the chronological "last write wins" resolution genuinely works, not just a whole-repo substring grep |
+
+The repo-wide invariant is the right shape: it resolves the final trigger name
+*per guard function* across all migrations in filename (= chronological) order, so
+a create-bad-then-rename history passes while a bad end state fails; and the
+`toEqual` sanity list of all 8 guard families means a silently-broken regex turns
+the assertions vacuous **loudly** rather than quietly. Adding a ninth guarded
+table also fails that list, forcing the author to look at the invariant.
+
+### RESID-02 — the CR-01 coverage is real
+
+`tests/unit/lib/db/organizations-missing-column.test.ts` (10 tests) exercises all
+three retry branches, both readers' null-substitution, the non-`42703`
+no-retry path (with an error whose message also avoids the column name, so the
+message-relaxed arm of `isMissingColumnError` isn't accidentally satisfied), and
+the asymmetric write guard — including explicit `null`, which is the case most
+likely to be "simplified" away later.
+
+| Mutation | Result |
+|---|---|
+| Disable the retry in `getOrganizationBySlug` (`if (error && false)`) | test (a) fails — the public-apply-form outage path is genuinely pinned |
+| Delete the `patch.logo_storage_path === undefined` guard in `updateOrganization` | **2 tests fail**, with `"must issue exactly ONE update attempt — a retry here would silently drop the caller's logo_storage_path write and fake success to uploadOrgLogoAction: expected 2 to be 1"` |
+
+That second mutation is the one that mattered: the no-silent-drop invariant now
+has a test that names the consequence, not just the mechanic.
+
+### Gates re-run independently
+
+```
+$ pnpm typecheck        → exit 0, clean
+$ pnpm exec vitest run  → 94 files passed | 4 skipped (98); 1172 passed | 1 skipped | 28 todo
+$ pnpm exec prettier --check <both new/changed test files>  → clean
+```
+
+Matches the fixer's reported numbers exactly. The range touches only four files
+(the rename migration, the two test files, and this document) — no source
+behaviour changed in this pass, so nothing from the second-pass verification
+needs re-doing.
+
+### Verdict: **SHIP-CONFIRMED**
+
+Both residuals are fixed at the level that matters: the trigger's end-state name
+provably sorts after `_set_org`, the legitimate insert path is restored without
+reopening the cross-tenant hole, and both fixes are held down by tests I broke on
+purpose and watched fail. Everything confirmed in the second pass
+(CR-01's three sites and its no-silent-drop asymmetry, CR-03, WR-01…WR-07, both
+declared deviations, the 502's non-leakiness, the audit row's success-only
+placement, the font initialiser's freedom from races, and the untouched frozen
+`cv-intake` / `cv-lifecycle` specs) still holds.
+
+**Two conditions on the ship, both operational rather than code defects:**
+
+1. **All four Phase-8 migrations must land in a single `db push`** —
+   `20260812120000`, `20260812120100`, `20260812150000`, `20260812160000`.
+   Splitting `150000` from `160000` across two deploys opens a window in which
+   branded-CV generation fails 100 %. Push via the founder's
+   `supabase db push --linked` script, not MCP `apply_migration`, which stamps
+   the ledger with the current UTC rather than the filename version and has
+   caused ledger drift here before.
+2. **IN-06 still stands: no Phase-8 code has ever executed against a real
+   database.** The trigger-ordering conclusion rests on documented Postgres
+   semantics plus this repo's own incident migration — strong, but the *positive*
+   case (a same-org insert succeeding) has still never actually run. The
+   migration's own header carries the two-statement manual SQL smoke; run it, or
+   simply run `pnpm smoke:auth --workers=1` after the push, before founder UAT.
+   The smoke's Generate step is the one check in this project that would have
+   caught RESID-01.
+
+Non-blocking notes for a future pass, recorded so they are not lost: the
+repo-wide invariant scan tracks `create trigger` only, so a future migration that
+*drops* a verify guard without recreating it would still read as passing; and a
+new guarded table whose function is not named `<table>_same_org_guard()` falls
+outside the scan's reach. Both are narrower than what the scan now prevents.
+
+_Final re-review: 2026-08-12_
+_Reviewer: Claude (gsd-code-reviewer, Fable 5) — final acknowledgement pass_
+_Depth: deep (mutation-level verification of the residual fixes)_
