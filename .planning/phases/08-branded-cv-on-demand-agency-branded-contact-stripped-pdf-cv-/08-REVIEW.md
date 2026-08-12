@@ -543,6 +543,42 @@ Re-run `pnpm exec vitest run` + `tsc --noEmit`, then Task 3 (`pnpm smoke:auth
 
 ---
 
+## Fixes applied (2026-08-12)
+
+Base for this pass: `871b8b6` (CR-01's missing-column-tolerance hotfix,
+already landed — see that commit and its follow-up `6861dfc`/`871b8b6` for
+CR-01; no further CR-01 work was needed, including no regression test, since
+this review's CR-01 fix section did not ask for one).
+
+| Finding | Commit | Description |
+|---|---|---|
+| CR-01 | `6861dfc`, `871b8b6` (pre-existing, this pass's base) | Missing-column tolerance for `logo_storage_path` on all three `organizations.ts` query sites — retries without the column and substitutes `null` on `42703`. No open sub-points for this pass to close. |
+| CR-02 | `fbf90d2` | New append-only migration `20260812150000_branded_cvs_same_org_guard.sql` installs `candidate_branded_cvs_same_org_guard()` mirroring the `candidate_cvs` precedent (`20260518211005`) exactly — closes the cross-tenant poisoning path via `assert_same_org`. Extended `phase8-migrations.test.ts` with source-inspection pins. NOT applied to any database — joins the founder's pending migration push. |
+| CR-03 | `c3f4ad0` | `experimental.serverActions.bodySizeLimit = '12mb'` in `next.config.ts`, covering `MAX_CV_BYTES` (10 MiB) and `MAX_LOGO_BYTES` (2 MiB) with headroom. New `tests/unit/next-config.test.ts` pins `bodySizeLimit >= MAX_CV_BYTES` and `>= MAX_LOGO_BYTES` by source inspection. |
+| WR-01 | `1a70637` | `register-fonts.ts` registration is now lazy (`ensureBrandedCvFonts()`, called from `renderBrandedCv` immediately before `renderToBuffer`) instead of a module-scope side effect — a font-packaging regression now fails only the branded-CV feature (inside `generateBrandedCvAction`'s existing try/catch), not the whole `/candidates/[id]` route module. Folds in IN-01 for free (the dead double-registration guard becomes a real once-per-process guard). |
+| WR-02 | `46d4319` | `branded-cv.smoke.ts`'s `afterAll` now removes any logo the run uploaded on every path that reaches the hook (not only the happy path) via a `smokeLogoUploaded` flag set the moment the upload toast is confirmed — idempotent, and a cleanup failure is captured then re-thrown so the run still fails loudly. |
+| WR-03 | `e1289a0` | Added an `AlertDialog` confirmation to `LogoUploadField`'s Remove button, worded specifically for the legacy-URL case. **Deviation from the review's literal suggested fix (a)**: implementing "clear only `logo_storage_path`" as written would make Remove a *silent no-op* for an org whose only logo is a legacy pasted URL (the toast says "removed" but the same logo keeps rendering, since `resolveOrgLogoUrl` falls back to the untouched `logo_url`) — itself a CLAUDE.md-prohibited silent failure, and arguably worse than the original defect. Implemented option (b) instead (an explicit confirmation dialog), which the review offers as an equally valid alternative. `removeOrgLogoAction`'s server behaviour is unchanged. |
+| WR-04 | `bd299fb` | Widened `BRANDED_CV_FREE_TEXT_WARNING` to name phone, email, day rate AND salary (previously only phone/email) — copy-only, per the review's suggested text. Softened the module header comment so it no longer contradicts what the free-text path actually guarantees. |
+| WR-05 | `2be61dc` | `branded-cv/route.ts` now returns 502 (not 404) when `getBrandedCvForCandidate` reports `code: 'internal'` — a genuine DB fault is no longer folded into the same response as "no branded copy". Existence failures (`not_found`) still collapse to 404 as before. |
+| WR-06 | `39badb6` | `generateBrandedCvAction`'s `createActivity` result is now checked (a failure is Sentry-captured with caller-specific tags, not silently discarded), and a `recordExportAudit` row is now filed for the generation event itself. **Minor deviation**: used metadata key `subject: 'branded_cv_generated'` rather than the review's literal `action: 'branded_cv_generated'`, to avoid colliding with `audit_log.action`'s actual fixed value (`'export'`) for this RPC — same disambiguating intent, clearer field name. |
+| WR-07 | `fd86d46` | Ran `prettier --write` across the full phase 8 diff (14 files, whitespace/Tailwind-class-order only, confirmed via `git diff` per file). Appended an addendum to `08-VERIFICATION.md` correcting the scope ambiguity in the original prettier claim. |
+| IN-01 | (folded into `1a70637`, WR-01) | The module-scope `let registered = false; if (!registered)` guard — genuinely dead code, as the review notes — became a real once-per-process guard by construction once registration moved into the lazy `ensureBrandedCvFonts()` initialiser. No separate commit needed. |
+| IN-02 | *acknowledged, not applied* | `generateBrandedCvAction`'s `select('*')` on `candidates` is consistent with `getCandidate` and the review itself calls it "not a regression". Narrowing to an explicit column list touches a query the branded-CV mapper (`toBrandedCvData`) depends on for correctness — a missed field would silently degrade generated PDFs. That risk sits above this pass's zero-risk bar for INFO items; left as a candidate for a future, deliberately-scoped follow-up. |
+| IN-03 | *acknowledged, not applied* | Gating the Generate control on `data.work.length \|\| data.about` is a product/UX decision (what counts as "enough data to generate"), not a mechanical fix — Rule 4 territory (architectural/product change), out of scope for an automated fix-first pass. Left for the founder. |
+| IN-04 | *acknowledged, not applied* | A module-level "logged once" flag to quiet the missing-table Sentry breadcrumb would introduce exactly the module-level mutable state this codebase's CLAUDE.md explicitly prohibits ("Global state: No module-level singletons"). The breadcrumb itself is already cheap (attached to whatever event follows, not an event on its own) — the noise-reduction benefit doesn't clear that architectural bar. Left as-is. |
+| IN-05 | *no action needed* | Review flags this only "so the looseness stays on the record" — no fix suggested, none applied. |
+| IN-06 | *no action needed* | Process/evidence gap (production smoke run + founder UAT + the founder's manual migration push), not a code defect — outside an automated fix-first pass's reach. |
+
+### Gate re-run after all fixes (2026-08-12)
+
+```
+$ pnpm typecheck   → exit 0, clean
+$ pnpm lint        → exit 0, 0 errors, 38 pre-existing warnings (none in files this pass touched)
+$ pnpm exec vitest run → exit 0, 93 files passed | 4 skipped (97); 1157 tests passed | 1 skipped | 28 todo
+```
+
+---
+
 _Reviewed: 2026-08-12_
 _Reviewer: Claude (gsd-code-reviewer, Fable 5)_
 _Depth: deep_
