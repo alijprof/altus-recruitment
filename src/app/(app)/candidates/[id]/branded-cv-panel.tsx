@@ -1,3 +1,4 @@
+import { Button } from '@/components/ui/button'
 import { formatDateLong } from '@/lib/date'
 import type { BrandedCvState } from '@/lib/db/candidate-branded-cvs'
 import { BRANDED_CV_FREE_TEXT_WARNING } from '@/lib/pdf/branded-cv-data'
@@ -35,10 +36,12 @@ type BrandedCvPanelProps = {
  *   b. formatDateLong (an ABSOLUTE date), never formatTimeAgo — a relative
  *      timestamp can tick over between the smoke's before/after sidebar
  *      snapshot reads and flake the comparison.
- *   c. Deliberately NO View/Download link in this plan. The delivery route
- *      (08-08) does not exist yet — rendering a link to it now would ship a
- *      dead control, precisely the failure mode the Phase-7 CV-file-route
- *      hotfix (2026-08-11) exists to prevent. That link lands in 08-08.
+ *   c. The View control (Plan 08-08) is a PLAIN ANCHOR to the
+ *      /candidates/[id]/branded-cv GET route — never a client async action.
+ *      Mirrors cv-file-link.tsx exactly (same rel, same target, same
+ *      no-JavaScript-in-the-click-path reasoning) — this is precisely the
+ *      failure mode the Phase-7 CV-file-route hotfix (2026-08-11) exists to
+ *      prevent, so the lesson is not re-learned here.
  */
 export function BrandedCvPanel({ candidateId, state }: BrandedCvPanelProps) {
   if (state.kind === 'unavailable') return null
@@ -57,10 +60,32 @@ export function BrandedCvPanel({ candidateId, state }: BrandedCvPanelProps) {
           current data.
         </p>
       )}
-      <BrandedCvGenerateButton
-        candidateId={candidateId}
-        label={state.kind === 'ready' ? 'Regenerate' : 'Generate'}
-      />
+      <div className="flex flex-wrap items-center gap-2">
+        <BrandedCvGenerateButton
+          candidateId={candidateId}
+          label={state.kind === 'ready' ? 'Regenerate' : 'Generate'}
+        />
+        {state.kind === 'ready' ? (
+          // A raw <a>, deliberately not next/link and deliberately not a
+          // client component: the destination 302-redirects to a
+          // cross-origin Storage URL, so this must be a real document
+          // navigation, and the browser must open the tab from the user's
+          // own click gesture with zero client JavaScript in the path — the
+          // exact lesson of the 2026-08-11 incident (see the header comment
+          // above). `rel="nofollow"` is audit-row prefetch insurance, added
+          // to cv-file-link.tsx in the Phase-7 hotfix addendum and carried
+          // over here verbatim.
+          <Button variant="outline" size="sm" asChild>
+            <a
+              href={`/candidates/${candidateId}/branded-cv`}
+              target="_blank"
+              rel="noopener noreferrer nofollow"
+            >
+              View
+            </a>
+          </Button>
+        ) : null}
+      </div>
       <p className="text-muted-foreground text-xs leading-relaxed">
         {BRANDED_CV_FREE_TEXT_WARNING}
       </p>
