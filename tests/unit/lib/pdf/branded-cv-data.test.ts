@@ -172,9 +172,7 @@ describe('toBrandedCvData — work_experience mapping', () => {
         {},
       ],
     })
-    expect(() =>
-      toBrandedCvData({ full_name: 'X', work_experience: output.work }),
-    ).not.toThrow()
+    expect(() => toBrandedCvData({ full_name: 'X', work_experience: output.work })).not.toThrow()
     // The genuinely all-blank / non-object entries are dropped; the real
     // entry survives untouched.
     expect(output.work).toContainEqual({ title: 'Real Entry', company: 'Acme', dates: '2020-2022' })
@@ -239,7 +237,11 @@ describe('toBrandedCvData — education mapping (identical behaviour to work_exp
         {},
       ],
     })
-    expect(output.education).toContainEqual({ school: 'Real School', degree: 'BSc', dates: '2012-2015' })
+    expect(output.education).toContainEqual({
+      school: 'Real School',
+      degree: 'BSc',
+      dates: '2012-2015',
+    })
     expect(output.education.length).toBeLessThan(4)
   })
 
