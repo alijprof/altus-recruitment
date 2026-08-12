@@ -39,6 +39,10 @@ const CANDIDATE_BRANDED_CVS_PATH = resolve(
   process.cwd(),
   'supabase/migrations/20260812120000_candidate_branded_cvs.sql',
 )
+const ORG_LOGOS_BUCKET_PATH = resolve(
+  process.cwd(),
+  'supabase/migrations/20260812120100_org_logos_bucket.sql',
+)
 
 describe('candidate_branded_cvs migration (Phase 08 Plan 01)', () => {
   const raw = readFileSync(CANDIDATE_BRANDED_CVS_PATH, 'utf8')
@@ -108,5 +112,52 @@ describe('candidate_branded_cvs migration (Phase 08 Plan 01)', () => {
     expect(code).toMatch(/create table if not exists/)
     expect((code.match(/drop policy if exists/g) ?? []).length).toBe(4)
     expect((code.match(/drop trigger if exists/g) ?? []).length).toBe(2)
+  })
+})
+
+describe('org-logos bucket migration (Phase 08 Plan 01)', () => {
+  const raw = readFileSync(ORG_LOGOS_BUCKET_PATH, 'utf8')
+  const code = stripCommentLines(raw)
+
+  it('inserts a PRIVATE org-logos bucket (literal id/name/public tuple)', () => {
+    expect(
+      code,
+      'Storage RLS does not apply to public buckets — this bucket must be created private, ' +
+        "matching every other bucket in this project's deliberate policy",
+    ).toMatch(/'org-logos',\s*\n?\s*'org-logos',\s*\n?\s*false/)
+  })
+
+  it('restricts uploads to PNG/JPEG only — no SVG', () => {
+    expect(
+      code,
+      "@react-pdf/renderer's Image component has no SVG rasterisation — an SVG logo would " +
+        'silently vanish from the branded PDF',
+    ).toMatch(/array\['image\/png',\s*'image\/jpeg'\]/)
+    expect(code.toLowerCase()).not.toMatch(/svg/)
+  })
+
+  it('caps the bucket file size at 2 MiB', () => {
+    expect(code).toMatch(/2097152/)
+  })
+
+  it('declares exactly four storage.objects policies scoped to the org-logos bucket', () => {
+    const policyMatches = [...code.matchAll(/create policy "[^"]+"\s*\n\s*on storage\.objects/g)]
+    expect(
+      policyMatches.length,
+      'expected exactly four create policy statements (select/insert/update/delete) on storage.objects',
+    ).toBe(4)
+    expect((code.match(/bucket_id = 'org-logos'/g) ?? []).length).toBeGreaterThanOrEqual(4)
+  })
+
+  it('adds organizations.logo_storage_path additively', () => {
+    expect(code).toMatch(
+      /alter table public\.organizations\s+add column if not exists logo_storage_path text/,
+    )
+  })
+
+  it('is idempotent — guards the bucket insert, policies, and column addition for re-push safety', () => {
+    expect(code).toMatch(/on conflict \(id\) do nothing/)
+    expect((code.match(/drop policy if exists/g) ?? []).length).toBe(4)
+    expect(code).toMatch(/add column if not exists/)
   })
 })
