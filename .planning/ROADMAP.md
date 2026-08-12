@@ -109,7 +109,7 @@ and the newly editable non-search fields correctly do not.
 **Goal:** A recruiter can produce a client-ready, agency-branded PDF of any parsed candidate in one click — filled from the candidate's current (edited) parsed data, styled with the org's colours and uploaded logo on one clean standard template, with direct contact details stripped — and the branded copy lives in the candidate's documents with the same View/Download affordances and export audit trail as stored CVs.
 **Requirements**: [BCV-01, BCV-02, BCV-03, BCV-04, BCV-05, BCV-06, BCV-07]
 **Depends on:** Phase 7
-**Plans:** 9 plans, 5 waves (0/9 executed) — planned 2026-08-12; founder sign-offs recorded (react-pdf ✓, migration design ✓, contact-strip scope ✓, generation UNGATED by founder decision)
+**Plans:** 9 plans, 5 waves — 8/9 executed + 08-09's autonomous half done 2026-08-12; review FIX-FIRST (3 blockers incl. a live ~40min apply-form outage, CR-01) → all findings + residuals fixed → **SHIP-CONFIRMED** (mutation-verified). Awaiting: founder db push (4 Phase-8 migrations, ONE push), design eyeball, prod smoke, founder UAT
 
 Requirements:
 
@@ -123,15 +123,15 @@ Requirements:
 
 Plans:
 
-- [ ] 08-01-PLAN.md — Schema: candidate_branded_cvs + org-logos bucket + logo_storage_path; [BLOCKING] founder db push (wave 1)
-- [ ] 08-02-PLAN.md — @react-pdf/renderer install + vendored OFL fonts + render-foundation test (wave 1)
-- [ ] 08-03-PLAN.md — Pure modules: contact-strip mapper + logo upload sniffer (TDD) (wave 1)
-- [ ] 08-04-PLAN.md — The standard branded CV template + extraction pins + founder design eyeball (wave 2)
-- [ ] 08-05-PLAN.md — org-logo storage helper + upload/remove actions (wave 2)
-- [ ] 08-06-PLAN.md — Branding upload widget; consolidate duplicate logo_url surfaces; apply-page precedence (wave 3)
-- [ ] 08-07-PLAN.md — Branded-CV db helper + generateBrandedCvAction (ungated) + panel/button (wave 3)
-- [ ] 08-08-PLAN.md — Branded-CV GET delivery route (302 + export audit) + View anchor + GDPR sweeps (wave 4)
-- [ ] 08-09-PLAN.md — Acceptance gate: branded-cv smoke + workers:1 pin + gates + review + pre-smoke + founder UAT (wave 5)
+- [x] 08-01-PLAN.md — Schema: candidate_branded_cvs + org-logos bucket + logo_storage_path; [BLOCKING] founder db push (wave 1)
+- [x] 08-02-PLAN.md — @react-pdf/renderer install + vendored OFL fonts + render-foundation test (wave 1)
+- [x] 08-03-PLAN.md — Pure modules: contact-strip mapper + logo upload sniffer (TDD) (wave 1)
+- [x] 08-04-PLAN.md — The standard branded CV template + extraction pins + founder design eyeball (wave 2)
+- [x] 08-05-PLAN.md — org-logo storage helper + upload/remove actions (wave 2)
+- [x] 08-06-PLAN.md — Branding upload widget; consolidate duplicate logo_url surfaces; apply-page precedence (wave 3)
+- [x] 08-07-PLAN.md — Branded-CV db helper + generateBrandedCvAction (ungated) + panel/button (wave 3)
+- [x] 08-08-PLAN.md — Branded-CV GET delivery route (302 + export audit) + View anchor + GDPR sweeps (wave 4)
+- [ ] 08-09-PLAN.md — Acceptance gate: gates+spec+review DONE (SHIP-CONFIRMED); remaining: post-push prod smoke + founder UAT (wave 5)
 
 ---
 

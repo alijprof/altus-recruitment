@@ -1,15 +1,15 @@
 ---
 gsd_state_version: 1.0
 milestone: v1.0
-milestone_name: Post-v1.0 hardening (Phases 6-7)
-status: Phase 7 executed + hotfixed + prod-smoked — awaiting founder UAT
-last_updated: "2026-08-12T08:33:30.000Z"
+milestone_name: Post-v1.0 hardening (Phases 6-8)
+status: Phase 8 built + review SHIP-CONFIRMED — awaiting founder db push (4 migrations, ONE push), design eyeball, prod smoke, UAT
+last_updated: "2026-08-12T15:20:00.000Z"
 progress:
-  total_phases: 2
+  total_phases: 3
   completed_phases: 1
-  total_plans: 18
-  completed_plans: 18
-  percent: 50
+  total_plans: 27
+  completed_plans: 26
+  percent: 40
 ---
 
 # Project State: Altus — AI-First Recruitment CRM
@@ -31,7 +31,9 @@ See: .planning/PROJECT.md (updated 2026-06-12 after v1.0 milestone)
 
 ## Current Position
 
-**v1.0 SHIPPED 2026-06-12** — all 5 phases complete, verified, and live on production; roadmap and requirements archived to `.planning/milestones/v1.0-ROADMAP.md` and `v1.0-REQUIREMENTS.md`, git tag `v1.0`. Post-v1.0, **Phase 6 (CV Intake Battle-Test & Hardening, 10/10 plans) closed 2026-08-10.** **Phase 7 (CV Lifecycle & Trust, 8/8 plans) executed 2026-08-11** — mechanical code review closed all 24 findings SHIP-CONFIRMED, the View-CV P1 hotfix (route-handler redirect) is live on production at commit `bbdb004`, and the authed lifecycle smoke ran 7/7 green on production. On 2026-08-12 the **full authed smoke suite ran 24/24 green** against production in a single serial run (`--workers=1`; intake 8 + lifecycle 7 + read-only 9, scratch residue 0 SQL-verified). The sole remaining phase gate is founder UAT (07-08 Task 4).
+**v1.0 SHIPPED 2026-06-12** — all 5 phases complete, verified, and live on production; roadmap and requirements archived to `.planning/milestones/v1.0-ROADMAP.md` and `v1.0-REQUIREMENTS.md`, git tag `v1.0`. Post-v1.0, **Phase 6 (CV Intake Battle-Test & Hardening, 10/10 plans) closed 2026-08-10.** **Phase 7 (CV Lifecycle & Trust, 8/8 plans) executed 2026-08-11** — mechanical code review closed all 24 findings SHIP-CONFIRMED, the View-CV P1 hotfix (route-handler redirect) is live on production at commit `bbdb004`, and the authed lifecycle smoke ran 7/7 green on production. On 2026-08-12 the **full authed smoke suite ran 24/24 green** against production in a single serial run (`--workers=1`; intake 8 + lifecycle 7 + read-only 9, scratch residue 0 SQL-verified). The sole remaining Phase-7 gate is founder UAT (07-08 Task 4).
+
+**Phase 8 (Branded CV, 9 plans / 5 waves) built 2026-08-12** — on-demand agency-branded, contact-stripped PDF from parsed data (`@react-pdf/renderer`, founder-approved), one standard tenant-branded template, logo upload in Settings→Branding, delivery via a Phase-7-pattern GET route with export audit, GDPR sweeps extended, generation deliberately UNGATED by billing (founder decision). Review chain: FIX-FIRST (3 blockers, 7 warnings) → all fixed → re-review NOT CONFIRMED (trigger-ordering residual — the repo's historic `_same_org_check` bug reproduced) → residuals fixed (rename migration + CR-01 regression tests) → **SHIP-CONFIRMED, mutation-verified** (3ed5945). **Incident 2026-08-12:** the wave 1-4 deploy shipped `logo_storage_path` SELECTs ahead of the founder's migration push → ~40min apply-form outage (all tenants 404) + broken org-settings saves; caught by the code review (CR-01), fixed by missing-column fallbacks (871b8b6), apply forms verified 200 after; lesson memorised (deploy-ahead-of-migration). Remaining Phase-8 gates: founder db push (the FOUR Phase-8 migrations `20260812120000/120100/150000/160000` must travel in ONE push, plus the six pending Aug-4 files = 10 total), founder design eyeball (sample PDFs delivered), post-push serial prod smoke (branded-cv spec's Generate step is the one check that exercises the guard positively), founder UAT.
 
 ## Pre-Launch Audit Remediation (2026-06-18)
 
