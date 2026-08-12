@@ -109,10 +109,21 @@ function formatEntryLines(
 // design against the spec without archaeology.
 const styles = StyleSheet.create({
   // Criterion 1: A4 portrait, ~40pt margins, single column, ~10pt body.
+  //
+  // DELIBERATELY no `lineHeight` here, even though it would read as the
+  // natural place for it. Verified empirically: a `lineHeight` set at the
+  // Page level cascades to every descendant, including the fixed footer's
+  // `flexDirection: 'row'` view (org name / "Page N of M") — with this
+  // installed @react-pdf/renderer 4.6.0 (@react-pdf/layout 4.7.0), that
+  // combination makes the row's children silently fail to render (the
+  // footer notice text on its own is unaffected). Root-caused via a
+  // bisection across ~20 minimal repro variants; the safe fix is scoping
+  // `lineHeight: 1.4` to the specific text styles below that actually wrap
+  // (bodyText/headline/contextLine/entryTitle/entryMeta/sectorLine) instead
+  // of inheriting it globally. Do not move this back to the page style.
   page: {
     fontFamily: BRANDED_CV_FONT_FAMILY,
     fontSize: 10,
-    lineHeight: 1.4,
     color: '#1A1A1A',
     paddingTop: 40,
     paddingBottom: 64, // extra room for the fixed footer block
@@ -164,11 +175,13 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#333333',
     marginTop: 4,
+    lineHeight: 1.4, // scoped, not inherited from `page` — see the comment on `page` above
   },
   contextLine: {
     fontSize: 9.5,
     color: '#555555',
     marginTop: 4,
+    lineHeight: 1.4, // scoped, not inherited from `page` — see the comment on `page` above
   },
 
   // Criterion 6: sections, each omitted entirely when empty (see the
@@ -189,6 +202,7 @@ const styles = StyleSheet.create({
   bodyText: {
     fontSize: 10,
     color: '#1A1A1A',
+    lineHeight: 1.4, // scoped, not inherited from `page` — see the comment on `page` above
   },
 
   // Criterion 5: skill chips — brand_primary border/text, brand_secondary
@@ -210,6 +224,7 @@ const styles = StyleSheet.create({
     fontSize: 9,
     color: '#555555',
     marginTop: 2,
+    lineHeight: 1.4, // scoped, not inherited from `page` — see the comment on `page` above
   },
 
   // Criterion 6: work/education entries — each wrapped `wrap={false}` by
@@ -221,11 +236,13 @@ const styles = StyleSheet.create({
     fontSize: 10.5,
     fontWeight: 'bold',
     color: '#111111',
+    lineHeight: 1.4, // scoped, not inherited from `page` — see the comment on `page` above
   },
   entryMeta: {
     fontSize: 9.5,
     color: '#555555',
     marginTop: 1,
+    lineHeight: 1.4, // scoped, not inherited from `page` — see the comment on `page` above
   },
 
   // Criterion 7: footer on every page (`fixed`), org name left / "Page N of

@@ -192,18 +192,33 @@ describe('renderBrandedCv — sparse candidate (only full_name)', () => {
     for (const heading of ['PROFILE', 'SKILLS', 'EXPERIENCE', 'EDUCATION']) {
       expect(pages[0]).not.toContain(heading)
     }
+    // The footer's org-name/page-number row must still render even on a
+    // single, mostly-empty page (see the pagination test's comment for the
+    // regression this specifically pins).
+    expect(pages[0]).toContain('Page 1 of 1')
   })
 })
 
 describe('renderBrandedCv — pagination', () => {
-  it('a candidate with 8 work-history entries and a long about paginates to more than one page, and the footer org name appears on every page', async () => {
+  it('a candidate with 8 work-history entries and a long about paginates to more than one page, and the footer org name AND page-number row appear on every page', async () => {
     const buffer = await renderBrandedCv(FULL_FIXTURE_DATA, { ...ORG_BRANDING, logo: null })
     const { totalPages, pages } = await extractPerPageText(buffer)
 
     expect(totalPages).toBeGreaterThan(1)
     expect(pages.length).toBe(totalPages)
-    for (const pageText of pages) {
+    for (const [index, pageText] of pages.entries()) {
+      const pageNumber = index + 1
       expect(pageText).toContain(ORG_BRANDING.orgName)
+      // Pinned specifically as `Page N of M`, not just a loose
+      // "org name appears somewhere" check — the org name also appears
+      // inside the separate footer notice sentence ("Candidate contact
+      // details available from ..."), so that substring alone would not
+      // catch a regression where the footer's org-name/page-number ROW
+      // itself silently fails to render (a real bug this suite caught:
+      // `lineHeight` set at the Page style level cascaded into the
+      // footer's row layout and dropped it — see the comment on
+      // `styles.page` in branded-cv-document.tsx).
+      expect(pageText).toContain(`Page ${pageNumber} of ${totalPages}`)
     }
   })
 })
