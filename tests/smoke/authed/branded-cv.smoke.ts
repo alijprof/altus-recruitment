@@ -134,6 +134,14 @@ test.describe.serial('@smoke-auth branded-cv', () => {
   // explicit reason instead of failing against a feature that legitimately
   // hasn't shipped to this database yet.
   let brandedCvAvailable = true
+  // Phase 8 review WR-02: set true the moment the branding test confirms a
+  // "Logo uploaded" toast — BEFORE attempting the in-test Remove, so that a
+  // failure/timeout ANYWHERE after that point (a flaky toast assertion, CI
+  // cancellation, `retries: 2` abandoning mid-test) still triggers the
+  // afterAll safety-net cleanup below, rather than leaving the founder's
+  // live org rendering a 1-pixel scratch logo on the public apply page and
+  // every branded CV generated thereafter.
+  let smokeLogoUploaded = false
 
   test.beforeAll(async ({ browser }) => {
     // Redundant with global-setup.ts's whole-run gate, but explicit: this
@@ -180,6 +188,34 @@ test.describe.serial('@smoke-auth branded-cv', () => {
 
   test.afterAll(async () => {
     if (!page) return
+    // Phase 8 review WR-02: undo any logo this run uploaded FIRST, on every
+    // path that reaches this hook (success, failure, timeout, cancellation)
+    // — not only the "the test body itself reached the Remove step" path.
+    // Idempotent: if the in-test Remove already succeeded, "No logo yet" is
+    // already showing and the Remove button is absent, so this is a no-op.
+    // Captured rather than thrown immediately so a cleanup failure here
+    // still lets the candidate sweep below run — but the run must still
+    // fail loudly (re-thrown at the end) so the founder knows to check
+    // branding by hand.
+    let brandingCleanupError: Error | null = null
+    if (smokeLogoUploaded) {
+      try {
+        await page.goto('/settings/branding')
+        const remove = page.getByRole('button', { name: 'Remove', exact: true })
+        if (await remove.isVisible({ timeout: 15_000 }).catch(() => false)) {
+          await remove.click()
+          await expect(page.getByText('No logo yet')).toBeVisible({ timeout: 15_000 })
+        }
+      } catch (err) {
+        brandingCleanupError =
+          err instanceof Error
+            ? err
+            : new Error(
+                `branded-cv.smoke.ts: afterAll branding cleanup failed — the founder's live org ` +
+                  `may still be rendering the scratch logo: ${String(err)}`,
+              )
+      }
+    }
     try {
       // Sweep-delete ANY row matching the scratch prefix — including orphans
       // from a prior aborted run that never made it into `createdCandidates`
@@ -239,6 +275,10 @@ test.describe.serial('@smoke-auth branded-cv', () => {
         page.getByText('No candidates match your search.'),
         `scratch residue matching "${SCRATCH_NAME_PREFIX}" remains in the founder's org — delete it manually before the next run`,
       ).toBeVisible({ timeout: 10_000 })
+      // Surface a branding-cleanup failure loudly, but only after the
+      // candidate sweep above has had its chance to run — an unrelated
+      // branding failure must never leave scratch candidates un-swept too.
+      if (brandingCleanupError) throw brandingCleanupError
     } finally {
       await context.close()
     }
@@ -447,6 +487,10 @@ test.describe.serial('@smoke-auth branded-cv', () => {
     })
     await page.getByRole('button', { name: 'Upload logo', exact: true }).click()
     await expect(page.getByText('Logo uploaded')).toBeVisible({ timeout: 20_000 })
+    // Phase 8 review WR-02: flip the afterAll safety-net flag the MOMENT the
+    // upload is confirmed — before attempting Remove below — so a failure
+    // or timeout anywhere from here on still triggers cleanup.
+    smokeLogoUploaded = true
     await expect(page.getByAltText('Organisation logo preview')).toBeVisible({ timeout: 15_000 })
 
     await page.getByRole('button', { name: 'Remove', exact: true }).click()
