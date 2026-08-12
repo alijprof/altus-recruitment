@@ -19,12 +19,15 @@ import { Input } from '@/components/ui/input'
 import { BRAND_DEFAULTS, safeHex } from '@/lib/branding/colours'
 
 import { updateBrandingAction } from './actions'
+import { LogoUploadField } from './logo-upload-field'
 import { updateBrandingSchema, type UpdateBrandingInput } from './schema'
 
 export type BrandingFormProps = {
   initialBrandPrimary: string | null
   initialBrandSecondary: string | null
-  initialLogoUrl: string | null
+  currentLogoUrl: string | null
+  hasUploadedLogo: boolean
+  isLegacyUrl: boolean
   isOwner: boolean
 }
 
@@ -113,7 +116,9 @@ function ColourField({
 export function BrandingForm({
   initialBrandPrimary,
   initialBrandSecondary,
-  initialLogoUrl,
+  currentLogoUrl,
+  hasUploadedLogo,
+  isLegacyUrl,
   isOwner,
 }: BrandingFormProps) {
   const [isPending, startTransition] = useTransition()
@@ -123,7 +128,6 @@ export function BrandingForm({
     defaultValues: {
       brand_primary: initialBrandPrimary ?? '',
       brand_secondary: initialBrandSecondary ?? '',
-      logo_url: initialLogoUrl ?? '',
     },
   })
 
@@ -157,61 +161,51 @@ export function BrandingForm({
   }
 
   return (
-    <Form {...form}>
-      <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
-        <ColourField
-          label="Primary colour"
-          name="brand_primary"
-          description={`Main accent colour (buttons, header). Leave blank to use the Altus default (${BRAND_DEFAULTS.primary}).`}
-          defaultColour={BRAND_DEFAULTS.primary}
-          readOnly={!isOwner}
-          form={form}
-        />
+    <div className="space-y-8">
+      <Form {...form}>
+        <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
+          <ColourField
+            label="Primary colour"
+            name="brand_primary"
+            description={`Main accent colour (buttons, header). Leave blank to use the Altus default (${BRAND_DEFAULTS.primary}).`}
+            defaultColour={BRAND_DEFAULTS.primary}
+            readOnly={!isOwner}
+            form={form}
+          />
 
-        <ColourField
-          label="Secondary colour"
-          name="brand_secondary"
-          description={`Complementary accent colour. Leave blank to use the Altus default (${BRAND_DEFAULTS.secondary}).`}
-          defaultColour={BRAND_DEFAULTS.secondary}
-          readOnly={!isOwner}
-          form={form}
-        />
+          <ColourField
+            label="Secondary colour"
+            name="brand_secondary"
+            description={`Complementary accent colour. Leave blank to use the Altus default (${BRAND_DEFAULTS.secondary}).`}
+            defaultColour={BRAND_DEFAULTS.secondary}
+            readOnly={!isOwner}
+            form={form}
+          />
 
-        <FormField
-          control={form.control}
-          name="logo_url"
-          render={({ field }) => (
-            <FormItem>
-              <FormLabel>Logo URL</FormLabel>
-              <FormControl>
-                <Input
-                  type="url"
-                  placeholder="https://example.com/logo.png"
-                  {...field}
-                  value={field.value ?? ''}
-                  readOnly={!isOwner}
-                  aria-readonly={!isOwner}
-                />
-              </FormControl>
-              <FormDescription>
-                Paste a hosted image URL (PNG or SVG recommended). Logo upload UI lands in a
-                future phase.
-              </FormDescription>
-              <FormMessage />
-            </FormItem>
+          {isOwner ? (
+            <div className="flex justify-end">
+              <Button type="submit" className="h-11 md:h-10" disabled={isPending}>
+                {isPending ? 'Saving…' : 'Save branding'}
+              </Button>
+            </div>
+          ) : (
+            <p className="text-muted-foreground text-xs">
+              Only owners can edit branding settings.
+            </p>
           )}
-        />
+        </form>
+      </Form>
 
-        {isOwner ? (
-          <div className="flex justify-end">
-            <Button type="submit" className="h-11 md:h-10" disabled={isPending}>
-              {isPending ? 'Saving…' : 'Save branding'}
-            </Button>
-          </div>
-        ) : (
-          <p className="text-muted-foreground text-xs">Only owners can edit branding settings.</p>
-        )}
-      </form>
-    </Form>
+      {/* Logo upload is its own submission (uploadOrgLogoAction /
+          removeOrgLogoAction) — deliberately OUTSIDE the colours <form>
+          above so a logo change never gets bundled into (or blocked by) a
+          colour save. See 08-06-PLAN.md Task 1. */}
+      <LogoUploadField
+        currentLogoUrl={currentLogoUrl}
+        hasUploadedLogo={hasUploadedLogo}
+        isLegacyUrl={isLegacyUrl}
+        isOwner={isOwner}
+      />
+    </div>
   )
 }
