@@ -81,6 +81,25 @@ exactly like stored CVs do (Phase 7 surface, including the export audit row).
   only produces and stores the artifact).
 </specifics>
 
+## Anchor-customer logo intel (founder shared the SC logo 2026-08-12)
+
+Observed from the actual Steele Charles logo (founder pasted it in-session;
+original file NOT yet on disk — founder to supply the file or upload it via
+the BCV-04 flow at UAT):
+
+- **Landscape lockup** (~3:2): circled "SC" monogram above a "Steele Charles"
+  serif wordmark with "Ltd" between horizontal rules. The template header must
+  accommodate a WIDE logo gracefully (not a square avatar slot).
+- **Single-colour brand: a deep bottle/forest green** on white. Exact hex must
+  be pixel-sampled from the real file at execution time (estimate ≈ #1a6b50
+  family — do NOT hardcode; it becomes SC's `brand_primary` via settings).
+- **White background, no transparency (as shared).** Design constraint: the
+  template must place the logo on a white/light header area (a solid-colour
+  header band would frame non-transparent logos in a white box). Upload flow
+  should accept PNG/JPEG/SVG and not require transparency.
+- Serif brand feel — the template's type choices should not clash (a neutral
+  serif or clean sans both work; Claude's discretion per BCV-02).
+
 <canonical_refs>
 ## Canonical references
 
