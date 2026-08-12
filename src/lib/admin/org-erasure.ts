@@ -62,7 +62,10 @@ const PAGE = 1000
 type LooseClient = {
   from: (table: string) => {
     select: (cols: string) => {
-      eq: (col: string, val: string) => {
+      eq: (
+        col: string,
+        val: string,
+      ) => {
         range: (
           from: number,
           to: number,
@@ -108,9 +111,7 @@ export async function listAllObjectPaths(
     if (depth > 32) return
     let offset = 0
     for (;;) {
-      const { data, error } = await client.storage
-        .from(bucket)
-        .list(dir, { limit: 100, offset })
+      const { data, error } = await client.storage.from(bucket).list(dir, { limit: 100, offset })
       if (error) {
         // T-08-54: a bucket that does not exist in this environment must
         // never abort the whole erasure — treat it as zero objects and move
@@ -173,9 +174,7 @@ export async function deleteAllOrgStorage(
       // the caller ABORTS before any DB destruction (leaves storage retryable).
       const removedCount = removed?.length ?? 0
       if (removedCount < batch.length) {
-        throw new Error(
-          `storage remove incomplete in ${bucket}: ${removedCount}/${batch.length}`,
-        )
+        throw new Error(`storage remove incomplete in ${bucket}: ${removedCount}/${batch.length}`)
       }
       total += batch.length
     }

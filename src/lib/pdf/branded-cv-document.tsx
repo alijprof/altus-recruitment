@@ -20,15 +20,7 @@
 // from `@/lib/supabase`, `@/lib/db`, or `next/*` — it is a pure function of
 // its two arguments (data, branding) → PDF bytes.
 
-import {
-  Document,
-  Image,
-  Page,
-  StyleSheet,
-  Text,
-  View,
-  renderToBuffer,
-} from '@react-pdf/renderer'
+import { Document, Image, Page, StyleSheet, Text, View, renderToBuffer } from '@react-pdf/renderer'
 
 import { BRAND_DEFAULTS, safeHex } from '@/lib/branding/colours'
 import type { BrandedCvData } from '@/lib/pdf/branded-cv-data'
@@ -370,7 +362,11 @@ export function BrandedCvDocument({
           <View style={styles.section}>
             <Text style={[styles.sectionHeading, { color: primaryColor }]}>Experience</Text>
             {data.work.map((entry, index) => {
-              const { titleText, metaText } = formatEntryLines(entry.title, entry.company, entry.dates)
+              const { titleText, metaText } = formatEntryLines(
+                entry.title,
+                entry.company,
+                entry.dates,
+              )
               return (
                 <View key={`work-${index}-${entry.title}`} style={styles.entry} wrap={false}>
                   <Text style={styles.entryTitle}>{titleText}</Text>
@@ -386,7 +382,11 @@ export function BrandedCvDocument({
           <View style={styles.section}>
             <Text style={[styles.sectionHeading, { color: primaryColor }]}>Education</Text>
             {data.education.map((entry, index) => {
-              const { titleText, metaText } = formatEntryLines(entry.school, entry.degree, entry.dates)
+              const { titleText, metaText } = formatEntryLines(
+                entry.school,
+                entry.degree,
+                entry.dates,
+              )
               return (
                 <View key={`edu-${index}-${entry.school}`} style={styles.entry} wrap={false}>
                   <Text style={styles.entryTitle}>{titleText}</Text>

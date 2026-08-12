@@ -212,7 +212,7 @@ export function LogoUploadField({
                 e.preventDefault()
                 confirmRemove()
               }}
-              className="bg-destructive text-white hover:bg-destructive/90"
+              className="bg-destructive hover:bg-destructive/90 text-white"
             >
               {isRemovePending ? 'Removing…' : 'Remove logo'}
             </AlertDialogAction>
@@ -248,8 +248,8 @@ export function LogoUploadField({
             </p>
           ) : (
             <p className="text-muted-foreground text-xs font-normal">
-              PNG or JPEG, up to 2 MB. A wide, landscape logo works best. SVG isn&apos;t supported
-              — it can&apos;t be embedded in the branded PDF.
+              PNG or JPEG, up to 2 MB. A wide, landscape logo works best. SVG isn&apos;t supported —
+              it can&apos;t be embedded in the branded PDF.
             </p>
           )}
         </div>
@@ -265,8 +265,8 @@ export function LogoUploadField({
           />
           <p>
             This logo is a pasted external URL — it still appears on your apply page, but it will{' '}
-            <strong className="font-semibold">not</strong> appear on branded CVs until you upload
-            a file here.
+            <strong className="font-semibold">not</strong> appear on branded CVs until you upload a
+            file here.
           </p>
         </div>
       ) : null}

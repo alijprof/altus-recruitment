@@ -48,7 +48,12 @@ function bucketNotFoundError() {
 }
 
 function genuineListError() {
-  return { message: 'Internal Server Error', status: 500, statusCode: '500', name: 'StorageApiError' }
+  return {
+    message: 'Internal Server Error',
+    status: 500,
+    statusCode: '500',
+    name: 'StorageApiError',
+  }
 }
 
 // A minimal fake client exposing only `storage.from(bucket).list()/.remove()`
@@ -101,7 +106,9 @@ describe('ORG_EXPORT_TABLES / ORG_STORAGE_BUCKETS coverage', () => {
 describe('listAllObjectPaths — missing-bucket tolerance', () => {
   it('treats a bucket-not-found list error as zero objects, with a Sentry NOTE (org id + bucket only), no throw', async () => {
     const { listAllObjectPaths } = await importModule()
-    const client = fakeClient({ 'org-logos': async () => ({ data: null, error: bucketNotFoundError() }) })
+    const client = fakeClient({
+      'org-logos': async () => ({ data: null, error: bucketNotFoundError() }),
+    })
 
     const paths = await listAllObjectPaths(client, 'org-logos', ORG_ID)
 

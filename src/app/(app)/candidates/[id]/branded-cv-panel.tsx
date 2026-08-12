@@ -55,9 +55,8 @@ export function BrandedCvPanel({ candidateId, state }: BrandedCvPanelProps) {
         </p>
       ) : (
         <p className="text-muted-foreground text-xs leading-relaxed">
-          An agency-branded, contact-stripped PDF of this candidate — your
-          colours and logo on a clean standard layout, built from their
-          current data.
+          An agency-branded, contact-stripped PDF of this candidate — your colours and logo on a
+          clean standard layout, built from their current data.
         </p>
       )}
       <div className="flex flex-wrap items-center gap-2">

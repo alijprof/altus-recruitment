@@ -61,7 +61,9 @@ describe('candidate_branded_cvs migration (Phase 08 Plan 01)', () => {
       code,
       'organization_id must reference organizations(id) on delete cascade — GDPR org erasure ' +
         'must remove this row automatically',
-    ).toMatch(/organization_id uuid not null references public\.organizations\(id\) on delete cascade/)
+    ).toMatch(
+      /organization_id uuid not null references public\.organizations\(id\) on delete cascade/,
+    )
     expect(
       code,
       'candidate_id must reference candidates(id) on delete cascade — GDPR candidate erasure ' +
@@ -82,7 +84,9 @@ describe('candidate_branded_cvs migration (Phase 08 Plan 01)', () => {
   })
 
   it('declares exactly four tenant policies, each keyed on current_organization_id()', () => {
-    const policyMatches = [...code.matchAll(/create policy "[^"]+" on public\.candidate_branded_cvs/g)]
+    const policyMatches = [
+      ...code.matchAll(/create policy "[^"]+" on public\.candidate_branded_cvs/g),
+    ]
     expect(
       policyMatches.length,
       'expected exactly four create policy statements (select/insert/update/delete) — ' +

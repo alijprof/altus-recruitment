@@ -308,7 +308,14 @@ describe('generateBrandedCvAction', () => {
     const { generateBrandedCvAction } = await importAction()
     const result = await generateBrandedCvAction({ candidateId: CANDIDATE_ID })
     expect(result).toEqual({ ok: true })
-    expect(order).toEqual(['candidate-read', 'org-read', 'logo-download', 'render', 'upload', 'upsert'])
+    expect(order).toEqual([
+      'candidate-read',
+      'org-read',
+      'logo-download',
+      'render',
+      'upload',
+      'upsert',
+    ])
     // No previous copy on this candidate — nothing to remove.
     expect(removeMock).not.toHaveBeenCalled()
   })
@@ -449,7 +456,10 @@ describe('generateBrandedCvAction', () => {
     expect(serialised).not.toContain('Okafor')
     expect(serialised).not.toContain('dana@example.test')
     expect(serialised).not.toContain('+44 7700 900000')
-    const [, ctx] = captureExceptionMock.mock.calls[0] as [unknown, { tags?: Record<string, unknown> }]
+    const [, ctx] = captureExceptionMock.mock.calls[0] as [
+      unknown,
+      { tags?: Record<string, unknown> },
+    ]
     expect(ctx?.tags).toMatchObject({ layer: 'server-action', action: 'generateBrandedCvAction' })
   })
 

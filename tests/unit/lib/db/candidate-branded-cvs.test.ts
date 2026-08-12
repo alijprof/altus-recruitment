@@ -191,7 +191,10 @@ describe('getBrandedCvState', () => {
     expect(captureExceptionMock).toHaveBeenCalledTimes(1)
     // PII-free: no candidate id, name, storage path in the tags — only a
     // fixed layer/helper tag pair.
-    const [, ctx] = captureExceptionMock.mock.calls[0] as [unknown, { tags?: Record<string, unknown> }]
+    const [, ctx] = captureExceptionMock.mock.calls[0] as [
+      unknown,
+      { tags?: Record<string, unknown> },
+    ]
     expect(ctx?.tags).toEqual({ layer: 'db', helper: 'getBrandedCvState' })
   })
 })
