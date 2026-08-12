@@ -108,6 +108,10 @@ Items acknowledged and deferred at milestone close on 2026-06-12. All 21 quick t
 
 ## Accumulated Context
 
+### Pending Todos
+
+- [2026-08-12] CV parse robustness: OCR for scanned PDFs, Sonnet escalation, targeted re-ask (`.planning/todos/pending/2026-08-12-cv-parse-robustness-ocr-for-scanned-pdfs-sonnet-escalation-t.md`)
+
 ### Roadmap Evolution
 
 - Phase 6 added (2026-08-09): CV Intake Battle-Test & Hardening — driven by customer feedback (12 parse failures in the 5-6 Aug 73-CV bulk upload; telemetry proves all failures are post-Claude write-stage)
