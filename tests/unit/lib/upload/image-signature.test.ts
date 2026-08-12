@@ -60,9 +60,7 @@ describe('sniffImageType', () => {
 
   describe('spoofing / polyglot rejection — everything except real PNG/JPEG bytes is unknown', () => {
     it('an SVG document (<svg …) sniffs as unknown', () => {
-      expect(sniffImageType(asciiBytes('<svg xmlns="http://www.w3.org/2000/svg">'))).toBe(
-        'unknown',
-      )
+      expect(sniffImageType(asciiBytes('<svg xmlns="http://www.w3.org/2000/svg">'))).toBe('unknown')
     })
 
     it('a GIF (GIF89a) sniffs as unknown', () => {
