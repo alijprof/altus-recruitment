@@ -23,6 +23,10 @@
  *   - a missing table returns a plain "not available yet" message
  *   - zero AI/HTTP calls: no @/lib/ai import, no inngest.send, no fetch
  *   - Sentry captures contain no PII
+ *   - (review WR-06) files a recordExportAudit row against the candidate,
+ *     disambiguated from a download via metadata.subject
+ *   - (review WR-06) a failed activity write is captured to Sentry, not
+ *     silently discarded — generation itself still succeeds
  */
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
@@ -94,6 +98,11 @@ vi.mock('@/lib/db/candidate-branded-cvs', () => ({
 const createActivityMock = vi.fn()
 vi.mock('@/lib/db/activities', () => ({
   createActivity: (...a: unknown[]) => createActivityMock(...a),
+}))
+
+const recordExportAuditMock = vi.fn()
+vi.mock('@/lib/db/audit', () => ({
+  recordExportAudit: (...a: unknown[]) => recordExportAuditMock(...a),
 }))
 
 const requireEntitledOrgMock = vi.fn()
@@ -240,6 +249,9 @@ beforeEach(() => {
   createActivityMock.mockReset()
   createActivityMock.mockResolvedValue({ ok: true, data: {} })
 
+  recordExportAuditMock.mockReset()
+  recordExportAuditMock.mockResolvedValue(undefined)
+
   requireEntitledOrgMock.mockReset()
   requireEntitledOrgMock.mockResolvedValue({ ok: true })
 
@@ -299,6 +311,36 @@ describe('generateBrandedCvAction', () => {
     expect(order).toEqual(['candidate-read', 'org-read', 'logo-download', 'render', 'upload', 'upsert'])
     // No previous copy on this candidate — nothing to remove.
     expect(removeMock).not.toHaveBeenCalled()
+  })
+
+  it('WR-06: files an export audit row against the candidate, disambiguated from a download', async () => {
+    const { generateBrandedCvAction } = await importAction()
+    const result = await generateBrandedCvAction({ candidateId: CANDIDATE_ID })
+    expect(result).toEqual({ ok: true })
+    expect(recordExportAuditMock).toHaveBeenCalledTimes(1)
+    expect(recordExportAuditMock).toHaveBeenCalledWith(
+      expect.anything(),
+      'candidate',
+      CANDIDATE_ID,
+      expect.objectContaining({
+        candidate_branded_cv_id: 'branded-1',
+        subject: 'branded_cv_generated',
+      }),
+    )
+  })
+
+  it('WR-06: a failed activity write is captured, not silently swallowed — generation still succeeds', async () => {
+    createActivityMock.mockResolvedValue({ ok: false, code: 'internal' })
+    const { generateBrandedCvAction } = await importAction()
+    const result = await generateBrandedCvAction({ candidateId: CANDIDATE_ID })
+    // The branded CV itself already exists (row + Storage object) — an
+    // activity-feed failure must never fail the whole action.
+    expect(result).toEqual({ ok: true })
+    const activityFailureCapture = captureExceptionMock.mock.calls.find(([, ctx]) => {
+      const tags = (ctx as { tags?: Record<string, unknown> } | undefined)?.tags
+      return tags?.subop === 'activity'
+    })
+    expect(activityFailureCapture, 'expected a Sentry capture tagged subop: activity').toBeDefined()
   })
 
   it('skips the logo download entirely when the org has no logo_storage_path', async () => {

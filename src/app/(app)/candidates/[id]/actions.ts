@@ -9,6 +9,7 @@ import { downloadOrgLogo } from '@/lib/branding/org-logo'
 import { assertUploadableCV } from '@/lib/cv/file-signature'
 import { isUnretryableParseFailure, isUploadIncomplete } from '@/lib/cv/parse-messages'
 import { createActivity } from '@/lib/db/activities'
+import { recordExportAudit } from '@/lib/db/audit'
 import { upsertBrandedCv } from '@/lib/db/candidate-branded-cvs'
 import {
   createCandidateCV,
@@ -694,12 +695,47 @@ export async function generateBrandedCvAction(rawInput: unknown): Promise<Action
     }
   }
 
-  await createActivity(supabase, {
+  // Phase 8 review WR-06: the result is now checked rather than discarded —
+  // a failed activity write must not silently return { ok: true } with no
+  // trace at all. The generation itself has already fully succeeded (the
+  // row and Storage object both exist), so this stays best-effort — a
+  // failure here degrades the activity feed, never the response — but it
+  // must be VISIBLE (Sentry), not silent.
+  const activityResult = await createActivity(supabase, {
     kind: 'system',
     entity_type: 'candidate',
     entity_id: candidateId,
     body: 'Branded CV generated',
     actor_user_id: user.id,
+  })
+  if (!activityResult.ok) {
+    Sentry.captureException(new Error(`createActivity failed (${activityResult.code})`), {
+      tags: {
+        layer: 'server-action',
+        action: 'generateBrandedCvAction',
+        subop: 'activity',
+        candidate_id: candidateId,
+      },
+    })
+  }
+
+  // Phase 8 review WR-06: this action reads the full candidate row (:572-576
+  // above) and, unlike the UI path (which files a `view` row when the
+  // detail page itself renders), deliberately filed no `audit_log` row of
+  // its own — on the reasoning that the detail page already covers it. That
+  // holds for clicks through the UI, but this Server Action is a directly-
+  // invocable POST endpoint: a script could generate branded PDFs of every
+  // candidate in the org with the only trace an `activities` row of
+  // `kind: 'system'`, which is not what CLAUDE.md's "every access to
+  // candidate data is logged" means. recordExportAudit's action column is a
+  // fixed 'export' enum value (shared with the delivery route's download
+  // audit) — `subject: 'branded_cv_generated'` in the metadata disambiguates
+  // "this candidate's data was read to GENERATE a document" from "an
+  // existing document was DOWNLOADED" (branded-cv/route.ts). Never-throw,
+  // best-effort, same contract already proven cheap by the delivery route.
+  await recordExportAudit(supabase, 'candidate', candidateId, {
+    candidate_branded_cv_id: upsertResult.data.row.id,
+    subject: 'branded_cv_generated',
   })
 
   revalidatePath('/candidates/[id]', 'page')
