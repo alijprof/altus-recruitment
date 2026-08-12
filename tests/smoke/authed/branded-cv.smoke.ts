@@ -389,9 +389,7 @@ test.describe.serial('@smoke-auth branded-cv', () => {
       'branded-cv-',
     )
     const suggested = dl.suggestedFilename()
-    expect(suggested, `downloaded filename should be a PDF (got "${suggested}")`).toMatch(
-      /\.pdf$/i,
-    )
+    expect(suggested, `downloaded filename should be a PDF (got "${suggested}")`).toMatch(/\.pdf$/i)
     await dl.cancel().catch(() => {})
     if (popup && !popup.isClosed()) await popup.close().catch(() => {})
   })
