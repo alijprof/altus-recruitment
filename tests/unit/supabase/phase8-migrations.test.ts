@@ -43,6 +43,10 @@ const ORG_LOGOS_BUCKET_PATH = resolve(
   process.cwd(),
   'supabase/migrations/20260812120100_org_logos_bucket.sql',
 )
+const BRANDED_CVS_SAME_ORG_GUARD_PATH = resolve(
+  process.cwd(),
+  'supabase/migrations/20260812150000_branded_cvs_same_org_guard.sql',
+)
 
 describe('candidate_branded_cvs migration (Phase 08 Plan 01)', () => {
   const raw = readFileSync(CANDIDATE_BRANDED_CVS_PATH, 'utf8')
@@ -112,6 +116,38 @@ describe('candidate_branded_cvs migration (Phase 08 Plan 01)', () => {
     expect(code).toMatch(/create table if not exists/)
     expect((code.match(/drop policy if exists/g) ?? []).length).toBe(4)
     expect((code.match(/drop trigger if exists/g) ?? []).length).toBe(2)
+  })
+})
+
+describe('candidate_branded_cvs cross-tenant FK guard migration (Phase 08 review CR-02)', () => {
+  const raw = readFileSync(BRANDED_CVS_SAME_ORG_GUARD_PATH, 'utf8')
+  const code = stripCommentLines(raw)
+
+  it('installs a guard function that calls assert_same_org against candidates', () => {
+    expect(
+      code,
+      'the guard must reuse the existing assert_same_org() helper, same pattern as ' +
+        'candidate_cvs_same_org_guard (20260518211005) — a plain FK does not enforce tenancy ' +
+        'and RLS does not check it either',
+    ).toMatch(
+      /perform public\.assert_same_org\(\s*'public\.candidates'::regclass,\s*new\.candidate_id,\s*new\.organization_id\s*\)/,
+    )
+  })
+
+  it('is idempotent — drops the trigger before recreating it, for re-push safety', () => {
+    expect(code).toMatch(
+      /drop trigger if exists candidate_branded_cvs_same_org_check\s+on public\.candidate_branded_cvs/,
+    )
+  })
+
+  it('fires before insert or update of candidate_id/organization_id on candidate_branded_cvs', () => {
+    expect(
+      code,
+      'must fire on both candidate_id and organization_id changes — an UPDATE that repoints ' +
+        'either column must be re-validated, not just the initial INSERT',
+    ).toMatch(
+      /create trigger candidate_branded_cvs_same_org_check\s+before insert or update of candidate_id, organization_id on public\.candidate_branded_cvs\s+for each row execute function public\.candidate_branded_cvs_same_org_guard\(\)/,
+    )
   })
 })
 
