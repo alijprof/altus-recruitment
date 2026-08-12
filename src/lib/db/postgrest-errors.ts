@@ -36,3 +36,28 @@ export function isMissingColumnError(err: unknown, column?: string): boolean {
   const message = (err as { message?: string }).message
   return typeof message === 'string' && message.includes(column)
 }
+
+/**
+ * True when a PostgREST/Postgres error says the referenced TABLE does not
+ * exist yet — i.e. this code is deployed AHEAD of its migration (this
+ * project's migrations are pushed to production by hand; see the module
+ * header above). Distinct from `isMissingColumnError`, which fires for a
+ * KNOWN table that is missing one new column — this fires when the whole
+ * table is absent.
+ *
+ *   42P01    — Postgres `undefined_table`, surfaced when a query reaches
+ *              Postgres directly for a table that was never created.
+ *   PGRST205 — PostgREST schema-cache TABLE miss ("Could not find the table
+ *              '...' in the schema cache").
+ *
+ * One implementation, one place — same rationale as `isMissingColumnError`
+ * above (review 2026-08-04 L9). Introduced for Phase 8 Plan 07:
+ * candidate_branded_cvs (migration 20260812120000) may reach production code
+ * before the founder's manual `db push` applies it, and every consumer of
+ * this table must degrade to "feature unavailable" rather than a 500.
+ */
+export function isMissingTableError(err: unknown): boolean {
+  if (err === null || typeof err !== 'object') return false
+  const code = (err as { code?: string }).code
+  return code === '42P01' || code === 'PGRST205'
+}

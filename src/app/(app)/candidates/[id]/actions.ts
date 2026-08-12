@@ -5,9 +5,11 @@ import { redirect } from 'next/navigation'
 import * as Sentry from '@sentry/nextjs'
 import { z } from 'zod'
 
+import { downloadOrgLogo } from '@/lib/branding/org-logo'
 import { assertUploadableCV } from '@/lib/cv/file-signature'
 import { isUnretryableParseFailure, isUploadIncomplete } from '@/lib/cv/parse-messages'
 import { createActivity } from '@/lib/db/activities'
+import { upsertBrandedCv } from '@/lib/db/candidate-branded-cvs'
 import {
   createCandidateCV,
   getCandidateCV,
@@ -15,8 +17,11 @@ import {
   nextCVVersion,
   updateCandidateCVParse,
 } from '@/lib/db/candidate-cvs'
+import { getOrganization } from '@/lib/db/organizations'
 import { getProfile } from '@/lib/db/profiles'
 import { inngest } from '@/lib/inngest/client'
+import { toBrandedCvData } from '@/lib/pdf/branded-cv-data'
+import { renderBrandedCv } from '@/lib/pdf/branded-cv-document'
 import { ENTITLEMENT_BLOCKED_MESSAGE, requireEntitledOrg } from '@/lib/stripe/require-entitlement'
 import { createClient } from '@/lib/supabase/server'
 
@@ -482,6 +487,222 @@ export async function acceptCVFieldsAction(rawInput: unknown): Promise<AcceptCVF
 
   revalidatePath(`/candidates/${cv.candidate_id}`)
   return { ok: true, fieldsPopulated: mergeResult.data.fieldsPopulated }
+}
+
+// ---------------------------------------------------------------------------
+// Generate a branded CV (BCV-01/06/07, Phase 8 Plan 07).
+//
+// Synchronous, zero-AI Server Action — a deterministic template fill
+// (candidate data + org branding -> PDF bytes) measured in hundreds of
+// milliseconds, not a background job. Unlike uploadCVAction/retryParseAction
+// (which call Claude via Inngest), this action calls nothing external: no
+// inngest.send, no fetch, no @/lib/ai import. See 08-RESEARCH.md Pitfall 7 —
+// routing this through Inngest "because it's a background job" would be
+// pattern-matching without checking WHY the other actions are async.
+//
+// Write-new-then-delete-old (BCV-06): the new PDF is uploaded to a FRESH
+// Storage path, the row is upserted to point at it, and only THEN is the
+// PREVIOUS object best-effort removed — a crash mid-regeneration leaves the
+// OLD copy still servable rather than leaving nothing (08-RESEARCH.md
+// Pitfall 6).
+// ---------------------------------------------------------------------------
+
+const generateBrandedCvSchema = z.object({
+  candidateId: z.string().uuid('Invalid candidate id.'),
+})
+
+export type GenerateBrandedCvInput = z.infer<typeof generateBrandedCvSchema>
+
+// DbResult.detail is always "CODE (subop)" (see failureDetail / the
+// candidate-branded-cvs.ts comment on this exact branch) — a leading
+// 42P01/PGRST205 is the ONLY way this action layer can tell "the table
+// isn't migrated yet" apart from a genuine internal failure, since
+// upsertBrandedCv deliberately does not widen the shared DbResult union
+// with an 'unavailable' code (src/lib/db/types.ts). Duplicated here rather
+// than imported: isMissingTableError takes the raw Postgres/PostgREST error
+// object, which this layer never sees — only the already-stringified detail.
+function isMissingTableDetail(detail: string | undefined): boolean {
+  return typeof detail === 'string' && (detail.startsWith('42P01') || detail.startsWith('PGRST205'))
+}
+
+/**
+ * Renders and stores an agency-branded, contact-stripped PDF of a
+ * candidate's CURRENT data — on demand only, never auto-generated on parse
+ * (BCV-01: Phase 7 made parsed fields editable, so an auto-generated copy
+ * would go stale the moment a recruiter corrects a field).
+ *
+ * Deliberately NO requireEntitledOrg() gate here, unlike every OTHER
+ * mutation in this file. Founder decision, 2026-08-12 (see 08-07-PLAN.md
+ * <objective> "Founder sign-off — NO ENTITLEMENT GATE"): withholding a
+ * customer's own candidate data behind a billing state is a data-hostage
+ * posture this product does not take — the exact same reasoning already
+ * documented on cv-file/[cvId]/route.ts for read access, extended here to
+ * generation because this action spends nothing external that a billing
+ * gate would be protecting (BCV-07: zero AI, zero third-party call, a
+ * deterministic in-process template fill). Authentication and RLS tenancy
+ * are UNCHANGED and remain the only gates. Do not add requireEntitledOrg()
+ * back "for consistency" — every other action in this file drives AI spend
+ * or a CRM write a non-entitled tenant shouldn't be making; this one does
+ * neither.
+ */
+export async function generateBrandedCvAction(rawInput: unknown): Promise<ActionResult> {
+  const parsed = generateBrandedCvSchema.safeParse(rawInput)
+  if (!parsed.success) {
+    const first = parsed.error.issues[0]?.message ?? 'Invalid request.'
+    return { ok: false, error: first }
+  }
+  const { candidateId } = parsed.data
+
+  const supabase = await createClient()
+  const {
+    data: { user },
+  } = await supabase.auth.getUser()
+  if (!user) return { ok: false, error: 'Not signed in.' }
+
+  // Direct RLS-scoped read rather than getCandidate: getCandidate files a
+  // `view` audit row, and the caller is already on the detail page that just
+  // filed one — a duplicate row here would dilute the access history rather
+  // than enrich it. The generation itself is recorded by
+  // generated_by/generated_at on the candidate_branded_cvs row plus the
+  // `kind: 'system'` activity below (mirrors uploadCVAction's pattern). A
+  // cross-tenant or unknown id collapses to the SAME outcome — that IS the
+  // tenancy barrier (T-08-38); never distinguish "wrong tenant" from
+  // "no such row".
+  const { data: candidate, error: candidateError } = await supabase
+    .from('candidates')
+    .select('*')
+    .eq('id', candidateId)
+    .maybeSingle()
+  if (candidateError || !candidate) {
+    return { ok: false, error: 'Candidate not found.' }
+  }
+
+  const profileResult = await getProfile(supabase, user.id)
+  if (!profileResult.ok) return { ok: false, error: 'Profile not found.' }
+  const organizationId = profileResult.data.organization_id
+
+  const orgResult = await getOrganization(supabase, organizationId)
+  if (!orgResult.ok) return { ok: false, error: 'Organisation not found.' }
+  const org = orgResult.data
+
+  // downloadOrgLogo NEVER throws and returns null for a missing path, a
+  // download error, or bytes that fail its magic-byte re-check — a
+  // logo-less render (org-name wordmark fallback) is the deliberate degrade
+  // path. Only attempted when the org actually has an uploaded logo.
+  const downloadedLogo = org.logo_storage_path
+    ? await downloadOrgLogo(supabase, org.logo_storage_path)
+    : null
+  // downloadOrgLogo's own contract guarantees format is never 'unknown' on a
+  // non-null return (it returns null itself when sniffImageType says
+  // 'unknown') — this narrows the wider SniffedImageType down to the
+  // 'png' | 'jpeg' BrandedCvBranding['logo'] actually declares, satisfying
+  // the type checker without weakening either contract.
+  const logo =
+    downloadedLogo && downloadedLogo.format !== 'unknown'
+      ? { data: downloadedLogo.data, format: downloadedLogo.format }
+      : null
+
+  let pdfBuffer: Buffer
+  try {
+    pdfBuffer = await renderBrandedCv(toBrandedCvData(candidate), {
+      orgName: org.name,
+      primary: org.brand_primary,
+      secondary: org.brand_secondary,
+      logo,
+    })
+  } catch (err) {
+    const errName = err instanceof Error ? err.name : 'UnknownError'
+    Sentry.captureException(new Error(`${errName}: renderBrandedCv failed`), {
+      tags: {
+        layer: 'server-action',
+        action: 'generateBrandedCvAction',
+        subop: 'render',
+        candidate_id: candidateId,
+      },
+    })
+    return { ok: false, error: 'Couldn’t generate the branded CV. Please try again.' }
+  }
+
+  // Fresh path every call — write-new-then-delete-old, never overwrite in
+  // place. No client-supplied string is ever concatenated into this path
+  // (T-08-40): every segment is server-derived (the profile's org id, the
+  // zod-validated candidate uuid, crypto.randomUUID()).
+  const storagePath = `${organizationId}/${candidateId}/branded-cv-${crypto.randomUUID()}.pdf`
+
+  const { error: uploadError } = await supabase.storage
+    .from('cvs')
+    .upload(storagePath, pdfBuffer, { contentType: 'application/pdf', upsert: false })
+  if (uploadError) {
+    Sentry.captureException(new Error(`${uploadError.name}: branded-cv upload failed`), {
+      tags: {
+        layer: 'server-action',
+        action: 'generateBrandedCvAction',
+        subop: 'upload',
+        candidate_id: candidateId,
+      },
+    })
+    return { ok: false, error: 'Storage upload failed. Please try again.' }
+  }
+
+  const upsertResult = await upsertBrandedCv(supabase, {
+    candidateId,
+    storagePath,
+    fileSizeBytes: pdfBuffer.byteLength,
+    generatedBy: user.id,
+  })
+
+  if (!upsertResult.ok) {
+    // No orphan: the just-uploaded object has no row pointing at it yet —
+    // remove it rather than leaving a dangling Storage object (T-08-45).
+    await supabase.storage.from('cvs').remove([storagePath])
+
+    if (isMissingTableDetail(upsertResult.detail)) {
+      // Expected pre-migration state (T-08-44), not a fault — no Sentry
+      // capture here; upsertBrandedCv already chose not to capture this
+      // case either, for the same reason.
+      return { ok: false, error: 'Branded CVs aren’t available yet.' }
+    }
+    Sentry.captureException(new Error(`upsertBrandedCv failed (${upsertResult.code})`), {
+      tags: {
+        layer: 'server-action',
+        action: 'generateBrandedCvAction',
+        subop: 'upsert',
+        candidate_id: candidateId,
+      },
+    })
+    return { ok: false, error: 'Couldn’t save the branded CV. Please try again.' }
+  }
+
+  const { previousStoragePath } = upsertResult.data
+  if (previousStoragePath) {
+    // Best-effort — write-new-then-delete-old ordering means a failure here
+    // only orphans the OLD object; the new one is already live and the row
+    // already points at it, so generation has still succeeded.
+    try {
+      await supabase.storage.from('cvs').remove([previousStoragePath])
+    } catch (err) {
+      const errName = err instanceof Error ? err.name : 'UnknownError'
+      Sentry.captureException(new Error(`${errName}: old branded-cv cleanup failed`), {
+        tags: {
+          layer: 'server-action',
+          action: 'generateBrandedCvAction',
+          subop: 'cleanup-old',
+          candidate_id: candidateId,
+        },
+      })
+    }
+  }
+
+  await createActivity(supabase, {
+    kind: 'system',
+    entity_type: 'candidate',
+    entity_id: candidateId,
+    body: 'Branded CV generated',
+    actor_user_id: user.id,
+  })
+
+  revalidatePath('/candidates/[id]', 'page')
+  return { ok: true }
 }
 
 // ---------------------------------------------------------------------------
