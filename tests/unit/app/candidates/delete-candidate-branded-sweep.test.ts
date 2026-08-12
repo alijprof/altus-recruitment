@@ -104,6 +104,11 @@ vi.mock('@/lib/cv/parse-messages', () => ({
   isUploadIncomplete: vi.fn(() => false),
 }))
 vi.mock('@/lib/db/activities', () => ({ createActivity: vi.fn() }))
+// Phase 8 review WR-06: generateBrandedCvAction now imports recordExportAudit
+// (src/lib/db/audit.ts, which itself imports 'server-only') — mocked here
+// purely so this file's actions.ts import graph resolves; this spec never
+// exercises generateBrandedCvAction itself.
+vi.mock('@/lib/db/audit', () => ({ recordExportAudit: vi.fn() }))
 vi.mock('@/lib/db/candidate-branded-cvs', () => ({ upsertBrandedCv: vi.fn() }))
 vi.mock('@/lib/db/candidate-cvs', () => ({
   createCandidateCV: vi.fn(),

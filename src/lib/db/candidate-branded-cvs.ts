@@ -56,7 +56,10 @@ export type BrandedCvState =
 type UntypedTableClient = {
   from: (table: string) => {
     select: (cols: string) => {
-      eq: (col: string, val: string) => {
+      eq: (
+        col: string,
+        val: string,
+      ) => {
         maybeSingle: () => Promise<{ data: unknown; error: unknown }>
       }
     }
@@ -309,7 +312,11 @@ async function updateExisting(
     return {
       ok: false,
       code: 'internal',
-      detail: failureDetail(updateError, 'candidate_branded_cvs.update', Object.keys(updatePayload)),
+      detail: failureDetail(
+        updateError,
+        'candidate_branded_cvs.update',
+        Object.keys(updatePayload),
+      ),
     }
   }
 

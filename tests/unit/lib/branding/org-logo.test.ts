@@ -61,9 +61,7 @@ beforeEach(() => {
 describe('buildOrgLogoPath', () => {
   it('returns {orgId}/logo-{uuid}.{ext} — org id first, no client filename', () => {
     const path = buildOrgLogoPath(ORG_ID, 'png')
-    expect(path).toMatch(
-      /^11111111-1111-4111-8111-111111111111\/logo-[0-9a-f-]{36}\.png$/,
-    )
+    expect(path).toMatch(/^11111111-1111-4111-8111-111111111111\/logo-[0-9a-f-]{36}\.png$/)
   })
 
   it('honours the ext parameter for jpg', () => {

@@ -240,3 +240,53 @@ This VERIFICATION/SUMMARY pair is intentionally marked PARTIAL, mirroring
 07-08's precedent. `STATE.md`, `ROADMAP.md`, and `REQUIREMENTS.md` are NOT
 being updated by this run — that remains for the orchestrator once the code
 review, the post-deploy smoke execution, and founder UAT all land.
+
+## Addendum (2026-08-12) — WR-07 correction: prettier scope was 08-09's own diff, not the whole phase
+
+Review finding WR-07 (`08-REVIEW.md`) is correct: the "`pnpm exec prettier
+--check` on every file this phase touched" heading at line 164 above
+overclaims. The command it documents (line 167) checks only the two files
+08-09 itself touched (`branded-cv.smoke.ts`, `playwright.smoke-auth.config.ts`)
+— not the phase-wide diff from plans 08-01 through 08-08. Re-running
+`prettier --check` across the FULL phase 8 diff (`git diff --name-only
+a3cf005662799560825efdb6a2ef7851e8f5c5e6 HEAD`, excluding vendored `.ttf`/
+`LICENSE.txt` font files) reported 14 files out of style, matching WR-07's
+count exactly:
+
+```
+[warn] src/app/(app)/candidates/[id]/branded-cv-panel.tsx
+[warn] src/app/(app)/candidates/[id]/page.tsx
+[warn] src/app/(app)/settings/branding/branding-form.tsx
+[warn] src/app/(app)/settings/branding/logo-upload-field.tsx
+[warn] src/lib/admin/org-erasure.ts
+[warn] src/lib/db/candidate-branded-cvs.ts
+[warn] src/lib/pdf/branded-cv-document.tsx
+[warn] tests/unit/app/candidates/generate-branded-cv-action.test.ts
+[warn] tests/unit/app/settings/org-logo-actions.test.ts
+[warn] tests/unit/lib/admin/org-erasure-coverage.test.ts
+[warn] tests/unit/lib/branding/org-logo.test.ts
+[warn] tests/unit/lib/db/candidate-branded-cvs.test.ts
+[warn] tests/unit/lib/pdf/branded-cv-document.test.ts
+[warn] tests/unit/supabase/phase8-migrations.test.ts
+```
+
+This is drift accumulated across plans 08-01 through 08-08 (each individual
+plan's own verification checked only its own touched files — the same
+narrow-scope pattern this addendum is correcting), not a new class of
+problem: the repo-wide `pnpm format:check` baseline was already non-clean
+before Phase 8 (252 files, per WR-07). Fixed by running `pnpm exec prettier
+--write` across the phase-wide file list above (whitespace/class-ordering
+only — confirmed via `git diff` on each file, no logic change) as part of
+the 08-REVIEW.md fix-first pass. Re-running `prettier --check` on the same
+phase-wide list afterward: `All matched files use Prettier code style!`.
+Full gate re-run (`pnpm typecheck`, `pnpm lint`, `pnpm exec vitest run`)
+after the formatting pass: all green, see `08-REVIEW.md`'s "Fixes applied"
+section for the consolidated results.
+
+**Corrected scope statement:** the prettier claim in Task 2 above (lines
+109-196) is accurate for its OWN documented scope (08-09's touched files),
+which is what the "on every file this phase touched" heading should have
+said "on the files this PLAN (08-09) touched" instead. It was never a claim
+about the other 8 plans' files, but the heading read as if it were — that
+ambiguity is what WR-07 flags, and this addendum plus the phase-wide
+`prettier --write` pass close it.

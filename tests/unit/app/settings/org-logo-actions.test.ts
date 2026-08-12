@@ -352,7 +352,11 @@ describe('removeOrgLogoAction', () => {
   it('is a no-op remove when there was no prior logo (nothing to delete)', async () => {
     getOrganizationMock.mockResolvedValue({
       ok: true,
-      data: { id: ORG_ID, logo_storage_path: null, logo_url: 'https://legacy.example.test/logo.png' },
+      data: {
+        id: ORG_ID,
+        logo_storage_path: null,
+        logo_url: 'https://legacy.example.test/logo.png',
+      },
     })
     const { removeOrgLogoAction } = await importActions()
 

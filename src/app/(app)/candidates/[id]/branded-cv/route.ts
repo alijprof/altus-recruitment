@@ -80,9 +80,9 @@ export async function GET(
   // cross-tenant candidate id surfaces as `not_found`, which IS the tenancy
   // barrier. A missing row and a missing table (pre-migration deploy) ALSO
   // surface as `not_found` (the helper's own isMissingTableError branch) —
-  // every failure below collapses to the same bare 404, so this route can't
-  // be used as an existence oracle for another org's data OR for whether
-  // this feature has shipped yet on this database.
+  // every EXISTENCE failure below collapses to the same bare 404, so this
+  // route can't be used as an existence oracle for another org's data OR for
+  // whether this feature has shipped yet on this database.
   //
   // Unlike cv-file/[cvId]/route.ts there is no separate "candidate id in the
   // path must be the row's own" check: the table is keyed 1:1 on
@@ -91,8 +91,25 @@ export async function GET(
   // no isCvFileDownloadable equivalent — a row only exists once a PDF has
   // actually been stored, so "no row" already covers the not-generated-yet
   // case.
+  //
+  // Phase 8 review WR-05: `code: 'internal'` is a REAL Postgres/PostgREST
+  // fault (already Sentry-captured inside getBrandedCvForCandidate) — not an
+  // existence signal. Folding it into the same bare 404 as "no row" or
+  // "cross-tenant" told the recruiter their document was gone when the
+  // database merely hiccupped. Handled the same way a failed sign already
+  // is below: a generic 502, identical for any candidate id (leaks nothing),
+  // never `notFound()`.
   const brandedResult = await getBrandedCvForCandidate(supabase, candidateId)
   if (!brandedResult.ok) {
+    if (brandedResult.code === 'internal') {
+      return new NextResponse(SIGN_FAILED_COPY, {
+        status: 502,
+        headers: {
+          'content-type': 'text/plain; charset=utf-8',
+          'cache-control': 'no-store',
+        },
+      })
+    }
     notFound()
   }
   const brandedCv = brandedResult.data

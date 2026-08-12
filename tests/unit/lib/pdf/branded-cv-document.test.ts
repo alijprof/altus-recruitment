@@ -113,7 +113,9 @@ async function extractMergedText(buffer: Buffer): Promise<string> {
   return normaliseWhitespace(text)
 }
 
-async function extractPerPageText(buffer: Buffer): Promise<{ totalPages: number; pages: string[] }> {
+async function extractPerPageText(
+  buffer: Buffer,
+): Promise<{ totalPages: number; pages: string[] }> {
   const pdfDocument = await getDocumentProxy(toUint8Array(buffer))
   const { text, totalPages } = await extractText(pdfDocument)
   return { totalPages, pages: text.map(normaliseWhitespace) }
@@ -141,7 +143,7 @@ describe('renderBrandedCv — full fixture (BCV-02 content + BCV-03 contact-stri
     }
   })
 
-  it('extracted text does NOT contain the source candidate row\'s email, phone or salary values (raw-bytes pin, the stronger check)', async () => {
+  it("extracted text does NOT contain the source candidate row's email, phone or salary values (raw-bytes pin, the stronger check)", async () => {
     const buffer = await renderBrandedCv(FULL_FIXTURE_DATA, { ...ORG_BRANDING, logo: null })
 
     const text = await extractMergedText(buffer)
@@ -268,22 +270,25 @@ describe('renderBrandedCv — colour safety (T-08-18, safeHex fallback)', () => 
 describe('WRITE_PDF_SAMPLES — founder-review sample generation (Task 3)', () => {
   const shouldWrite = process.env.WRITE_PDF_SAMPLES === '1'
 
-  it.runIf(shouldWrite)('writes sample-with-logo.pdf and sample-no-logo.pdf from the full fixture', async () => {
-    const outDir = join(process.cwd(), 'playwright-report', 'branded-cv-samples')
-    await mkdir(outDir, { recursive: true })
+  it.runIf(shouldWrite)(
+    'writes sample-with-logo.pdf and sample-no-logo.pdf from the full fixture',
+    async () => {
+      const outDir = join(process.cwd(), 'playwright-report', 'branded-cv-samples')
+      await mkdir(outDir, { recursive: true })
 
-    const withLogo = await renderBrandedCv(FULL_FIXTURE_DATA, {
-      ...ORG_BRANDING,
-      logo: { data: TINY_PNG_BYTES, format: 'png' },
-    })
-    const noLogo = await renderBrandedCv(FULL_FIXTURE_DATA, { ...ORG_BRANDING, logo: null })
+      const withLogo = await renderBrandedCv(FULL_FIXTURE_DATA, {
+        ...ORG_BRANDING,
+        logo: { data: TINY_PNG_BYTES, format: 'png' },
+      })
+      const noLogo = await renderBrandedCv(FULL_FIXTURE_DATA, { ...ORG_BRANDING, logo: null })
 
-    await writeFile(join(outDir, 'sample-with-logo.pdf'), withLogo)
-    await writeFile(join(outDir, 'sample-no-logo.pdf'), noLogo)
+      await writeFile(join(outDir, 'sample-with-logo.pdf'), withLogo)
+      await writeFile(join(outDir, 'sample-no-logo.pdf'), noLogo)
 
-    expect(withLogo.subarray(0, 5).toString('latin1')).toBe('%PDF-')
-    expect(noLogo.subarray(0, 5).toString('latin1')).toBe('%PDF-')
-  })
+      expect(withLogo.subarray(0, 5).toString('latin1')).toBe('%PDF-')
+      expect(noLogo.subarray(0, 5).toString('latin1')).toBe('%PDF-')
+    },
+  )
 
   it.skipIf(shouldWrite)('sample generation skipped (set WRITE_PDF_SAMPLES=1 to generate)', () => {
     expect(true).toBe(true)

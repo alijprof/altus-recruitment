@@ -8,11 +8,14 @@
  * assertion style, ported for the single path segment and the by-candidate
  * lookup.
  *
- * Coverage (the seven behaviours pinned by 08-08-PLAN.md Task 1):
+ * Coverage (the seven behaviours pinned by 08-08-PLAN.md Task 1, plus review
+ * WR-05):
  *   1. a non-uuid `id` segment 404s without touching auth or the database
  *   2. an unauthenticated request redirects to /sign-in
  *   3. a missing row, a cross-tenant candidate id, and a missing table all
  *      404 identically and mint nothing (no existence oracle)
+ *   3a. (WR-05) a genuine internal DB fault from getBrandedCvForCandidate
+ *      returns 502, NOT 404 — an internal fault is not an existence signal
  *   4. a failed sign returns 502, captures a PII-FREE Sentry event, files no
  *      audit row
  *   5. the happy path 302s to the signed URL with cache-control: no-store
@@ -146,6 +149,23 @@ describe('GET /candidates/[id]/branded-cv', () => {
     const { GET } = await importRoute()
 
     await expect(GET(request, call())).rejects.toThrow('TEST_NOT_FOUND')
+    expect(createSignedUrlMock).not.toHaveBeenCalled()
+    expect(recordExportAuditMock).not.toHaveBeenCalled()
+  })
+
+  it('502s (not 404) when getBrandedCvForCandidate reports a genuine internal DB fault (WR-05)', async () => {
+    // A real Postgres/PostgREST fault, already Sentry-captured inside the
+    // helper itself — distinct from `not_found` (missing row, cross-tenant,
+    // or missing table). The route must not tell the recruiter their
+    // document is gone when the database merely hiccupped.
+    getBrandedCvForCandidateMock.mockResolvedValue({ ok: false, code: 'internal' })
+    const { GET } = await importRoute()
+
+    const response = await GET(request, call())
+
+    expect(response.status).toBe(502)
+    expect(response.headers.get('cache-control')).toBe('no-store')
+    expect(await response.text()).toMatch(/open this file/i)
     expect(createSignedUrlMock).not.toHaveBeenCalled()
     expect(recordExportAuditMock).not.toHaveBeenCalled()
   })

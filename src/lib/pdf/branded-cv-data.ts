@@ -15,7 +15,10 @@
 //     Research Assumption A1 Reading B, CONFIRMED by the founder.
 //   EXCLUDED (deliberate allowlist, not an oversight): salary_current_estimate,
 //     salary_expectation, currency — commercially sensitive negotiating
-//     information that must never reach a client-facing document.
+//     information that is excluded from the structured fields below. Free
+//     text (headline/about) is NOT scrubbed for salary/rate mentions — see
+//     BRANDED_CV_FREE_TEXT_WARNING; that is the recruiter's responsibility,
+//     not an absolute guarantee this module makes (review WR-04).
 //   NOT SCRUBBED: free text in headline/about. A regex scrubber's false
 //     positives mangle legitimate recruiter-authored content and its false
 //     negatives create false confidence — see BRANDED_CV_FREE_TEXT_WARNING
@@ -63,18 +66,26 @@ export type BrandedCvData = {
   education: BrandedEducationEntry[]
 }
 
-// Shown at the Generate control. Contact fields are removed automatically,
-// but free text (headline/about) is recruiter- or candidate-authored prose
-// that could, in principle, contain a phone number or email typed directly
-// into it. This module deliberately does NOT attempt regex scrubbing of
-// free text: false positives (a UK-phone-shaped reference number, a
-// postcode-shaped substring) would mangle legitimate content the recruiter
-// wrote deliberately, and false negatives create false confidence — a
-// scrubber that catches 90% of patterns is worse than no scrubber, because
-// it invites trusting an unverified guarantee. This mirrors the project's
-// "recruiter judgment, not automation" posture for anything subjective.
+// Shown at the Generate control. Contact fields AND salary columns are
+// removed automatically, but free text (headline/about) is recruiter- or
+// candidate-authored prose that could, in principle, contain a phone number,
+// email, day rate or salary figure typed directly into it — a CV parsed by
+// Haiku routinely puts rate/salary history into the summary. This module
+// deliberately does NOT attempt regex scrubbing of free text: false
+// positives (a UK-phone-shaped reference number, a postcode-shaped
+// substring, a project budget that reads like a salary) would mangle
+// legitimate content the recruiter wrote deliberately, and false negatives
+// create false confidence — a scrubber that catches 90% of patterns is worse
+// than no scrubber, because it invites trusting an unverified guarantee.
+// This mirrors the project's "recruiter judgment, not automation" posture
+// for anything subjective.
+//
+// Phase 8 review WR-04: the previous copy named only "a phone number or
+// email" — the one mitigation this design relies on didn't mention the
+// salary/day-rate risk the module header comment claimed was absolute.
+// Widened to name all four categories explicitly.
 export const BRANDED_CV_FREE_TEXT_WARNING =
-  'Contact fields are removed automatically. Check the headline and summary text yourself before sending — a recruiter or candidate can type a phone number or email into prose.'
+  'Contact fields and salary columns are removed automatically. Check the headline and summary yourself before sending — a phone number, email, day rate or salary typed into prose is not removed.'
 
 const MAX_NAME_LENGTH = 120
 const MAX_HEADLINE_LENGTH = 200

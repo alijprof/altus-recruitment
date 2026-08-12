@@ -49,13 +49,7 @@ function FieldRow({ label, value }: { label: string; value: React.ReactNode }) {
   )
 }
 
-function FieldGroup({
-  heading,
-  children,
-}: {
-  heading: string
-  children: React.ReactNode
-}) {
+function FieldGroup({ heading, children }: { heading: string; children: React.ReactNode }) {
   return (
     <section className="bg-card space-y-3 rounded-md border p-4">
       <h2 className="text-sm font-semibold">{heading}</h2>
@@ -67,7 +61,10 @@ function FieldGroup({
 
 // Format a salary value with its currency. Returns null for empty so the
 // FieldRow component renders its "—" placeholder.
-function formatSalary(value: number | null | undefined, currency: string | null | undefined): string | null {
+function formatSalary(
+  value: number | null | undefined,
+  currency: string | null | undefined,
+): string | null {
   if (value == null) return null
   const code = currency && currency.length > 0 ? currency : 'GBP'
   try {
@@ -123,11 +120,7 @@ function parseEducation(raw: unknown): EducationEntry[] {
     .filter((e): e is EducationEntry => e !== null)
 }
 
-export default async function CandidateDetailPage({
-  params,
-}: {
-  params: Promise<{ id: string }>
-}) {
+export default async function CandidateDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
   const supabase = await createClient()
 
@@ -138,7 +131,7 @@ export default async function CandidateDetailPage({
   if (!candidateResult.ok) {
     if (candidateResult.code === 'not_found') notFound()
     return (
-      <div className="text-destructive rounded-md border border-destructive/40 bg-destructive/5 p-6 text-sm">
+      <div className="text-destructive border-destructive/40 bg-destructive/5 rounded-md border p-6 text-sm">
         Couldn&apos;t load this candidate. Please refresh.
       </div>
     )
@@ -173,18 +166,17 @@ export default async function CandidateDetailPage({
   // Activities — best-effort. If this errors we still render the page so the
   // user can fix things rather than facing a 500.
   const activitiesResult = await listCandidateActivities(supabase, id)
-  const activityEntries: ActivityEntry[] =
-    activitiesResult.ok
-      ? activitiesResult.data.map((a) => ({
-          id: a.id,
-          kind: a.kind,
-          body: a.body,
-          occurred_at: a.occurred_at,
-          actor_user_id: a.actor_user_id,
-          actor: a.actor ?? null,
-          metadata: a.metadata ?? null,
-        }))
-      : []
+  const activityEntries: ActivityEntry[] = activitiesResult.ok
+    ? activitiesResult.data.map((a) => ({
+        id: a.id,
+        kind: a.kind,
+        body: a.body,
+        occurred_at: a.occurred_at,
+        actor_user_id: a.actor_user_id,
+        actor: a.actor ?? null,
+        metadata: a.metadata ?? null,
+      }))
+    : []
 
   // Check for any voice note in ready_for_review status — drives the amber
   // badge dot on the VoiceNoteButton. Best-effort; badge is hidden on error.
@@ -198,7 +190,11 @@ export default async function CandidateDetailPage({
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <Button variant="link" asChild className="text-muted-foreground -ml-3 h-auto p-0 text-xs font-normal">
+        <Button
+          variant="link"
+          asChild
+          className="text-muted-foreground -ml-3 h-auto p-0 text-xs font-normal"
+        >
           <Link href="/candidates">← All candidates</Link>
         </Button>
         <div className="flex gap-2">
@@ -220,10 +216,7 @@ export default async function CandidateDetailPage({
         <div className="space-y-6 lg:col-span-2">
           <LogActivityForm candidateId={candidate.id} />
 
-          <CandidateApplications
-            candidateId={candidate.id}
-            applications={applications}
-          />
+          <CandidateApplications candidateId={candidate.id} applications={applications} />
 
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <FieldGroup heading="Contact">
@@ -260,18 +253,15 @@ export default async function CandidateDetailPage({
                 label="Seniority"
                 value={
                   candidate.seniority_level
-                    ? candidate.seniority_level
-                        .charAt(0)
-                        .toUpperCase() + candidate.seniority_level.slice(1)
+                    ? candidate.seniority_level.charAt(0).toUpperCase() +
+                      candidate.seniority_level.slice(1)
                     : null
                 }
               />
               <FieldRow
                 label="Years experience"
                 value={
-                  candidate.years_experience != null
-                    ? String(candidate.years_experience)
-                    : null
+                  candidate.years_experience != null ? String(candidate.years_experience) : null
                 }
               />
               <FieldRow label="Source" value={SOURCE_LABEL[candidate.source] ?? candidate.source} />
@@ -323,9 +313,7 @@ export default async function CandidateDetailPage({
             <section className="bg-card space-y-2 rounded-md border p-4">
               <h2 className="text-sm font-semibold">About</h2>
               <Separator />
-              <p className="text-sm leading-relaxed whitespace-pre-wrap">
-                {candidate.about}
-              </p>
+              <p className="text-sm leading-relaxed whitespace-pre-wrap">{candidate.about}</p>
             </section>
           ) : null}
 
@@ -412,8 +400,8 @@ export default async function CandidateDetailPage({
             candidate.work_experience.length === 0 ? (
               <p className="text-muted-foreground text-xs leading-relaxed">
                 Tip: from this candidate&apos;s LinkedIn profile, click{' '}
-                <span className="font-medium">More → Save to PDF</span>, then drop
-                that PDF here to import full work history, education, and skills.
+                <span className="font-medium">More → Save to PDF</span>, then drop that PDF here to
+                import full work history, education, and skills.
               </p>
             ) : null}
             <CvUpload candidateId={candidate.id} />

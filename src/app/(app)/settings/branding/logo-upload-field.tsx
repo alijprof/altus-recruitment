@@ -6,6 +6,16 @@ import { useRouter } from 'next/navigation'
 import { useRef, useState, useTransition } from 'react'
 import { toast } from 'sonner'
 
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -52,6 +62,14 @@ export function LogoUploadField({
   const [clientError, setClientError] = useState<string | null>(null)
   const [isUploadPending, startUploadTransition] = useTransition()
   const [isRemovePending, startRemoveTransition] = useTransition()
+  // Phase 8 review WR-03: Remove is a one-click, permanent destruction of
+  // whatever logo pointer is currently set — for a legacy pasted-URL logo,
+  // there is no surface anywhere in the app (since 08-06) that can set
+  // logo_url again, so a mis-click loses the org's apply-page branding
+  // permanently, recoverable only by a manual SQL update. Gate it behind a
+  // confirmation, same pattern as CandidateDeleteButton for an equally
+  // irreversible act.
+  const [isConfirmOpen, setIsConfirmOpen] = useState(false)
 
   const resetFileInput = () => {
     setFile(null)
@@ -107,7 +125,7 @@ export function LogoUploadField({
     })
   }
 
-  const handleRemove = () => {
+  const confirmRemove = () => {
     if (!isOwner) return
     startRemoveTransition(async () => {
       try {
@@ -115,6 +133,7 @@ export function LogoUploadField({
         if (result.ok) {
           toast.success('Logo removed')
           resetFileInput()
+          setIsConfirmOpen(false)
           router.refresh()
           return
         }
@@ -126,6 +145,7 @@ export function LogoUploadField({
       } catch (err) {
         console.error('Logo remove failed:', err)
         toast.error(err instanceof Error ? err.message : "Couldn't remove the logo")
+        // Do NOT close the dialog on failure — let the owner retry or cancel.
       }
     })
   }
@@ -158,13 +178,47 @@ export function LogoUploadField({
             type="button"
             variant="outline"
             size="sm"
-            onClick={handleRemove}
+            onClick={() => setIsConfirmOpen(true)}
             disabled={isPending}
           >
             {isRemovePending ? 'Removing…' : 'Remove'}
           </Button>
         ) : null}
       </div>
+
+      <AlertDialog
+        open={isConfirmOpen}
+        onOpenChange={(next) => {
+          if (!next && !isRemovePending) setIsConfirmOpen(false)
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Remove your logo?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {isLegacyUrl
+                ? "This will clear the logo URL you pasted previously — it can't be restored " +
+                  'from here. Your apply page and branded CVs will show your organisation name ' +
+                  'instead until you upload a new logo file.'
+                : "This clears your logo from the apply page and future branded CVs. It can't " +
+                  'be undone from here — you can always upload a new file afterwards.'}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isRemovePending}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={isRemovePending}
+              onClick={(e) => {
+                e.preventDefault()
+                confirmRemove()
+              }}
+              className="bg-destructive hover:bg-destructive/90 text-white"
+            >
+              {isRemovePending ? 'Removing…' : 'Remove logo'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       {isOwner ? (
         <div className="space-y-2">
@@ -194,8 +248,8 @@ export function LogoUploadField({
             </p>
           ) : (
             <p className="text-muted-foreground text-xs font-normal">
-              PNG or JPEG, up to 2 MB. A wide, landscape logo works best. SVG isn&apos;t supported
-              — it can&apos;t be embedded in the branded PDF.
+              PNG or JPEG, up to 2 MB. A wide, landscape logo works best. SVG isn&apos;t supported —
+              it can&apos;t be embedded in the branded PDF.
             </p>
           )}
         </div>
@@ -211,8 +265,8 @@ export function LogoUploadField({
           />
           <p>
             This logo is a pasted external URL — it still appears on your apply page, but it will{' '}
-            <strong className="font-semibold">not</strong> appear on branded CVs until you upload
-            a file here.
+            <strong className="font-semibold">not</strong> appear on branded CVs until you upload a
+            file here.
           </p>
         </div>
       ) : null}

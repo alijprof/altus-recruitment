@@ -20,7 +20,7 @@ import { extractText, getDocumentProxy } from 'unpdf'
 import type { MockInstance } from 'vitest'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { BRANDED_CV_FONT_FAMILY } from '@/lib/pdf/register-fonts'
+import { BRANDED_CV_FONT_FAMILY, ensureBrandedCvFonts } from '@/lib/pdf/register-fonts'
 
 const styles = StyleSheet.create({
   page: { fontFamily: BRANDED_CV_FONT_FAMILY, padding: 24 },
@@ -61,6 +61,11 @@ describe('branded CV render foundation', () => {
   it('renders a real PDF with £/diacritic glyphs intact, fast, with zero network I/O', async () => {
     const startedAt = Date.now()
 
+    // Phase 8 review WR-01: font registration is lazy (register-fonts.ts),
+    // triggered in production by `renderBrandedCv` — this test drives
+    // `renderToBuffer` directly, bypassing that call, so it must register
+    // fonts itself. `ensureBrandedCvFonts` is idempotent.
+    ensureBrandedCvFonts()
     const pdfBuffer = await renderToBuffer(buildDocument())
 
     const elapsedMs = Date.now() - startedAt

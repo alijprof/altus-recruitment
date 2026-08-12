@@ -189,9 +189,7 @@ export function BrandingForm({
               </Button>
             </div>
           ) : (
-            <p className="text-muted-foreground text-xs">
-              Only owners can edit branding settings.
-            </p>
+            <p className="text-muted-foreground text-xs">Only owners can edit branding settings.</p>
           )}
         </form>
       </Form>
