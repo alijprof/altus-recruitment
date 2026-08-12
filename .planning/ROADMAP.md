@@ -41,7 +41,7 @@ Full phase details: [milestones/v1.0-ROADMAP.md](milestones/v1.0-ROADMAP.md)
 **Goal:** Every CV upload either parses successfully or fails immediately with an honest, actionable message — no third outcome — proven by a permanent synthetic fixture corpus, a three-layer regression harness (extraction unit, real-Postgres write-path integration, live spot-check), and all 12 of the customer's failed 5-6 Aug uploads re-parsing to complete with populated profiles.
 **Requirements**: [CVI-01, CVI-02, CVI-03, CVI-04, CVI-05, CVI-06, CVI-07, CVI-08, CVI-09]
 **Depends on:** Phase 5
-**Plans:** 4/10 plans executed
+**Plans:** 10/10 plans executed — phase closed 2026-08-10 (06-CLOSURE.md)
 
 Requirements:
 
@@ -60,20 +60,20 @@ Plans:
 - [x] 06-01-PLAN.md — Harness scaffolding, jszip dependency gate, Postgres-legality classifier (wave 1)
 - [x] 06-02-PLAN.md — Read-only forensic replay of the 12 production failures (wave 2)
 - [x] 06-03-PLAN.md — Fixture corpus: generator, Tier-1/Tier-2/hostile binaries, manifest (wave 2)
-- [ ] 06-04-PLAN.md — Layer 1: manifest-driven extraction suite + PII tripwire (wave 3)
+- [x] 06-04-PLAN.md — Layer 1: manifest-driven extraction suite + PII tripwire (wave 3)
 - [x] 06-05-PLAN.md — Layer 2: real-Supabase write-path harness + the six RED tests (wave 3)
-- [ ] 06-06-PLAN.md — Fix the write boundary: zod coercion + Postgres sanitiser + wiring (wave 4)
-- [ ] 06-07-PLAN.md — Honest async failures: SQLSTATE detail, type-specific messages, no doomed retry (wave 5)
-- [ ] 06-08-PLAN.md — Upload-time rejection: magic-byte sniff on both intake paths (wave 6)
-- [ ] 06-09-PLAN.md — Verification gate: full green, code review, browser pre-smoke + layer-3 spot-check (wave 7)
-- [ ] 06-10-PLAN.md — Customer closure: retry the 12, founder handoff, permanent runbook (wave 8)
+- [x] 06-06-PLAN.md — Fix the write boundary: zod coercion + Postgres sanitiser + wiring (wave 4)
+- [x] 06-07-PLAN.md — Honest async failures: SQLSTATE detail, type-specific messages, no doomed retry (wave 5)
+- [x] 06-08-PLAN.md — Upload-time rejection: magic-byte sniff on both intake paths (wave 6)
+- [x] 06-09-PLAN.md — Verification gate: full green, code review, browser pre-smoke + layer-3 spot-check (wave 7)
+- [x] 06-10-PLAN.md — Customer closure: retry the 12, founder handoff, permanent runbook (wave 8)
 
 ### Phase 7: CV Lifecycle & Trust — make stored CVs visible/downloadable with version history, proactively flag low-confidence parsed fields, full editing of AI-parsed fields with re-embed-on-change, match-score backfill + auto-freshness, and background-job hardening (cron timeouts + heartbeats)
 
 **Goal:** The CV data the customer already trusts us with becomes visible, correctable and trustworthy — every stored CV file is viewable and downloadable with its version history and an audit trail, low-confidence parsed fields are flagged before the recruiter has to go looking, every AI-parsed field is editable in-app with correct embedding invalidation, every application carries a match score, and a wedged background job can no longer block the queue for days unnoticed.
 **Requirements**: [CLT-01, CLT-02, CLT-03, CLT-04, CLT-05, CLT-06, CLT-07, CLT-08]
 **Depends on:** Phase 6
-**Plans:** 1/8 plans executed
+**Plans:** 8/8 plans executed — executed + hotfixed 2026-08-11, prod-smoked (lifecycle 7/7); founder UAT pending
 
 Requirements:
 
@@ -88,17 +88,14 @@ Requirements:
 
 Plans:
 
-- [ ] 07-01-PLAN.md — CV file access: signed-URL action, export audit, CV files section (wave 1)
-- [ ] 07-02-PLAN.md — Proactive low-confidence flagging on the Latest CV panel (wave 2)
+- [x] 07-01-PLAN.md — CV file access: signed-URL action, export audit, CV files section (wave 1)
+- [x] 07-02-PLAN.md — Proactive low-confidence flagging on the Latest CV panel (wave 2)
 - [x] 07-03-PLAN.md — Parsed-field editing: schema, action, and the embedding-invalidation contract test (wave 1)
-- [ ] 07-04-PLAN.md — Parsed-field editing: tag input, repeating-row editors, expanded edit form (wave 2)
+- [x] 07-04-PLAN.md — Parsed-field editing: tag input, repeating-row editors, expanded edit form (wave 2)
 - [x] 07-05-PLAN.md — Cron hardening: function timeouts, Sentry heartbeats, monitoring runbook (wave 1)
-- [ ] 07-06-PLAN.md — Match-score backfill sweep + super-admin trigger (wave 1)
-- [x] 07-07-PLAN.md — Match freshness: self-refreshing Explain + `Score all` (wave 1)
-- [ ] 07-05-PLAN.md — Cron hardening: function timeouts, Sentry heartbeats, monitoring runbook (wave 1)
 - [x] 07-06-PLAN.md — Match-score backfill sweep + super-admin trigger (wave 1)
-- [ ] 07-07-PLAN.md — Match freshness: self-refreshing Explain + `Score all` (wave 1)
-- [ ] 07-08-PLAN.md — Acceptance gate: full gates, code review, authed browser pre-smoke (wave 3)
+- [x] 07-07-PLAN.md — Match freshness: self-refreshing Explain + `Score all` (wave 1)
+- [x] 07-08-PLAN.md — Acceptance gate: full gates, code review, authed browser pre-smoke (wave 3) (gates + review + prod smoke complete; Task 4 founder UAT open)
 
 **Design note:** This phase needs NO migration — `export` already exists in the
 `audit_action` enum (migration 20260513152244:77), and the
@@ -110,4 +107,4 @@ and the newly editable non-search fields correctly do not.
 ---
 
 *Roadmap created: 2026-05-17*
-*Last updated: 2026-08-11 — Phase 7 planned (8 plans, 3 waves)*
+*Last updated: 2026-08-12 — Phases 6-7 executed; Phase 7 awaiting founder UAT*

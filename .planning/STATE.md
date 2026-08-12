@@ -1,21 +1,21 @@
 ---
 gsd_state_version: 1.0
 milestone: v1.0
-milestone_name: milestone
-status: Milestone complete — awaiting next milestone
-last_updated: "2026-08-11T14:17:37.736Z"
+milestone_name: Post-v1.0 hardening (Phases 6-7)
+status: Phase 7 executed + hotfixed + prod-smoked — awaiting founder UAT
+last_updated: "2026-08-12T08:33:30.000Z"
 progress:
   total_phases: 2
-  completed_phases: 0
+  completed_phases: 1
   total_plans: 18
-  completed_plans: 10
-  percent: 0
+  completed_plans: 18
+  percent: 50
 ---
 
 # Project State: Altus — AI-First Recruitment CRM
 
 **Initialized:** 2026-05-17
-**Last updated:** 2026-06-12
+**Last updated:** 2026-08-12
 
 ---
 
@@ -25,19 +25,13 @@ See: .planning/PROJECT.md (updated 2026-06-12 after v1.0 milestone)
 
 **Core value:** A recruiter can find the right candidate for a job in seconds using natural language — backed by AI parsing of every CV, semantic search across the database, and Sonnet-generated match explanations.
 
-**Current focus:** Planning next milestone (`/gsd-new-milestone`). v1.0 (5 phases, 31 plans) is live on altusrecruit.com and archived to `.planning/milestones/`.
+**Current focus:** Phase 7 founder UAT, then `/gsd-new-milestone` to give Phases 6-7 a milestone container.
 
 ---
 
 ## Current Position
 
-**v1.0 SHIPPED 2026-06-12.** All 5 phases complete, verified, and live on production. Roadmap and requirements archived to `.planning/milestones/v1.0-ROADMAP.md` and `v1.0-REQUIREMENTS.md`. Git tag `v1.0`.
-
-```
-Overall:  [====================] 5 of 5 phases complete (100%)
-```
-
-Phase directories remain in `.planning/phases/` as raw execution history — run `/gsd-cleanup` to archive them retroactively.
+**v1.0 SHIPPED 2026-06-12** — all 5 phases complete, verified, and live on production; roadmap and requirements archived to `.planning/milestones/v1.0-ROADMAP.md` and `v1.0-REQUIREMENTS.md`, git tag `v1.0`. Post-v1.0, **Phase 6 (CV Intake Battle-Test & Hardening, 10/10 plans) closed 2026-08-10.** **Phase 7 (CV Lifecycle & Trust, 8/8 plans) executed 2026-08-11** — mechanical code review closed all 24 findings SHIP-CONFIRMED, the View-CV P1 hotfix (route-handler redirect) is live on production at commit `bbdb004`, and the authed lifecycle smoke ran 7/7 green on production. The sole remaining phase gate is founder UAT (07-08 Task 4).
 
 ## Pre-Launch Audit Remediation (2026-06-18)
 
@@ -70,6 +64,12 @@ All 6 go-live blockers from `.planning/audits/PRE-LAUNCH-AUDIT-2026-06-18.md` fi
 - Comp→paid self-serve path for grandfathered orgs (deferred at paywall ship).
 - ADMIN impersonation + audit layer (descoped from v1 per CONTEXT D-14).
 - Voice notes investment frozen pending phone-usage signal (founder feedback 2026-06-11).
+- Founder UAT for Phase 7 (07-08 Task 4) — the only open phase gate.
+- No single recorded all-green run of the full authed smoke suite (all 3 specs, 24 tests): cv-intake 8/8 and cv-lifecycle 7/7 passed in separate runs and `read-only.smoke.ts` has no recorded execution this phase.
+- Founder: create Sentry Metric Alerts for the cron heartbeats per `docs/cron-monitoring.md`.
+- Founder: verify Inngest `timeouts` enforcement on the free plan (`docs/cron-monitoring.md` §7 records it as NOT YET VERIFIED) and decide the Inngest plan — the free-tier step quota was the root cause of the Aug 6-9 outage.
+- Founder: re-key any Sentry saved search or alert from `layer=action` / `helper=getCvFileUrlAction` to `layer=route` / `helper=cvFileRoute`.
+- Run `/gsd-new-milestone` after UAT so Phases 6-7 get a milestone container.
 
 ## Deferred Items
 
