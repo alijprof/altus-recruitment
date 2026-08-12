@@ -1,6 +1,7 @@
 'use client'
 
 import { zodResolver } from '@hookform/resolvers/zod'
+import Link from 'next/link'
 import { useTransition } from 'react'
 import { useForm } from 'react-hook-form'
 import { toast } from 'sonner'
@@ -21,25 +22,24 @@ import { updateOrganizationSchema, type UpdateOrganizationInput } from './schema
 
 export type OrganizationFormProps = {
   initialName: string
-  initialLogoUrl: string | null
   isOwner: boolean
 }
 
-// Phase 1 ships text-only logo_url (per VERIFICATION R2 — the column exists
-// after migration 20260518202000_organizations_logo_url.sql; the
-// Storage-backed upload UI is deferred to Phase 2). Non-owners see the fields
+// Phase 1 shipped a text-only logo_url field here (per VERIFICATION R2 — the
+// column existed after migration 20260518202000_organizations_logo_url.sql).
+// Phase 8 Plan 06 (BCV-04) delivered the real upload UI on
+// /settings/branding and DELIBERATELY removed the logo field from this form
+// — it was the second of two live surfaces writing organizations.logo_url,
+// and an owner pasting a URL here could silently clobber an uploaded logo
+// (08-RESEARCH.md Pitfall 1). This form no longer edits the logo in any way;
+// see the pointer link to Branding below. Non-owners see the name field
 // read-only.
-export function OrganizationForm({
-  initialName,
-  initialLogoUrl,
-  isOwner,
-}: OrganizationFormProps) {
+export function OrganizationForm({ initialName, isOwner }: OrganizationFormProps) {
   const [isPending, startTransition] = useTransition()
   const form = useForm<UpdateOrganizationInput>({
     resolver: zodResolver(updateOrganizationSchema),
     defaultValues: {
       name: initialName,
-      logo_url: initialLogoUrl ?? '',
     },
   })
 
@@ -82,29 +82,13 @@ export function OrganizationForm({
             </FormItem>
           )}
         />
-        <FormField
-          control={form.control}
-          name="logo_url"
-          render={({ field }) => (
-            <FormItem>
-              <FormLabel>Logo URL</FormLabel>
-              <FormControl>
-                <Input
-                  type="url"
-                  placeholder="https://…/logo.png"
-                  {...field}
-                  value={field.value ?? ''}
-                  readOnly={!isOwner}
-                  aria-readonly={!isOwner}
-                />
-              </FormControl>
-              <p className="text-muted-foreground text-xs font-normal">
-                Paste a hosted image URL. Logo upload lands in Phase 2.
-              </p>
-              <FormMessage />
-            </FormItem>
-          )}
-        />
+        <p className="text-muted-foreground text-xs font-normal">
+          Your agency logo is managed in{' '}
+          <Link href="/settings/branding" className="text-foreground underline underline-offset-2">
+            Settings → Branding
+          </Link>
+          .
+        </p>
         {isOwner ? (
           <div className="flex justify-end">
             <Button type="submit" className="h-11 md:h-10" disabled={isPending}>

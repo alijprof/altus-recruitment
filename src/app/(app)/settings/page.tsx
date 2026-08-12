@@ -83,14 +83,13 @@ export default async function SettingsPage() {
           <CardTitle className="text-base font-semibold">Organisation</CardTitle>
           <CardDescription>
             {isOwner
-              ? 'Edit your organisation name and logo URL.'
+              ? 'Edit your organisation name. Logo and colours live in Branding.'
               : 'Organisation settings are managed by your owner.'}
           </CardDescription>
         </CardHeader>
         <CardContent>
           <OrganizationForm
             initialName={organization.ok ? organization.data.name : ''}
-            initialLogoUrl={organization.ok ? organization.data.logo_url : null}
             isOwner={isOwner}
           />
         </CardContent>
