@@ -17,26 +17,44 @@ import { Font } from '@react-pdf/renderer'
 // network dependency the render didn't need to have at all): the render can
 // begin, and fail or silently fall back, before the download resolves
 // (research Pitfall 4). Reading the TTF synchronously from the bundled
-// filesystem at module scope removes the race entirely — the bytes are
-// available before any render call can happen.
+// filesystem removes the race entirely — the bytes are available before any
+// render call can happen.
 
 export const BRANDED_CV_FONT_FAMILY = 'LiberationSans'
 
-// Guard against double registration if this module is evaluated more than
-// once in the same process (e.g. hot reload, or being imported from two
-// different entry points that don't share a module cache in some bundler
-// configurations).
-let registered = false
+// Phase 8 review WR-01: registration is LAZY, invoked from
+// `renderBrandedCv` immediately before `renderToBuffer` — not run as a
+// module-scope side effect. This module sits in the `/candidates/[id]`
+// route's import graph (branded-cv-document.tsx → actions.ts → the page),
+// so a module-scope `readFileSync` that throws (e.g. a packaging regression
+// silently excluding the fonts from the deployed bundle) would fail the
+// import of the WHOLE route module — the candidate detail page, CV review
+// panel, activity log and candidate delete would all 500 together for users
+// who never touch branded CVs. Calling this lazily means a font-packaging
+// regression costs only the branded-CV feature: it throws inside
+// `generateBrandedCvAction`'s existing try/catch (actions.ts), which already
+// captures to Sentry (PII-free) and shows a friendly error, instead of
+// taking down the whole page at cold start.
+//
+// The flag below is a REAL once-per-process guard now (not the dead code
+// the pre-WR-01 module-scope version had — a module body only runs once per
+// instantiation, so `if (!registered)` at module scope could never observe
+// `true` on entry). Calling `ensureBrandedCvFonts()` twice in the same
+// render, or across multiple renders in the same warm Lambda, is now a
+// legitimate no-op after the first call.
+let fontsReady = false
 
-if (!registered) {
+export function ensureBrandedCvFonts(): void {
+  if (fontsReady) return
+
   const regularPath = join(process.cwd(), 'src/lib/pdf/fonts/LiberationSans-Regular.ttf')
   const boldPath = join(process.cwd(), 'src/lib/pdf/fonts/LiberationSans-Bold.ttf')
 
-  // Read (and discard) the bytes here purely to fail FAST and LOUD at
-  // module load if the vendored TTFs are missing from the deployed bundle
-  // (see the outputFileTracingIncludes comment in next.config.ts). This
-  // throws a clear ENOENT at cold start instead of deferring to an obscure
-  // fontkit error the first time a PDF is actually generated.
+  // Read (and discard) the bytes here purely to fail FAST and LOUD if the
+  // vendored TTFs are missing from the deployed bundle (see the
+  // outputFileTracingIncludes comment in next.config.ts). This throws a
+  // clear ENOENT at render time instead of deferring to an obscure fontkit
+  // error the first time @react-pdf actually tries to lay out text.
   //
   // The installed @react-pdf/renderer 4.6.0 (@react-pdf/font 4.0.9) does
   // NOT support passing the Buffer itself as `Font.register`'s `src` —
@@ -65,5 +83,5 @@ if (!registered) {
   // Disabling it means a word either fits on the line or wraps whole.
   Font.registerHyphenationCallback((word) => [word])
 
-  registered = true
+  fontsReady = true
 }

@@ -20,8 +20,6 @@
 // from `@/lib/supabase`, `@/lib/db`, or `next/*` — it is a pure function of
 // its two arguments (data, branding) → PDF bytes.
 
-import './register-fonts' // side effect: registers BRANDED_CV_FONT_FAMILY before any render happens
-
 import {
   Document,
   Image,
@@ -34,7 +32,7 @@ import {
 
 import { BRAND_DEFAULTS, safeHex } from '@/lib/branding/colours'
 import type { BrandedCvData } from '@/lib/pdf/branded-cv-data'
-import { BRANDED_CV_FONT_FAMILY } from '@/lib/pdf/register-fonts'
+import { BRANDED_CV_FONT_FAMILY, ensureBrandedCvFonts } from '@/lib/pdf/register-fonts'
 
 // The branding contract THIS file defines; 08-07 (the delivery/generation
 // Server Action) must satisfy it. `logo` is BYTES by design — the renderer
@@ -420,5 +418,10 @@ export function BrandedCvDocument({
 
 /** Pure render: data + branding → PDF bytes. No database, network or auth concerns. */
 export function renderBrandedCv(data: BrandedCvData, branding: BrandedCvBranding): Promise<Buffer> {
+  // Phase 8 review WR-01: lazy, render-time registration (not a module-scope
+  // side effect) — see the comment on ensureBrandedCvFonts() for why. Any
+  // ENOENT here throws inside generateBrandedCvAction's existing try/catch,
+  // not while loading the candidate detail route module.
+  ensureBrandedCvFonts()
   return renderToBuffer(<BrandedCvDocument data={data} branding={branding} />)
 }

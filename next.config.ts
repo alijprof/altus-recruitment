@@ -40,15 +40,16 @@ const nextConfig: NextConfig = {
     '@ffmpeg-installer/ffmpeg',
     '@ffprobe-installer/ffprobe',
   ],
-  // Phase 08-02: src/lib/pdf/register-fonts.ts reads the vendored Liberation
-  // Sans TTFs via `readFileSync(join(process.cwd(), ...))` at module scope.
-  // A `process.cwd()`-built path is not statically analysable by Next's
-  // output file tracer, so without this entry the font files would be
-  // excluded from the deployed serverless function bundle and the branded-CV
-  // generation route would 500 at cold start on Vercel (works locally, where
-  // the full repo is on disk, and fails only in production — research
-  // Pitfall 4). The candidate detail route is where the 08-07 generation
-  // Server Action is bundled.
+  // Phase 08-02 (updated for review WR-01): src/lib/pdf/register-fonts.ts
+  // reads the vendored Liberation Sans TTFs via
+  // `readFileSync(join(process.cwd(), ...))`, lazily, the first time a
+  // branded CV is actually rendered. A `process.cwd()`-built path is not
+  // statically analysable by Next's output file tracer, so without this
+  // entry the font files would be excluded from the deployed serverless
+  // function bundle and branded-CV generation would fail at first render on
+  // Vercel (works locally, where the full repo is on disk, and fails only in
+  // production — research Pitfall 4). The candidate detail route is where
+  // the 08-07 generation Server Action is bundled.
   outputFileTracingIncludes: {
     '/candidates/[id]': ['./src/lib/pdf/fonts/**'],
   },
