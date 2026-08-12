@@ -789,9 +789,13 @@ function sniffImageType(bytes: Uint8Array): 'png' | 'jpeg' | 'unknown' {
 | A4 | The logo should live in a **new** `org-logos` Storage bucket rather than the existing `cvs` bucket | §Branding Settings & Logo Upload | Low-medium — if reused under `cvs` instead, the path convention needs a one-off top-level exception (`{org}/logo.png` vs the `{org}/{candidate}/...` two-level convention everywhere else), and `ORG_STORAGE_BUCKETS` would NOT need a new entry (already covers `cvs`) |
 | A5 | Salary fields (`salary_current_estimate`, `salary_expectation`) should be excluded from the template entirely | §Repo Integration — Parsed Data Fields, Pitfall 5 | Low — this is a reasonable default (BCV-02's field list doesn't mention salary), but was not an explicit locked decision either; confirm during template design review |
 
-## Open Questions
+## Open Questions (RESOLVED)
 
-1. **Should the "Generate branded CV" action be gated behind `requireEntitledOrg()`?**
+> Both questions below were settled by founder sign-off on 2026-08-12 and are
+> retained for the reasoning trail only. Neither is open.
+
+1. **[RESOLVED — UNGATED]** Should the "Generate branded CV" action be gated
+   behind `requireEntitledOrg()`?
    - What we know: every other candidate-page mutation (`uploadCVAction`,
      `retryParseAction`) and the branding-settings mutation
      (`updateBrandingAction`) are gated, even the ones with zero AI spend —
@@ -803,15 +807,18 @@ function sniffImageType(bytes: Uint8Array): 'png' | 'jpeg' | 'unknown' {
      the CV-file View route deliberately is NOT gated, reasoning "withholding
      a customer's own file behind a billing state is a data-hostage
      posture").
-   - Recommendation: gate it (consistent with every other *mutation*, as
-     opposed to the *read* path which is deliberately ungated) — generating
-     a NEW artifact is closer to `uploadCVAction` than to the CV-file read
-     route. Low-stakes either way since it costs nothing; flag for a
-     one-line founder confirmation alongside the PDF-library and
-     contact-stripping-scope sign-offs.
+   - Recommendation at research time: gate it (consistent with every other
+     *mutation*, as opposed to the *read* path which is deliberately ungated).
+   - **RESOLUTION (founder, 2026-08-12): OVERRIDDEN — do NOT gate it.** The
+     action stays ungated by billing state, matching the no-data-hostage stance
+     documented on `cv-file/[cvId]/route.ts`: a customer's own candidate data
+     is not withheld behind a billing state, and this action spends nothing
+     external that a gate would protect. Auth + RLS remain the only gates.
+     Implemented in plan 08-07.
 
-2. **Does the branded PDF need its own "version" concept at all, or is
-   "regenerate replaces" (BCV-06) sufficient forever?**
+2. **[RESOLVED — SINGLE CURRENT COPY]** Does the branded PDF need its own
+   "version" concept at all, or is "regenerate replaces" (BCV-06) sufficient
+   forever?
    - What we know: BCV-06 explicitly wants regeneration to supersede
      cleanly with no duplicate rows — a single-current-copy model.
    - What's unclear: whether a future phase might want to keep a history of
@@ -823,6 +830,11 @@ function sniffImageType(bytes: Uint8Array): 'png' | 'jpeg' | 'unknown' {
      versioning later (it would just relax the unique constraint), unlike
      the flagged-`candidate_cvs`-row option which would have already spent
      its versioning column on the wrong semantics.
+   - **RESOLUTION (2026-08-12): single current copy, as recommended.** Plan
+     08-01's migration enforces it with `unique (candidate_id)`; plan 08-07
+     implements regeneration as write-new-then-delete-old against that
+     constraint. Adding history later remains a constraint relaxation, not a
+     redesign.
 
 ## Environment Availability
 
