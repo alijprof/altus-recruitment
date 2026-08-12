@@ -148,3 +148,7 @@ None - no external service configuration required. No migration was added (the p
 
 All 8 created/modified files confirmed present on disk; all 4 commits
 (`73446be`, `df63811`, `1014d4b`, `7ebf1c2`) confirmed present in `git log`.
+
+## Addendum — superseded (2026-08-11)
+
+`getCvFileUrlAction` and the client `cv-file-link` machinery it drove were replaced by the GET route handler `src/app/(app)/candidates/[id]/cv-file/[cvId]/route.ts` (302 to a signed URL) after the production View-CV incident — see `07-HOTFIX.md`. All audit, tenancy and PII properties were ported verbatim; `getCvFileUrlAction` is no longer a stable importable contract.

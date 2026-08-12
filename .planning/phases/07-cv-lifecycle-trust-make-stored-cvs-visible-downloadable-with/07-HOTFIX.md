@@ -1,6 +1,6 @@
 # Phase 07 — HOTFIX: "View CV" never opened (production incident, 2026-08-11)
 
-**Status:** fixed, awaiting authed smoke on production
+**Status:** fixed and verified live on production — authed lifecycle smoke 7/7 green, 2026-08-11 18:58 (commit bbdb004; see Addendum)
 **Severity:** P1 — the headline deliverable of Phase 7 was inert for every user
 **Base:** `d821e4f` (Phase 7 merged and live)
 **Surface:** the `View` control on the candidate detail page (both the "CV files"
@@ -163,7 +163,7 @@ a client bug could open no longer exists.
 | `prettier --check` (touched files) | pass |
 | `pnpm vitest run` (full) | **79 files passed, 4 skipped; 959 tests passed, 28 todo, 0 failed** (was 952 — the deleted action's 7 tests replaced by 5 anchor + 9 route tests) |
 | `pnpm build` | **pass** — compiled, Next TypeScript route-type validation finished, `/candidates/[id]/cv-file/[cvId]` registered as `ƒ (Dynamic)`. Required stubbing env vars locally (pre-existing condition); stub deleted, not committed. |
-| Frozen Phase-6 files | **hash-identical to `d821e4f`** — `tests/smoke/authed/cv-intake.smoke.ts` `cd18fde…`, `src/lib/cv/parse-messages.ts` `95a21eb…` |
+| Frozen Phase-6 files | **hash-identical to `d821e4f`** — `tests/smoke/authed/cv-intake.smoke.ts` `cd18fde…`, `src/lib/cv/parse-messages.ts` `95a21eb…` (scope: the hotfix worktree vs d821e4f; on merged main cv-intake.smoke.ts is d157161 via bc3eb0a — see HF-3/Addendum) |
 
 No migrations. No new dependencies. No production access.
 
@@ -172,6 +172,7 @@ No migrations. No new dependencies. No production access.
 1. **The authed smoke has not been run against a deployed build.** This is the
    only gate that can actually prove the fix, because it is the only one that
    exercises a real browser. `pnpm smoke:auth` after deploy.
+   [RESOLVED 2026-08-11 — 7/7 green on prod; see Addendum]
 2. **The `notFound()` 404 page in a bare new tab is untested visually.** It is
    the app's standard not-found surface; worth an eyeball.
 3. **Sentry `layer` tag changed** from `action` to `route` and `helper` from

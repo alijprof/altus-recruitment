@@ -189,3 +189,11 @@ code review and both authed smokes"), the following must still happen:
 - FOUND: `.planning/phases/07-cv-lifecycle-trust-make-stored-cvs-visible-downloadable-with/07-VERIFICATION.md`
 - FOUND: commit `5a05305` (test(07-08): author cv-lifecycle.smoke.ts)
 - FOUND: commit `348eded` (docs(07-08): record Task 1 gate results + Task 3 authoring evidence)
+
+## Addendum (2026-08-12)
+
+Outstanding items 1 and 2 from "What's still outstanding" above — the
+mechanical code review (Task 2) and the `pnpm smoke:auth` execution (Task 3)
+— have since been closed; see the `07-VERIFICATION.md` addendum for the full
+record (SHIP-CONFIRMED review, 7/7 lifecycle + 8/8 intake smoke green on
+production). Item 3, founder UAT, remains open.

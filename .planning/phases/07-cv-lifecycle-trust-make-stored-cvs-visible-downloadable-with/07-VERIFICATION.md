@@ -309,3 +309,22 @@ This SUMMARY/VERIFICATION pair is intentionally marked PARTIAL. Per this
 run's constraints, `07-08-SUMMARY.md`, `STATE.md`, and `ROADMAP.md` are NOT
 being committed by this run — that remains for the orchestrator once the
 code-review pass and the post-merge smoke execution both land.
+
+## Addendum (2026-08-12) — outstanding items closed
+
+This addendum supersedes the "Overall verdict for this run" block above — it
+records what has happened since this run closed.
+
+- **Task 2 (code review) COMPLETE** — `07-REVIEW.md` returned FIX-FIRST with
+  24 findings; all 24 closed in `07-FIXES.md`; re-review returned SHIP; final
+  acknowledgement SHIP-CONFIRMED at `39866f3` (mutation-verified); a further
+  hotfix-range acknowledgement SHIP-CONFIRMED covered `d821e4f..327a716`.
+- **Task 3 (smoke execution) COMPLETE** post-merge on production —
+  `cv-lifecycle.smoke.ts` 7/7 green 2026-08-11 18:58 at `bbdb004`, with View
+  verified as a real download (302 to a signed storage URL returning 200; 404
+  for fabricated ids); `cv-intake.smoke.ts` 8/8 green 18:24 at `bc3eb0a`.
+  Caveat, recorded honestly: the two specs passed in separate runs and
+  `read-only.smoke.ts` (9 tests) has no recorded execution this phase, so a
+  single full-suite `pnpm smoke:auth` all-24-green run remains outstanding
+  evidence.
+- **Task 4 (founder UAT) OPEN** — the only remaining phase task.
