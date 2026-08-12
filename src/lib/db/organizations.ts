@@ -21,8 +21,14 @@ import type { DbResult } from './types'
 // cast boundary below remains in effect until Task 0.4 regenerates database.ts
 // against the live schema — at that point the cast may be removed and the
 // extended fields promoted into the generated type directly.
+//
+// Phase 8 Plan 05 (BCV-04): logo_storage_path added by migration
+// 20260812120100_org_logos_bucket.sql. Same cast-boundary discipline: the
+// SELECT string below is the source of truth until database.ts is
+// regenerated against the post-08-01/08-05 schema.
 export type OrganizationRow = Pick<Tables<'organizations'>, 'id' | 'name' | 'slug'> & {
   logo_url: string | null
+  logo_storage_path: string | null
   apply_form_enabled: boolean
   stripe_customer_id: string | null
   brand_primary: string | null
@@ -35,7 +41,9 @@ export async function getOrganization(
 ): Promise<DbResult<OrganizationRow>> {
   const { data, error } = await supabase
     .from('organizations')
-    .select('id, name, slug, logo_url, apply_form_enabled, stripe_customer_id, brand_primary, brand_secondary')
+    .select(
+      'id, name, slug, logo_url, logo_storage_path, apply_form_enabled, stripe_customer_id, brand_primary, brand_secondary',
+    )
     .eq('id', organizationId)
     .maybeSingle()
 
@@ -45,14 +53,16 @@ export async function getOrganization(
   }
   if (!data) return { ok: false, code: 'not_found' }
   // reason: generated Database types pre-date the logo_url + apply_form_enabled +
-  // stripe_customer_id + brand_primary + brand_secondary migrations; cast at the
-  // boundary. Task 0.4 regenerates database.ts — after that this cast may be removed.
+  // stripe_customer_id + brand_primary + brand_secondary + logo_storage_path
+  // migrations; cast at the boundary. Task 0.4 / 08-01's founder push
+  // regenerates database.ts — after that this cast may be removed.
   return { ok: true, data: data as unknown as OrganizationRow }
 }
 
 export type UpdateOrganizationPatch = {
   name?: string
   logo_url?: string | null
+  logo_storage_path?: string | null
   apply_form_enabled?: boolean
   // Phase 5 Task 0.3: brand colour fields (validated as hex at DB level
   // by the check constraint in 20260604120000_phase5_saas_billing.sql).
@@ -68,6 +78,9 @@ export async function updateOrganization(
   const updatePayload = {
     ...(patch.name !== undefined ? { name: patch.name } : {}),
     ...(patch.logo_url !== undefined ? { logo_url: patch.logo_url } : {}),
+    ...(patch.logo_storage_path !== undefined
+      ? { logo_storage_path: patch.logo_storage_path }
+      : {}),
     ...(patch.apply_form_enabled !== undefined
       ? { apply_form_enabled: patch.apply_form_enabled }
       : {}),
@@ -75,16 +88,19 @@ export async function updateOrganization(
     ...(patch.brand_secondary !== undefined ? { brand_secondary: patch.brand_secondary } : {}),
   }
   // reason: PostgREST .update() row-type is derived from the generated types;
-  // logo_url + apply_form_enabled + brand_primary + brand_secondary + stripe_customer_id
-  // are not yet on the generated Update row. Cast through unknown.
-  // Task 0.4 regenerates database.ts — after that this cast may be removed.
+  // logo_url + apply_form_enabled + brand_primary + brand_secondary +
+  // stripe_customer_id + logo_storage_path are not yet on the generated
+  // Update row. Cast through unknown. Task 0.4 regenerates database.ts —
+  // after that this cast may be removed.
   const typedPayload = updatePayload as unknown as Tables<'organizations'>
 
   const { data, error } = await supabase
     .from('organizations')
     .update(typedPayload)
     .eq('id', organizationId)
-    .select('id, name, slug, logo_url, apply_form_enabled, stripe_customer_id, brand_primary, brand_secondary')
+    .select(
+      'id, name, slug, logo_url, logo_storage_path, apply_form_enabled, stripe_customer_id, brand_primary, brand_secondary',
+    )
     .single()
 
   if (error) {
@@ -112,12 +128,17 @@ export async function updateOrganization(
 // getOrganizationBySlug is the only call path for the apply-page server
 // component, so extending this type + the SELECT below is the single
 // change that unlocks branded apply pages in 05-02.
+//
+// Phase 8 Plan 05 (BCV-04): logo_storage_path added so the apply page can
+// resolve a signed URL for an uploaded logo via resolveOrgLogoUrl, same
+// precedence rule as everywhere else (src/lib/branding/org-logo.ts).
 export type OrganizationApplyRow = {
   id: string
   name: string
   slug: string
   apply_form_enabled: boolean
   logo_url: string | null
+  logo_storage_path: string | null
   brand_primary: string | null
   brand_secondary: string | null
 }
@@ -128,7 +149,9 @@ export async function getOrganizationBySlug(
 ): Promise<DbResult<OrganizationApplyRow>> {
   const { data, error } = await supabase
     .from('organizations')
-    .select('id, name, slug, apply_form_enabled, logo_url, brand_primary, brand_secondary')
+    .select(
+      'id, name, slug, apply_form_enabled, logo_url, logo_storage_path, brand_primary, brand_secondary',
+    )
     .eq('slug', slug)
     .maybeSingle()
 
@@ -140,9 +163,10 @@ export async function getOrganizationBySlug(
     return { ok: false, code: 'internal' }
   }
   if (!data) return { ok: false, code: 'not_found' }
-  // reason: apply_form_enabled + logo_url + brand_primary + brand_secondary were
-  // added by migrations 20260519092943 and 20260604120000; the generated
-  // database.ts predates them. Cast at the boundary; the select string above
-  // is the source of truth. Task 0.4 regenerates database.ts.
+  // reason: apply_form_enabled + logo_url + brand_primary + brand_secondary +
+  // logo_storage_path were added by migrations 20260519092943, 20260604120000
+  // and 20260812120100; the generated database.ts predates them. Cast at the
+  // boundary; the select string above is the source of truth. Task 0.4
+  // regenerates database.ts.
   return { ok: true, data: data as unknown as OrganizationApplyRow }
 }
