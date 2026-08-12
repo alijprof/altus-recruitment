@@ -5,6 +5,7 @@ import * as Sentry from '@sentry/nextjs'
 
 import { getOrganizationBySlug } from '@/lib/db/organizations'
 import { BRAND_DEFAULTS, safeHex } from '@/lib/branding/colours'
+import { resolveOrgLogoUrl } from '@/lib/branding/org-logo'
 import { renderConsentTextV2 } from '@/lib/legal/consent'
 import { createServiceClient } from '@/lib/supabase/service'
 
@@ -12,6 +13,9 @@ import { ApplyForm } from './apply-form'
 
 // Plan 3 Task 3.1 — public apply form route.
 // Phase 5 Task 2.2 — per-org branding: logo + CSS custom property colours.
+// Phase 8 Plan 06 (BCV-04) — logo now resolved via resolveOrgLogoUrl, the
+// single precedence helper: an uploaded logo (logo_storage_path, signed URL)
+// wins over a legacy pasted logo_url, which wins over the wordmark fallback.
 //
 // SECURITY NOTE — service-role read here is justified:
 //   * The apply route has NO authenticated session (RLS on organizations
@@ -21,6 +25,12 @@ import { ApplyForm } from './apply-form'
 //     20260519092943) plus the maybeSingle() lookup limit the surface to a
 //     single-row read of a single, well-shaped column set.
 //   * No PII is logged here. Slug-only context goes to Sentry on errors.
+//   * The logo Storage read (resolveOrgLogoUrl, via this same service
+//     client) signs an object whose path comes from the org row we just
+//     read by slug — never from user input — and the signed URL is
+//     short-lived (ORG_LOGO_SIGNED_URL_TTL_SECONDS, 1 hour). A sign
+//     failure returns null and this page falls back to the wordmark; it
+//     never 500s because of a logo (org-logo.ts never throws).
 //
 // Anti-enumeration (D2-10): unknown slugs AND orgs with apply_form_enabled
 // = false BOTH render the standard Next 404 — gives nothing away to a
@@ -57,6 +67,12 @@ export default async function ApplyPage({ params }: Props) {
   // falls back to the Altus default. Result is ALWAYS a safe 6-digit hex string.
   const brandPrimary = safeHex(org.brand_primary, BRAND_DEFAULTS.primary)
   const brandSecondary = safeHex(org.brand_secondary, BRAND_DEFAULTS.secondary)
+
+  // Logo precedence (resolveOrgLogoUrl, single source of truth — see
+  // SECURITY NOTE above): logo_storage_path (uploaded) wins over the legacy
+  // logo_url, which wins over the wordmark fallback below. Never throws —
+  // a sign failure returns null and the wordmark renders instead.
+  const logoUrl = await resolveOrgLogoUrl(supabase, org)
 
   // GDPR consent + apply-form error copy must point applicants at the data
   // CONTROLLER (the agency itself), never a vendor mailbox. Resolve the org
@@ -109,20 +125,22 @@ export default async function ApplyPage({ params }: Props) {
       }
       className="space-y-6"
     >
-      {/* Branded header: logo (if set) + org name */}
+      {/* Branded header: logo (if resolved) + org name */}
       <header className="space-y-4 border-b pb-6">
-        {org.logo_url ? (
+        {logoUrl ? (
           <div className="flex items-center gap-3">
-            {/* next/image requires width+height or fill; use unoptimized for
-                externally-hosted logos until we control the domain list.
-                The src comes from the DB (service-role read of a non-secret
-                URL); it renders in an <img> context only, not a script context.
-                Validation: on write, logo_url is checked against a
-                /^https:\/\//i prefix regex (settings/branding/schema.ts and
-                settings/schema.ts) plus a 2048-char max — not a full
-                z.string().url() parse. */}
+            {/* next/image requires width+height or fill; use unoptimized —
+                an uploaded logo's src is a signed Supabase Storage URL, and
+                a legacy logo's src is an externally-hosted URL; neither
+                domain is in a remotePatterns allowlist (deliberate). The
+                src renders in an <img> context only, never a script
+                context. resolveOrgLogoUrl (src/lib/branding/org-logo.ts) is
+                the single precedence rule: uploaded logo_storage_path wins
+                over a legacy logo_url (still checked on write against a
+                /^https:\/\//i prefix + 2048-char max — settings/branding/
+                schema.ts), which wins over the wordmark fallback below. */}
             <Image
-              src={org.logo_url}
+              src={logoUrl}
               alt={`${org.name} logo`}
               width={160}
               height={48}
@@ -131,7 +149,8 @@ export default async function ApplyPage({ params }: Props) {
             />
           </div>
         ) : (
-          /* Wordmark fallback when no logo_url is set */
+          /* Wordmark fallback when no logo resolves (no logo set, or a sign
+             failure — resolveOrgLogoUrl never throws, it returns null). */
           <div
             className="text-xl font-bold tracking-tight"
             style={{ color: 'var(--brand-primary)' }}
