@@ -203,7 +203,10 @@ test.describe.serial('@smoke-auth branded-cv', () => {
         await page.goto('/settings/branding')
         const remove = page.getByRole('button', { name: 'Remove', exact: true })
         if (await remove.isVisible({ timeout: 15_000 }).catch(() => false)) {
+          // Phase 8 review WR-03: Remove now opens a confirmation dialog
+          // before mutating anything — click through it.
           await remove.click()
+          await page.getByRole('button', { name: 'Remove logo', exact: true }).click()
           await expect(page.getByText('No logo yet')).toBeVisible({ timeout: 15_000 })
         }
       } catch (err) {
@@ -493,7 +496,10 @@ test.describe.serial('@smoke-auth branded-cv', () => {
     smokeLogoUploaded = true
     await expect(page.getByAltText('Organisation logo preview')).toBeVisible({ timeout: 15_000 })
 
+    // Phase 8 review WR-03: Remove now opens a confirmation dialog before
+    // mutating anything — click through it.
     await page.getByRole('button', { name: 'Remove', exact: true }).click()
+    await page.getByRole('button', { name: 'Remove logo', exact: true }).click()
     await expect(page.getByText('Logo removed')).toBeVisible({ timeout: 20_000 })
     await expect(page.getByText('No logo yet')).toBeVisible({ timeout: 15_000 })
   })
