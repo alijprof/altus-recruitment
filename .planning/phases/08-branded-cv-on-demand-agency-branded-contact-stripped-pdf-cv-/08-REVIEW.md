@@ -913,3 +913,11 @@ accurate for this document as a whole.
 _Re-reviewed: 2026-08-12_
 _Reviewer: Claude (gsd-code-reviewer, Fable 5) — acknowledgement pass_
 _Depth: deep (fix-range verification + new-defect sweep)_
+
+---
+
+## Addendum — RESID-01 / RESID-02 fixed (2026-08-12, surgical fix pass)
+
+| Finding | Commit | Description |
+|---|---|---|
+| RESID-01 | (this pass) | New append-only migration `20260812160000_branded_cvs_verify_same_org_rename.sql` drops the wrongly-named `candidate_branded_cvs_same_org_check` trigger from `20260812150000` (never edited, per the append-only rule) and recreates it as `candidate_branded_cvs_verify_same_org_check` — same `assert_same_org` body, same `before insert or update of candidate_id, organization_id` timing, now sorting AFTER `candidate_branded_cvs_set_org` so `NEW.organization_id` is populated before the guard runs. Mirrors `20260518213836_fix_same_org_trigger_order.sql` exactly. `tests/unit/supabase/phase8-migrations.test.ts` no longer pins the bad name from `20260812150000`; it now asserts the FINAL effective trigger name against the rename migration, and adds a repo-wide invariant scan (chronological per-guard-function trigger-name resolution) proving no `*_same_org_guard()` family — old or new — is left on a bare `_same_org_check` name across migration history. Must land in the same `db push` as `20260812120000` / `20260812120100` / `20260812150000`. |
