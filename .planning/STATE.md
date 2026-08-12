@@ -31,7 +31,7 @@ See: .planning/PROJECT.md (updated 2026-06-12 after v1.0 milestone)
 
 ## Current Position
 
-**v1.0 SHIPPED 2026-06-12** — all 5 phases complete, verified, and live on production; roadmap and requirements archived to `.planning/milestones/v1.0-ROADMAP.md` and `v1.0-REQUIREMENTS.md`, git tag `v1.0`. Post-v1.0, **Phase 6 (CV Intake Battle-Test & Hardening, 10/10 plans) closed 2026-08-10.** **Phase 7 (CV Lifecycle & Trust, 8/8 plans) executed 2026-08-11** — mechanical code review closed all 24 findings SHIP-CONFIRMED, the View-CV P1 hotfix (route-handler redirect) is live on production at commit `bbdb004`, and the authed lifecycle smoke ran 7/7 green on production. The sole remaining phase gate is founder UAT (07-08 Task 4).
+**v1.0 SHIPPED 2026-06-12** — all 5 phases complete, verified, and live on production; roadmap and requirements archived to `.planning/milestones/v1.0-ROADMAP.md` and `v1.0-REQUIREMENTS.md`, git tag `v1.0`. Post-v1.0, **Phase 6 (CV Intake Battle-Test & Hardening, 10/10 plans) closed 2026-08-10.** **Phase 7 (CV Lifecycle & Trust, 8/8 plans) executed 2026-08-11** — mechanical code review closed all 24 findings SHIP-CONFIRMED, the View-CV P1 hotfix (route-handler redirect) is live on production at commit `bbdb004`, and the authed lifecycle smoke ran 7/7 green on production. On 2026-08-12 the **full authed smoke suite ran 24/24 green** against production in a single serial run (`--workers=1`; intake 8 + lifecycle 7 + read-only 9, scratch residue 0 SQL-verified). The sole remaining phase gate is founder UAT (07-08 Task 4).
 
 ## Pre-Launch Audit Remediation (2026-06-18)
 
@@ -50,6 +50,7 @@ All 6 go-live blockers from `.planning/audits/PRE-LAUNCH-AUDIT-2026-06-18.md` fi
 | 260618-rev | — | Consolidated review remediation (WR-01/02/03) | 0700a4a | — |
 | 260804-lfz | SC review SF-1/2/4/5/7 + SEC | CV-pipeline silent-failure cluster (honest errors, reconciler sweep, profile heal, contamination guards, failed-attempt telemetry) + browser Sentry resurrection + anon-RPC REVOKE migration (file-only) | 1cb386d, b8aeff1, e97dc2b, 9bb65c6 | verified 12/12 + full-branch review SHIP-CONFIRMED; LIVE on prod de60c30 (2026-08-04) |
 | 260804-lih | SC review SF-3 + TEL + STRIPE | Match scores on all 4 application-create paths (idempotent, tenant-verified, 3 display surfaces) + search/view/export/attribution telemetry + Stripe webhook status ledger (non-dedupe invariant preserved) + Vercel Analytics | a55fb45, a5a07ac, 8b313c0 | verified 9/9 + full-branch review SHIP-CONFIRMED; LIVE on prod de60c30 (2026-08-04); smoked anon 32/32 + authed 9/9 |
+| 260812-d3o | Phase 7 overflow closeout | Post-overflow closeout: ROADMAP Phase 6/7 ledger fixes + STATE refresh + phase-record addenda (hotfix status, verification, 07-01/07-08 summaries) + eslint array-elision fix + nofollow test pin + npm lockfile purge/gitignore | 19462eb, 567e1bf, 3173c7b | driven by 7-agent audit workflow (claims verified vs repo+git+Vercel); gates green: tsc, lint 0 err, 959 unit, full authed smoke 24/24 on prod |
 
 ### Still required before real paying customers (NOT code) — FOUNDER OWNS
 
@@ -65,7 +66,7 @@ All 6 go-live blockers from `.planning/audits/PRE-LAUNCH-AUDIT-2026-06-18.md` fi
 - ADMIN impersonation + audit layer (descoped from v1 per CONTEXT D-14).
 - Voice notes investment frozen pending phone-usage signal (founder feedback 2026-06-11).
 - Founder UAT for Phase 7 (07-08 Task 4) — the only open phase gate.
-- No single recorded all-green run of the full authed smoke suite (all 3 specs, 24 tests): cv-intake 8/8 and cv-lifecycle 7/7 passed in separate runs and `read-only.smoke.ts` has no recorded execution this phase.
+- ~~No single recorded all-green run of the full authed smoke suite~~ **RESOLVED 2026-08-12**: `pnpm smoke:auth --workers=1` = 24/24 green on production (see 07-VERIFICATION.md addendum). Follow-up: pin `workers: 1` in `playwright.smoke-auth.config.ts` (or give the sweeps an exact-prefix skip) — a *parallel* full-suite run trips the two write-capable specs' fail-closed sweep guards on each other's scratch rows (trigram-fuzzy search matches `Phase06`↔`Phase07`).
 - Founder: create Sentry Metric Alerts for the cron heartbeats per `docs/cron-monitoring.md`.
 - Founder: verify Inngest `timeouts` enforcement on the free plan (`docs/cron-monitoring.md` §7 records it as NOT YET VERIFIED) and decide the Inngest plan — the free-tier step quota was the root cause of the Aug 6-9 outage.
 - Founder: re-key any Sentry saved search or alert from `layer=action` / `helper=getCvFileUrlAction` to `layer=route` / `helper=cvFileRoute`.

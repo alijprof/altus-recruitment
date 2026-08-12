@@ -327,4 +327,14 @@ records what has happened since this run closed.
   `read-only.smoke.ts` (9 tests) has no recorded execution this phase, so a
   single full-suite `pnpm smoke:auth` all-24-green run remains outstanding
   evidence.
+- **Full-suite evidence CLOSED (2026-08-12)** — `pnpm smoke:auth --workers=1`
+  ran all three specs serially against production: **24/24 green in 2.0m**
+  (cv-intake 8, cv-lifecycle 7, read-only 9); scratch residue 0, SQL-verified.
+  Discovery from a first, parallel attempt (22/24): the two write-capable
+  specs' cleanup sweeps interfere when run concurrently — each spec's prefix
+  search is trigram-fuzzy since the search-breadth migration, so it surfaces
+  the *other* spec's scratch rows and the WR-R6 fail-closed guard correctly
+  throws rather than delete them. No wrong deletion occurred and the retries
+  swept all residue. Until the config pins `workers: 1` (or the sweeps gain an
+  exact-prefix skip), serial execution is the supported full-suite mode.
 - **Task 4 (founder UAT) OPEN** — the only remaining phase task.
