@@ -60,7 +60,7 @@ const createClientMock = vi.fn(async () => ({
   from: fromMock,
   storage: { from: storageFromMock },
 }))
-vi.mock('@/lib/supabase/server', () => ({ createClient: (...a: unknown[]) => createClientMock(...a) }))
+vi.mock('@/lib/supabase/server', () => ({ createClient: () => createClientMock() }))
 
 const getProfileMock = vi.fn()
 vi.mock('@/lib/db/profiles', () => ({ getProfile: (...a: unknown[]) => getProfileMock(...a) }))
@@ -149,7 +149,7 @@ function orgRow(overrides: Record<string, unknown> = {}) {
     name: 'Steele Charles',
     slug: 'steele-charles',
     logo_url: null,
-    logo_storage_path: null,
+    logo_storage_path: `${ORG_ID}/logo-abc.png`,
     apply_form_enabled: true,
     stripe_customer_id: null,
     brand_primary: '#1a6b50',
@@ -416,6 +416,8 @@ describe('generateBrandedCvAction', () => {
       join(process.cwd(), 'src/app/(app)/candidates/[id]/actions.ts'),
       'utf-8',
     )
-    expect(source).not.toMatch(/@\/lib\/ai/)
+    // Matches an actual import specifier only (`from '@/lib/ai...'`), not
+    // prose mentioning the path in a comment.
+    expect(source).not.toMatch(/from ['"]@\/lib\/ai/)
   })
 })
