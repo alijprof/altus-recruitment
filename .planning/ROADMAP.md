@@ -104,6 +104,27 @@ exactly the eight columns `candidateEmbeddingText` consumes, so the newly
 editable search-relevant fields invalidate correctly with zero app-side code
 and the newly editable non-search fields correctly do not.
 
+### Phase 8: Branded CV — on-demand agency-branded, contact-stripped PDF CV from parsed data, org branding (colours + uploaded logo) on one standard template, stored in candidate documents with View/Download
+
+**Goal:** A recruiter can produce a client-ready, agency-branded PDF of any parsed candidate in one click — filled from the candidate's current (edited) parsed data, styled with the org's colours and uploaded logo on one clean standard template, with direct contact details stripped — and the branded copy lives in the candidate's documents with the same View/Download affordances and export audit trail as stored CVs.
+**Requirements**: [BCV-01, BCV-02, BCV-03, BCV-04, BCV-05, BCV-06, BCV-07]
+**Depends on:** Phase 7
+**Plans:** 0 plans
+
+Requirements:
+
+- **BCV-01** — On-demand generation only: a "Generate branded CV" action on the candidate page builds the PDF from the candidate's CURRENT parsed/edited data at click time. Never auto-on-parse (edited data would go stale).
+- **BCV-02** — One standard template, tenant-branded: org `brand_primary`/`brand_secondary` + logo applied to a clean professional recruitment layout (identity header, headline/about, skills, work history, education). Same layout for every tenant.
+- **BCV-03** — Contact details stripped on the branded copy: candidate email, phone, and address never render; name stays. The original CV is untouched.
+- **BCV-04** — Real logo upload in Settings→Branding (file → Supabase Storage), replacing the URL-only field; template renders a graceful branded header when no logo exists.
+- **BCV-05** — The branded PDF is stored as a candidate document alongside the original CVs, clearly marked as the branded copy, with View/Download via the Phase-7 route-handler surface and an export audit row on every access.
+- **BCV-06** — Regeneration is safe and idempotent: regenerating supersedes the prior branded copy cleanly (no orphaned files, no duplicate rows).
+- **BCV-07** — Acceptance and closure: full autonomous gates, mechanical code review, and an authenticated browser pre-smoke — all green — before founder UAT; zero AI spend in the generation path (deterministic template fill).
+
+Plans:
+
+- [ ] TBD (run /gsd:plan-phase 8 to break down)
+
 ---
 
 *Roadmap created: 2026-05-17*

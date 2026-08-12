@@ -115,6 +115,7 @@ Items acknowledged and deferred at milestone close on 2026-06-12. All 21 quick t
 ### Roadmap Evolution
 
 - Phase 6 added (2026-08-09): CV Intake Battle-Test & Hardening — driven by customer feedback (12 parse failures in the 5-6 Aug 73-CV bulk upload; telemetry proves all failures are post-Claude write-stage)
+- Phase 8 added (2026-08-12): Branded CV — feedback item 2 (2026-08-11 session); founder locked 4 decisions live: PDF-first, contact details stripped, full feature in one phase, clean standard tenant-branded template. Context: `.planning/phases/08-*/08-CONTEXT.md`
 
 ## Performance Metrics
 
