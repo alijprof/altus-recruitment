@@ -71,7 +71,10 @@ export async function getOrganization(
       .eq('id', organizationId)
       .maybeSingle()
     data =
-      retry.data === null ? null : ({ ...retry.data, logo_storage_path: null } as typeof data)
+      retry.data === null
+        ? null // reason: the pre-migration select string is unknown to the generated
+        : // Database types (same boundary cast as this function's return).
+          ({ ...retry.data, logo_storage_path: null } as unknown as typeof data)
     error = retry.error
   }
 
@@ -146,7 +149,10 @@ export async function updateOrganization(
       .select(ORG_COLUMNS_PRE_MIGRATION)
       .single()
     data =
-      retry.data === null ? null : ({ ...retry.data, logo_storage_path: null } as typeof data)
+      retry.data === null
+        ? null // reason: the pre-migration select string is unknown to the generated
+        : // Database types (same boundary cast as this function's return).
+          ({ ...retry.data, logo_storage_path: null } as unknown as typeof data)
     error = retry.error
   }
 
@@ -209,7 +215,10 @@ export async function getOrganizationBySlug(
       .eq('slug', slug)
       .maybeSingle()
     data =
-      retry.data === null ? null : ({ ...retry.data, logo_storage_path: null } as typeof data)
+      retry.data === null
+        ? null // reason: the pre-migration select string is unknown to the generated
+        : // Database types (same boundary cast as this function's return).
+          ({ ...retry.data, logo_storage_path: null } as unknown as typeof data)
     error = retry.error
   }
 
