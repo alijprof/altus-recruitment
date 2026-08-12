@@ -18,6 +18,7 @@ import {
   updateCandidateCVParse,
 } from '@/lib/db/candidate-cvs'
 import { getOrganization } from '@/lib/db/organizations'
+import { isMissingTableError } from '@/lib/db/postgrest-errors'
 import { getProfile } from '@/lib/db/profiles'
 import { inngest } from '@/lib/inngest/client'
 import { toBrandedCvData } from '@/lib/pdf/branded-cv-data'
@@ -762,10 +763,50 @@ export async function deleteCandidateAction(rawInput: unknown): Promise<DeleteCa
     .eq('candidate_id', candidateId)
     .not('audio_storage_path', 'is', null)
 
+  // reason: candidate_branded_cvs (Phase 8 Plan 01) isn't in the generated
+  // Database types yet, same as delete_candidate below — use one untyped-
+  // client cast for both. Declared here, ahead of delete_candidate, so the
+  // branded-CV path capture below can run through it too.
+  const supabaseUntyped = supabase as unknown as {
+    from: (table: 'candidate_branded_cvs') => {
+      select: (cols: string) => {
+        eq: (
+          col: string,
+          val: string,
+        ) => Promise<{
+          data: { storage_path: string }[] | null
+          error: { code?: string } | null
+        }>
+      }
+    }
+    rpc: (
+      fn: string,
+      args: Record<string, unknown>,
+    ) => Promise<{ error: { message: string; code?: string } | null }>
+  }
+
+  // candidate_branded_cvs.storage_path, captured BEFORE the RPC below for the
+  // same reason as cvPathRows/voiceAudioRows: the row's own FK (ON DELETE
+  // CASCADE, migration 20260812120000) removes the pointer once
+  // delete_candidate runs, orphaning the PDF if we read it any later.
+  // Branded PDFs live in the SAME `cvs` bucket as uploaded CVs, so they join
+  // the same removal list below rather than needing a new bucket argument.
+  const brandedCvPathRows = await supabaseUntyped
+    .from('candidate_branded_cvs')
+    .select('storage_path')
+    .eq('candidate_id', candidateId)
+
   // If the path-capture query itself errored, the cascade below will still
   // delete the rows — leaving the files orphaned with no pointer. Surface that
-  // (code-only, no PII) so a systematic failure is visible, not silent.
-  if (cvPathRows.error || voiceAudioRows.error) {
+  // (code-only, no PII) so a systematic failure is visible, not silent. A
+  // MISSING TABLE (pre-migration deploy — this project's migrations are
+  // pushed to production by hand) is an EXPECTED state, not a capture
+  // failure: isMissingTableError tolerates it so a candidate delete on a
+  // pre-migration database behaves as "no branded CVs" rather than spraying
+  // Sentry, mirroring candidate-branded-cvs.ts's own missing-table handling.
+  const brandedCvCaptureFailed =
+    brandedCvPathRows.error && !isMissingTableError(brandedCvPathRows.error)
+  if (cvPathRows.error || voiceAudioRows.error || brandedCvCaptureFailed) {
     Sentry.captureException(
       new Error('candidate erasure: storage-path capture failed — files may be orphaned'),
       {
@@ -785,16 +826,10 @@ export async function deleteCandidateAction(rawInput: unknown): Promise<DeleteCa
   const voiceAudioPaths = (voiceAudioRows.data ?? [])
     .map((r) => r.audio_storage_path)
     .filter((p): p is string => typeof p === 'string' && p.length > 0)
+  const brandedCvPaths = (brandedCvPathRows.data ?? [])
+    .map((r) => r.storage_path)
+    .filter((p): p is string => typeof p === 'string' && p.length > 0)
 
-  // reason: delete_candidate isn't in the generated Database types until
-  // `pnpm db:types` re-runs after the migration push — use the untyped-client
-  // .rpc cast, mirroring the move_application pattern in lib/db/applications.ts.
-  const supabaseUntyped = supabase as unknown as {
-    rpc: (
-      fn: string,
-      args: Record<string, unknown>,
-    ) => Promise<{ error: { message: string; code?: string } | null }>
-  }
   const { error } = await supabaseUntyped.rpc('delete_candidate', {
     p_candidate_id: candidateId,
   })
@@ -844,7 +879,10 @@ export async function deleteCandidateAction(rawInput: unknown): Promise<DeleteCa
     }
   }
 
-  await removeFromBucket('cvs', cvPaths)
+  // Branded PDFs share the `cvs` bucket with uploaded CVs (both are keyed
+  // under <org>/<candidate>/...) — concatenated into the same removal call
+  // rather than a second bucket argument.
+  await removeFromBucket('cvs', [...cvPaths, ...brandedCvPaths])
   await removeFromBucket('voice-note-audio', voiceAudioPaths)
 
   revalidatePath('/candidates')

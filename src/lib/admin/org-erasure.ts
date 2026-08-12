@@ -16,8 +16,10 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 
 import type { Database } from '@/types/database'
 
-// The three private Storage buckets that namespace objects under <org_id>/…
-export const ORG_STORAGE_BUCKETS = ['cvs', 'spec-audio', 'voice-note-audio'] as const
+// The private Storage buckets that namespace objects under <org_id>/… —
+// 'org-logos' added Phase 8 Plan 08 (T-08-53): org branding logos, uploaded
+// via BCV-04, must not survive an org erasure either.
+export const ORG_STORAGE_BUCKETS = ['cvs', 'spec-audio', 'voice-note-audio', 'org-logos'] as const
 
 // Org-scoped tables included in a data export. All are filtered by
 // organization_id except `organizations` itself (filtered by id). The collector
@@ -32,6 +34,11 @@ export const ORG_EXPORT_TABLES = [
   'contacts',
   'candidates',
   'candidate_cvs',
+  // Phase 8 Plan 08 (T-08-52/BCV-06): the collector already skips any table
+  // that errors on schema drift (see the loop below), so listing this
+  // pre-migration table here is safe even before the founder's `db push`
+  // lands — a GDPR export records that a branded copy was generated and when.
+  'candidate_branded_cvs',
   'jobs',
   'applications',
   'activities',
@@ -65,6 +72,25 @@ type LooseClient = {
   }
 }
 
+// True when Supabase Storage says the BUCKET ITSELF does not exist, rather
+// than a real list failure (permission, network, rate limit — those must
+// still throw and fail closed). Phase 8 Plan 08 (T-08-54): 'org-logos' is
+// added to ORG_STORAGE_BUCKETS above but its own bucket-creation migration
+// (20260812120100) is, like every migration in this project, pushed to
+// production BY HAND — so a not-yet-created bucket can genuinely reach this
+// code. Matched on status + a "bucket" mention in the message rather than a
+// machine-readable code: storage-js does not expose one for this condition
+// (unlike Postgres/PostgREST's 42P01/PGRST205 pair `isMissingTableError`
+// uses), so this is deliberately looser than that sibling predicate.
+function isMissingBucketError(err: unknown): boolean {
+  if (err === null || typeof err !== 'object') return false
+  const status = (err as { status?: number; statusCode?: string }).status
+  const statusCode = (err as { statusCode?: string }).statusCode
+  const message = (err as { message?: string }).message
+  const is404 = status === 404 || statusCode === '404'
+  return is404 && typeof message === 'string' && /bucket/i.test(message)
+}
+
 // Recursively list every object path under `prefix` in a bucket. Supabase
 // Storage `list` is one level deep and returns synthetic folder entries
 // (id === null); we recurse into those and collect file paths only.
@@ -85,7 +111,24 @@ export async function listAllObjectPaths(
       const { data, error } = await client.storage
         .from(bucket)
         .list(dir, { limit: 100, offset })
-      if (error) throw error
+      if (error) {
+        // T-08-54: a bucket that does not exist in this environment must
+        // never abort the whole erasure — treat it as zero objects and move
+        // on. This is a genuine, deliberate behavioural change to a
+        // compliance path (see the header comment on isMissingBucketError):
+        // deleteAllOrgStorage's fail-closed throw-on-error contract is
+        // UNCHANGED for every other list failure; only "the bucket itself
+        // isn't there" now degrades instead of aborting.
+        if (isMissingBucketError(error)) {
+          Sentry.captureMessage('org erasure: bucket not found, treating as empty', {
+            level: 'info',
+            tags: { layer: 'admin', helper: 'listAllObjectPaths', bucket },
+            extra: { org_id: prefix },
+          })
+          return
+        }
+        throw error
+      }
       // Supabase returns synthetic folder entries with id === null alongside
       // file entries (id set). The generated FileObject type declares id as a
       // string, so cast to reflect the real folder-placeholder shape.
@@ -108,9 +151,11 @@ export async function listAllObjectPaths(
   return out
 }
 
-// Delete every Storage object under <orgId>/ across all three buckets.
-// Throws on the first list/remove error so the caller can ABORT before
-// touching the database (storage-first ordering keeps the DB intact on failure).
+// Delete every Storage object under <orgId>/ across every ORG_STORAGE_BUCKETS
+// bucket. Throws on the first list/remove error so the caller can ABORT before
+// touching the database (storage-first ordering keeps the DB intact on failure)
+// — EXCEPT a missing bucket, which listAllObjectPaths itself already degrades
+// to zero objects rather than surfacing (T-08-54).
 // Returns the count of objects removed.
 export async function deleteAllOrgStorage(
   client: SupabaseClient<Database>,
