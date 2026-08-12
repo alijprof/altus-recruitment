@@ -582,3 +582,334 @@ $ pnpm exec vitest run → exit 0, 93 files passed | 4 skipped (97); 1157 tests 
 _Reviewed: 2026-08-12_
 _Reviewer: Claude (gsd-code-reviewer, Fable 5)_
 _Depth: deep_
+
+---
+
+## Re-review acknowledgement — 2026-08-12 (second pass, adversarial)
+
+**Range re-reviewed:** `a3cf005..2da65c7` (fix work: `4cae143..871b8b6` for CR-01,
+`871b8b6..2da65c7` for CR-02/CR-03/WR-01..WR-07)
+**Method:** read the fix code and its tests directly; traced the failure scenario
+from each original finding to see whether it is now *impossible* rather than
+merely *addressed*; re-ran the gates myself rather than trusting the recorded
+results.
+
+**Gates I re-ran (not quoted from the fix pass):**
+
+```
+$ pnpm typecheck                                      → exit 0, clean
+$ pnpm exec vitest run                                → 93 passed | 4 skipped (97);
+                                                        1157 tests passed | 1 skipped | 28 todo
+$ pnpm exec prettier --check <41 phase-8 .ts/.tsx>    → "All matched files use Prettier code style!"
+```
+
+WR-07's claim is therefore confirmed independently: the whole phase diff is
+prettier-clean, not just the two files 08-09 touched.
+
+---
+
+### Verified genuinely fixed
+
+**CR-01 — missing-column tolerance (`src/lib/db/organizations.ts`).** All three
+query sites carry the retry, and the retry is *correctly asymmetric*:
+
+| Site | Line | Behaviour on `42703`/`PGRST204` |
+|---|---|---|
+| `getOrganization` | `:66-79` | retries with `ORG_COLUMNS_PRE_MIGRATION`, substitutes `logo_storage_path: null` |
+| `updateOrganization` | `:140-157` | retries **only when `patch.logo_storage_path === undefined`** |
+| `getOrganizationBySlug` | `:209-223` | retries with `APPLY_COLUMNS_PRE_MIGRATION`, substitutes null |
+
+The specific thing I was asked to check — *can the update path silently drop an
+explicit `logo_storage_path` write?* — **it cannot.** The retry is gated on
+`patch.logo_storage_path === undefined`, and both writers of that column
+(`uploadOrgLogoAction` at `settings/branding/actions.ts:191-194`,
+`removeOrgLogoAction` at `:251-254`) always pass the key, so on a pre-migration
+database they fail loudly (`{ ok: false, code: 'internal' }` →
+"Could not save branding settings. Please try again.") instead of toasting
+success over a dropped write. `uploadOrgLogoAction` additionally rolls the
+just-uploaded Storage object back on that failure (`:199-201`), so no orphan.
+The `PostgREST` `UPDATE … RETURNING` semantics make the double-attempt safe: the
+first statement fails whole and rolls back, so the retry is not a partial
+re-apply.
+
+**CR-03 — Server Action body limit.** `next.config.ts:20-24` sets
+`experimental.serverActions.bodySizeLimit = '12mb'`, above both `MAX_CV_BYTES`
+(10 MiB) and `MAX_LOGO_BYTES` (2 MiB); `tests/unit/next-config.test.ts` parses
+both caps out of source and asserts the inequality, so the three numbers cannot
+drift apart silently. The 1.0–2.0 MB logo that previously 413'd before reaching
+the action now reaches `assertUploadableLogo`, which is the honest cap.
+
+**WR-01 — lazy fonts.** `register-fonts.ts` now exports `ensureBrandedCvFonts()`
+called from `renderBrandedCv` (`branded-cv-document.tsx:421`); the module-scope
+`import './register-fonts'` side effect is gone and no other module imports it
+for effect (checked repo-wide). An ENOENT now throws inside
+`generateBrandedCvAction`'s existing try/catch (`actions.ts:607-624`), not while
+loading the `/candidates/[id]` route module. **No race under concurrency:** the
+whole initialiser is synchronous (`readFileSync`, `Font.register`,
+`registerHyphenationCallback` — no `await`), so on Node's single thread it is
+atomic with respect to the event loop; two concurrent requests cannot interleave
+inside it. `fontsReady = true` is set *after* registration, so a throwing first
+call correctly leaves the next call to retry rather than pinning a half-registered
+state. IN-01's dead guard is genuinely dead no more.
+
+**WR-02 — smoke cleanup.** `smokeLogoUploaded` is set the instant the "Logo
+uploaded" toast is confirmed (`branded-cv.smoke.ts:490-493`), *before* the
+in-test Remove, and the `afterAll` block (`:191-221`) reverses it on every path
+that reaches the hook, idempotently, capturing-then-rethrowing so the candidate
+sweep still runs and the run still fails loudly. This is the fail-closed shape
+the finding asked for.
+
+**WR-04 — warning copy.** `BRANDED_CV_FREE_TEXT_WARNING` now names day rate and
+salary alongside phone/email, and the module header no longer claims an absolute
+guarantee it does not make.
+
+**WR-05 — 502 vs 404.** `branded-cv/route.ts:102-113` returns 502 only for
+`code: 'internal'`; `not_found` (missing row, cross-tenant, missing table) still
+collapses to a bare 404. **This cannot leak tenant existence:** `code: 'internal'`
+is only ever produced by a genuine PostgREST/Postgres fault in
+`getBrandedCvForCandidate` — a cross-tenant id yields `data: null` under RLS
+(→ `not_found`), and a pre-migration table yields `isMissingTableError`
+(→ `not_found`). The 502 body/status is byte-identical for any candidate id and
+is the same response the failed-sign path already returns, so an attacker learns
+nothing id-specific. Pinned at `branded-cv-route.test.ts:156-171`.
+
+**WR-06 — activity result + generation audit.** The `createActivity` result is
+checked and a failure is Sentry-captured with `subop: 'activity'`
+(`actions.ts:698-717`). **The new `recordExportAudit` row cannot fire on a
+failure path:** it sits after the `!upsertResult.ok` early-return and consumes
+`upsertResult.data.row.id`, so every failure branch (validation, no user,
+candidate not found, profile, org, render throw, upload error, upsert error,
+missing-table) returns before it. `recordExportAudit` is never-throw by contract
+(`src/lib/db/audit.ts:112-129`), so it cannot convert a successful generation
+into a user-visible failure.
+
+**WR-07 — formatting.** Independently re-verified above. The only source changes
+in the range beyond the named fixes are pure prettier reflows
+(`org-erasure.ts`, `candidate-branded-cvs.ts`, `branded-cv-panel.tsx`) — I diffed
+them; no behaviour is smuggled in.
+
+**Frozen specs.** `git diff a3cf005..2da65c7 -- tests/smoke/authed/cv-intake.smoke.ts
+tests/smoke/authed/cv-lifecycle.smoke.ts` is **empty**. The only smoke file
+touched in the entire range is the new `branded-cv.smoke.ts`.
+
+**The 12 mb body limit is not a meaningful new DoS surface.** The project's own
+Phase 2 research records the hosting ceiling — *"Vercel has a 4.5 MiB serverless
+body size limit on free / 50 MiB on Pro… we're already on Pro"*
+(`02-RESEARCH.md:715`) — so the platform, not Next, remains the outer bound, and
+12 mb sits well inside it. The delta is that a Server Action POST on a public
+surface (`/sign-in`, `/sign-up`, `/apply/[orgSlug]`) can now buffer up to 12 MB
+instead of 1 MB before the app's own cap runs. Bounded and unavoidable while
+uploads go through Server Actions rather than direct-to-Storage signed URLs
+(which `02-RESEARCH.md:1344` already recommends as the eventual shape).
+
+---
+
+### Both declared deviations are sound
+
+**WR-03 (AlertDialog instead of literal option (a)) — accept.** The fixer's
+objection is correct and I verified it against the code: `hasAnyLogo` is
+`Boolean(currentLogoUrl)` (`logo-upload-field.tsx:154`), and `resolveOrgLogoUrl`
+prefers the uploaded path but *falls back to `logo_url`*. For a legacy-URL-only
+org there is no `logo_storage_path` to clear, so option (a) would have shipped a
+Remove button that toasts "Logo removed" while the same logo keeps rendering —
+a silent-failure bug of exactly the class CLAUDE.md forbids, and worse than the
+defect being fixed. Option (b) was offered by the original finding as an equally
+valid alternative; the implementation gates on `isLegacyUrl` to name the
+irreversible case specifically, keeps the dialog open on failure so the owner can
+retry, and both smoke interactions were updated to click through it
+(`branded-cv.smoke.ts:209, :502`, disambiguated by `exact: true` — "Remove" vs
+"Remove logo").
+
+**WR-06 (`subject` instead of `action` in metadata) — accept.**
+`recordExportAudit` hard-codes `p_action: 'export'` (`audit.ts:115`), so a
+metadata key named `action` would sit next to a column of the same name holding a
+different value — a genuine readability trap for whoever later greps the audit
+log. `subject` carries the same disambiguating intent (generation vs the delivery
+route's download, which share `action = 'export'`) without the collision. Same
+semantics, better name.
+
+---
+
+### Residual findings
+
+#### RESID-01 — **BLOCKER** — CR-02's guard trigger is named so that it fires *before* `set_organization_id`, which will break **100 % of branded-CV generation** the moment the founder pushes the pending Phase-8 migrations
+
+**Files:**
+- `supabase/migrations/20260812150000_branded_cvs_same_org_guard.sql:73-77`
+- pinned wrong at `tests/unit/supabase/phase8-migrations.test.ts:143, :153`
+- fails at `src/lib/db/candidate-branded-cvs.ts:231-247` (`upsertBrandedCv` insert)
+
+**Issue.** The new trigger is created as `candidate_branded_cvs_same_org_check`.
+Postgres fires same-timing triggers in **alphabetical order by trigger name**, and
+`…_same_org_check` sorts *before* `…_set_org` (`'a' < 'e'`). The guard therefore
+runs while `NEW.organization_id` is still `NULL`, and `assert_same_org`
+(`20260517204500:15-38`) raises whenever the parent's org `is distinct from` the
+child's — `<uuid> is distinct from NULL` is `true`, so it raises on **every**
+insert.
+
+This is not a theoretical ordering nit. This repo already shipped this exact bug
+and already fixed it, and the fix migration says so in its own header:
+
+> `20260518213836_fix_same_org_trigger_order.sql` — *"The original guards were
+> named `<table>_same_org_check` which sorts BEFORE the schema's `<table>_set_org`
+> triggers (because "same" < "set"). Result: the guard runs while
+> NEW.organization_id is still NULL, fetches the parent's real org, and raises
+> "expected NULL, got <org>". **Every insert into contacts / jobs / applications /
+> candidate_cvs that relied on the trigger to fill organization_id (i.e., every
+> app-level insert) failed in production.** … Use `verify_same_org_check` (v > s)."*
+
+Every table added since then follows the corrected convention —
+`ai_summaries_verify_same_org_check`, `spec_drafts_verify_same_org_check`,
+`job_ads_verify_same_org_check`, `candidate_cvs_verify_same_org_check`. CR-02's
+migration copied the **pre-fix** precedent file (`20260518211005`) verbatim,
+including the trigger name that `20260518213836` exists solely to retire, and
+"mirroring the `candidate_cvs` precedent exactly" is what the fix log claims as
+its evidence of correctness. The `drop trigger if exists` in the new migration
+also targets the wrong name, so it does not clean itself up.
+
+**Why this bites 100 % of the feature and not just the attacker.**
+`upsertBrandedCv` deliberately never supplies `organization_id`
+(`candidate-branded-cvs.ts:186-188`: *"NEVER sets organization_id from an
+argument — the candidate_branded_cvs_set_org BEFORE INSERT trigger owns it"*), so
+the guard always sees `NULL`. Trace:
+
+1. Recruiter clicks **Generate**. PDF renders, uploads to `cvs` Storage.
+2. `upsertBrandedCv` finds no existing row → INSERT.
+3. `candidate_branded_cvs_same_org_check` fires first, `NEW.organization_id` is
+   `NULL` → `assert_same_org` raises `P0001`
+   (`cross-tenant FK guard: public.candidates belongs to org <X>, expected `).
+4. `P0001 ≠ 23505`, so the race-recovery branch does not engage → Sentry capture
+   → `{ ok: false, code: 'internal' }`.
+5. `generateBrandedCvAction` deletes the just-uploaded PDF (`actions.ts:653`) and
+   returns **"Couldn't save the branded CV. Please try again."**
+
+Since no `candidate_branded_cvs` rows exist anywhere yet (the table's migration
+is still unpushed), *every* generation is a first-time INSERT — the headline
+feature of Phase 8 is dead on arrival for every tenant, on the first click of
+UAT. (The UPDATE path survives, because the trigger only fires
+`update of candidate_id, organization_id` and `updateExisting` touches neither —
+but no row can ever be created to update.)
+
+Secondary effect: the guard as written *does* also block the CR-02 attack (the
+attacker's `NULL`-org insert raises too, and an attacker who supplies the victim's
+`organization_id` to satisfy the guard is then rejected by the INSERT policy's
+`WITH CHECK`, which Postgres evaluates *after* BEFORE-ROW triggers). So the
+security hole is closed — by breaking the feature for everyone. That is not the
+fix that was asked for, and the unit suite cannot see it: `phase8-migrations.test.ts`
+is source inspection only, and every other Phase-8 test mocks Supabase, so 1157
+green tests say nothing about this.
+
+**Fix** (append-only — `20260812150000` is committed, so do **not** edit it; it is
+unapplied everywhere, so this new file can travel in the same push):
+
+```sql
+-- supabase/migrations/2026xxxxxxxxxx_branded_cv_guard_trigger_order.sql
+-- Mirrors 20260518213836: the guard must sort AFTER <table>_set_org.
+drop trigger if exists candidate_branded_cvs_same_org_check
+  on public.candidate_branded_cvs;
+drop trigger if exists candidate_branded_cvs_verify_same_org_check
+  on public.candidate_branded_cvs;
+create trigger candidate_branded_cvs_verify_same_org_check
+  before insert or update of candidate_id, organization_id
+  on public.candidate_branded_cvs
+  for each row execute function public.candidate_branded_cvs_same_org_guard();
+```
+
+Then update `tests/unit/supabase/phase8-migrations.test.ts:143,153` to pin the
+`verify_` name (the current pins actively cement the bug), and add a pin — in the
+same style — asserting that no migration creates a `_same_org_check` trigger
+without the `verify_` prefix, so the next table cannot repeat this for a third
+time. Both migrations must land in the **same** `db push`, or the window between
+them is a live 100 %-failure window.
+
+#### RESID-02 — **WARNING** — the CR-01 hotfix that ended a real production outage has *zero* regression coverage
+
+**Files:** `src/lib/db/organizations.ts:66-79, :140-157, :209-223`;
+`tests/unit/lib/branding/org-logo.test.ts:240-290`
+
+The existing tests assert only that `logo_storage_path` appears in the SELECT
+string and that the update payload is undefined-preserving. Nothing anywhere in
+`tests/` references `42703` or `PGRST204` against `organizations` — I grepped the
+whole suite. So the three retry branches, and in particular the
+`patch.logo_storage_path === undefined` guard that is the *only* thing stopping
+`uploadOrgLogoAction` from faking success on a pre-migration database, are
+completely untested. The recorded rationale — *"no regression test, since this
+review's CR-01 fix section did not ask for one"* — is the wrong test for whether a
+test is needed: this is the highest-consequence code in the phase (it ended a
+~40-minute live apply-form outage), and the module header explicitly invites a
+future deletion (*"do not remove until the migration is confirmed applied
+everywhere this code ships"*) with nothing mechanical to stop it.
+
+**Fix:** three cheap stubs in `tests/unit/lib/branding/org-logo.test.ts` — for
+each of `getOrganization` / `getOrganizationBySlug`, a client whose first
+`maybeSingle()` returns `{ error: { code: '42703' } }` and whose second returns
+the pre-migration row, asserting `ok: true` and `logo_storage_path === null`; and
+for `updateOrganization`, one test proving a patch **with** `logo_storage_path`
+that hits `42703` returns `{ ok: false }` and issues exactly **one** update.
+
+#### RESID-03 — **INFO** — WR-04's copy change is not pinned
+
+`tests/unit/lib/pdf/branded-cv-data.test.ts:373-377` asserts only
+`typeof === 'string'` and `length > 20`, which the *pre-fix* copy also satisfied.
+The salary/day-rate widening — the entire substance of WR-04 — can be reverted
+without a single test going red. One `toMatch(/day rate|salary/i)` closes it.
+
+#### RESID-04 — **INFO** — the IN-04 disposition and the WR-01 fix contradict each other
+
+IN-04 was declined on the grounds that a module-level "logged once" flag *"would
+introduce exactly the module-level mutable state this codebase's CLAUDE.md
+explicitly prohibits."* WR-01, accepted in the same pass, introduces
+`let fontsReady = false` at module scope (`register-fonts.ts:44`). Both are fine —
+CLAUDE.md's "no module-level singletons" is about per-request client instances,
+not idempotence flags — but the stated reason for declining IN-04 is not a reason
+the pass actually holds. Re-decide IN-04 on noise-vs-value, or accept the flag.
+
+#### RESID-05 — **INFO** — generation files no audit row when the read succeeds but the render/upload fails
+
+`generateBrandedCvAction` reads the full candidate row (`actions.ts:572-580`)
+before rendering, but the new `recordExportAudit` sits at the end of the success
+path. A script that drives the action to a render or upload failure still reads
+every candidate's data with no `audit_log` row — a narrower version of the hole
+WR-06 set out to close. Low priority (the read is RLS-scoped and in-tenant), but
+worth knowing the coverage is success-path-only.
+
+**INFO dispositions from the fix pass (IN-02, IN-03, IN-05, IN-06): reasonable as
+recorded.** IN-02's "narrowing `select('*')` risks silently dropping a field the
+mapper needs" is a real risk above an INFO's value; IN-03 is genuinely a product
+call; IN-05 asked for nothing; IN-06 is process evidence (production smoke +
+founder UAT + the manual `db push`) that no code change can supply — and note
+that RESID-01 is precisely the class of defect only IN-06's outstanding execution
+evidence would have caught.
+
+---
+
+### Verdict: **NOT CONFIRMED**
+
+Nine of the ten fixed findings hold up under adversarial re-reading, both declared
+deviations are better-reasoned than the literal suggestions they replaced, the
+frozen Phase-6/7 smoke specs are untouched, and the gates are green on my own
+re-run. But **CR-02 is not fixed — it is traded for a worse failure.** The guard
+migration reintroduces, verbatim, the trigger-naming bug that
+`20260518213836_fix_same_org_trigger_order.sql` exists to prevent, and the
+consequence is that the first `db push` of the Phase-8 migrations turns branded-CV
+generation into a 100 % failure for every tenant, with a generic
+"Please try again." as the only symptom.
+
+**Residual blocking work, in order:**
+
+1. **RESID-01** — add the trigger-rename migration and repoint the two test pins;
+   push it in the *same* `db push` as `20260812120000` / `20260812120100` /
+   `20260812150000`.
+2. **RESID-02** — three stubs covering the CR-01 retry branches (do this before
+   the `logo_storage_path` casts are ever "cleaned up").
+3. Re-run `pnpm exec vitest run` + `tsc --noEmit`, then Task 3
+   (`pnpm smoke:auth --workers=1`) against the deployed build **after** the push —
+   the authed smoke's Generate step is the only thing in this project that would
+   have caught RESID-01, and it is still the only thing that will confirm it fixed.
+
+The frontmatter's `verdict: FIX-FIRST` therefore stands unchanged and remains
+accurate for this document as a whole.
+
+_Re-reviewed: 2026-08-12_
+_Reviewer: Claude (gsd-code-reviewer, Fable 5) — acknowledgement pass_
+_Depth: deep (fix-range verification + new-defect sweep)_
