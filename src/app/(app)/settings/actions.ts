@@ -91,9 +91,12 @@ export async function updateOrganizationAction(rawInput: unknown): Promise<Actio
     return { ok: false, formError: 'Only owners can edit organisation settings.' }
   }
 
+  // Phase 8 Plan 06 (BCV-04, single-surface consolidation): logo_url is
+  // deliberately NOT in this patch — /settings/branding is the only surface
+  // that may write it (via uploadOrgLogoAction / removeOrgLogoAction), so a
+  // hand-crafted payload against this action can never touch the logo.
   const result = await updateOrganization(supabase, me.organization_id, {
     name: parsed.data.name,
-    logo_url: parsed.data.logo_url && parsed.data.logo_url.length > 0 ? parsed.data.logo_url : null,
   })
 
   if (!result.ok) {

@@ -7,7 +7,12 @@ import { z } from 'zod'
 // mirror used by zodResolver on the client and safeParse on the server action.
 //
 // Empty string is allowed → treated as "clear the colour" (maps to null in DB).
-// The same convention is used for logo_url (empty = clear).
+//
+// Phase 8 Plan 06 (BCV-04, single-surface consolidation): logo_url was
+// removed from this schema entirely. The logo is now edited exclusively via
+// uploadOrgLogoAction / removeOrgLogoAction (FormData + file bytes, not a
+// colours-form field) — see logo-upload-field.tsx. Saving colours can no
+// longer touch the logo in any way, closing 08-RESEARCH.md Pitfall 1.
 
 const hexField = z
   .string()
@@ -18,23 +23,9 @@ const hexField = z
   .or(z.literal(''))
   .optional()
 
-// logo_url renders into next/image, so require https:// (no http://).
-// Empty string is still allowed → "clear the logo".
-const optionalUrl = z
-  .string()
-  .trim()
-  .max(2048, 'URL too long')
-  .refine(
-    (v) => !v || /^https:\/\//i.test(v),
-    'Use a full URL starting with https://',
-  )
-  .or(z.literal(''))
-  .optional()
-
 export const updateBrandingSchema = z.object({
   brand_primary: hexField,
   brand_secondary: hexField,
-  logo_url: optionalUrl,
 })
 
 export type UpdateBrandingInput = z.infer<typeof updateBrandingSchema>
