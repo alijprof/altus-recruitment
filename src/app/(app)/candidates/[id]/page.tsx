@@ -8,10 +8,12 @@ import { Separator } from '@/components/ui/separator'
 import { summariseConfidence } from '@/lib/cv/confidence-summary'
 import { formatDateLong, formatTimeAgo } from '@/lib/date'
 import { listApplicationsForCandidate } from '@/lib/db/applications'
+import { getBrandedCvState } from '@/lib/db/candidate-branded-cvs'
 import { listCandidateCVs } from '@/lib/db/candidate-cvs'
 import { getCandidate, listCandidateActivities } from '@/lib/db/candidates'
 import { createClient } from '@/lib/supabase/server'
 
+import { BrandedCvPanel } from './branded-cv-panel'
 import { CandidateApplications } from './candidate-applications'
 import { CandidateDeleteButton } from './candidate-delete-button'
 import { CandidateDetailHeader } from './candidate-detail-header'
@@ -149,6 +151,11 @@ export default async function CandidateDetailPage({
   const cvsResult = await listCandidateCVs(supabase, id)
   const cvRows = cvsResult.ok ? cvsResult.data : []
   const latestCv = cvRows[0] ?? null
+
+  // Branded CV state (BCV-01, Phase 8 Plan 07) — tri-state, never throws.
+  // getBrandedCvState itself degrades to 'unavailable' (rather than
+  // erroring the page) when candidate_branded_cvs isn't migrated yet.
+  const brandedCvState = await getBrandedCvState(supabase, id)
 
   // D-02: server-side computation of the "N fields unsure" cue — only when
   // there's a completed parse to summarise. PendingState/FailedState never
@@ -423,6 +430,10 @@ export default async function CandidateDetailPage({
           {/* D-01: always render for every candidate with 1+ CVs, not just
               multi-version ones — see cv-files-panel.tsx's header comment. */}
           {cvRows.length > 0 ? <CvFilesPanel cvs={cvRows} /> : null}
+
+          {/* BCV-01/07 (Phase 8 Plan 07): self-hides pre-migration — see
+              branded-cv-panel.tsx's header comment. */}
+          <BrandedCvPanel candidateId={candidate.id} state={brandedCvState} />
         </aside>
       </div>
     </div>
