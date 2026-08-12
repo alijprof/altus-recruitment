@@ -69,6 +69,7 @@ describe('CvFileLink — anchor semantics', () => {
     const rel = link.getAttribute('rel') ?? ''
     expect(rel).toContain('noopener')
     expect(rel).toContain('noreferrer')
+    expect(rel).toContain('nofollow')
   })
 
   it('shows the filename as the tooltip while keeping "View" as the accessible name', () => {

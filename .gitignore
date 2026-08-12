@@ -10,6 +10,10 @@
 !.yarn/releases
 !.yarn/versions
 
+# this repo is pnpm-only; pnpm-lock.yaml is the authoritative lockfile —
+# never allow an npm-generated lockfile back in
+package-lock.json
+
 # testing
 /coverage
 /test-results

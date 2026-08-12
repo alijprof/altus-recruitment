@@ -29,7 +29,6 @@ const eslintConfig = defineConfig([
     // exclude, which is already there for exactly this: the gate must
     // describe THIS tree only.
     '.claude/**',
-    ,
     'playwright-report/**',
     'test-results/**',
   ]),
