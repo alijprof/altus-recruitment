@@ -113,6 +113,7 @@ Items acknowledged and deferred at milestone close on 2026-06-12. All 21 quick t
 ### Pending Todos
 
 - [2026-08-12] CV parse robustness: OCR for scanned PDFs, Sonnet escalation, targeted re-ask (`.planning/todos/pending/2026-08-12-cv-parse-robustness-ocr-for-scanned-pdfs-sonnet-escalation-t.md`)
+- [2026-08-13] react-pdf browser build corrupts embedded image streams under vitest — pin node build in vitest config + stream-validity assertion + prod-smoke image check with real logo (`.planning/todos/pending/2026-08-13-react-pdf-browser-build-corrupts-image-streams-under-vitest.md`)
 
 ### Roadmap Evolution
 
