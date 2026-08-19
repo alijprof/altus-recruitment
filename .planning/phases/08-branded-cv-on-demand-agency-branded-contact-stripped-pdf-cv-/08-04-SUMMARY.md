@@ -209,3 +209,11 @@ wanted, to resume Phase 8 execution.
 ## Self-Check: PASSED
 
 All claimed files and commits verified present in the worktree and git history.
+
+## Addendum (2026-08-19) — founder design verdict
+
+Founder reviewed the real-logo sample (rendered with the actual Steele Charles
+lockup pulled from steelecharles.co.uk, tinted to their site green #1B3B29)
+and approved it **as a first draft** ("Looks good as a first draft"). The
+08-04 Task 3 design checkpoint is satisfied for phase progression; refinement
+requests remain welcome at UAT and are cheap (single template file).
