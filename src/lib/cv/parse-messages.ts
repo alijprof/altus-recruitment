@@ -17,6 +17,15 @@ export const CV_PARSE_FAILED_MESSAGE =
 // edit this copy.
 export const CV_BUDGET_CAPPED_MESSAGE = 'AI budget reached — parsing paused until reset.'
 
+// Shown when Anthropic rejects the call because the account itself is
+// unusable (out of credits, billing, key) — isAIProviderUnavailable in
+// src/lib/ai/claude.ts. Not a property of the file: deliberately retryable
+// (kept out of isUnretryableParseFailure) because a retry succeeds once the
+// account is fixed. Must NOT contain 'AI budget' — that substring routes the
+// row into the budget-cap auto-resume and billing-link UI.
+export const CV_AI_UNAVAILABLE_MESSAGE =
+  'AI parsing is temporarily unavailable. The CV is saved — try again later.'
+
 // SF-1 fix: honest copy for scanned/no-text PDFs. The substring
 // 'no extractable text' is LOAD-BEARING — isUnparseableSource below keys off
 // it, and the UI uses it to withhold a doomed "Try again" button (retrying

@@ -123,6 +123,50 @@ async function logUsage(args: LogUsageArgs): Promise<void> {
   }
 }
 
+/**
+ * True when Anthropic rejected the call because the ACCOUNT can't be used —
+ * out of prepaid credits, billing problem, revoked/invalid key, or no
+ * permission — rather than anything about this particular request. Every
+ * Claude feature fails identically until the founder fixes the account, so
+ * callers show "AI temporarily unavailable" instead of a generic failure.
+ *
+ * 2026-09-10 incident: the API org ran out of credits and the only symptom
+ * for three weeks was the generic "Parsing failed" copy on every CV. Credit
+ * exhaustion arrives as a 400 invalid_request_error ("Your credit balance is
+ * too low…"), so the 400 case keys off the message. The message is only
+ * tested here, never logged (R4).
+ */
+export function isAIProviderUnavailable(err: unknown): boolean {
+  if (!(err instanceof Anthropic.APIError)) return false
+  if (err.status === 401 || err.status === 402 || err.status === 403) return true
+  if (
+    err.type === 'billing_error' ||
+    err.type === 'authentication_error' ||
+    err.type === 'permission_error'
+  ) {
+    return true
+  }
+  return err.status === 400 && /credit balance/i.test(err.message ?? '')
+}
+
+// One Sentry issue for every occurrence (stable fingerprint), at fatal level,
+// so the "new issue" / regression alert reaches the founder once instead of
+// the failure hiding among per-feature errors. PII-free: status + purpose only.
+function alertAIProviderUnavailable(err: unknown, args: RunArgs) {
+  const status = err instanceof Anthropic.APIError ? (err.status ?? 'unknown') : 'unknown'
+  Sentry.captureException(new Error(`AIProviderUnavailable: ${status}`), {
+    level: 'fatal',
+    fingerprint: ['ai-provider-unavailable'],
+    tags: {
+      layer: 'ai',
+      alert: 'ai_provider_unavailable',
+      model: args.model,
+      purpose: args.purpose,
+      status: String(status),
+    },
+  })
+}
+
 export async function runWithLogging(args: RunArgs): Promise<Anthropic.Message> {
   // Cap enforcement — check BEFORE the Anthropic call (05-01 Task 1.4).
   // Fail open: if checkCap throws, we let the call proceed rather than
@@ -217,6 +261,7 @@ export async function runWithLogging(args: RunArgs): Promise<Anthropic.Message> 
     }
     throw lastError
   } catch (terminalErr) {
+    if (isAIProviderUnavailable(terminalErr)) alertAIProviderUnavailable(terminalErr, args)
     await logUsage({
       model: args.model,
       organizationId: args.organizationId,
