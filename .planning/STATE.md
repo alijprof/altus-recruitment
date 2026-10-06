@@ -2,8 +2,8 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: Post-v1.0 hardening (Phases 6-8)
-status: Phase 8 built + review SHIP-CONFIRMED — awaiting founder db push (4 migrations, ONE push), design eyeball, prod smoke, UAT
-last_updated: "2026-08-12T15:20:00.000Z"
+status: Phase 8 migrations LIVE (2026-10-03) — awaiting authed prod smoke (founder machine) + founder UAT for Phases 7-8
+last_updated: "2026-10-06T09:00:00.000Z"
 progress:
   total_phases: 3
   completed_phases: 1
@@ -30,6 +30,8 @@ See: .planning/PROJECT.md (updated 2026-06-12 after v1.0 milestone)
 ---
 
 ## Current Position
+
+**2026-10 recovery (after a month's pause).** On 2026-09-10 11:22 UTC the Anthropic API org ran out of prepaid credits; every Claude call failed until the founder topped up on 2026-10-02 (auto-reload deliberately left OFF). 10 CVs failed with the generic message, 4 applications got no match score. Recovery: the 10 CVs were re-parsed 2026-10-05 via the reconciler's budget-capped auto-resume path (all complete, merged, embedded); PR #3 adds `isAIProviderUnavailable` + honest "AI temporarily unavailable" CV copy + one fatal Sentry issue (`ai-provider-unavailable`). All 10 pending Aug migrations were applied to production 2026-10-03 and recorded in `supabase_migrations.schema_migrations` under their real versions, plus follow-up `20261006090000` (PUBLIC execute revoke — the Aug-4 anon revoke missed the PUBLIC grant). Still open: the 4 unscored applications (needs `/admin` → Backfill match scores), authed prod smoke (`pnpm smoke:auth --workers=1`, needs the local mint-session files), founder UAT for Phases 7-8.
 
 **v1.0 SHIPPED 2026-06-12** — all 5 phases complete, verified, and live on production; roadmap and requirements archived to `.planning/milestones/v1.0-ROADMAP.md` and `v1.0-REQUIREMENTS.md`, git tag `v1.0`. Post-v1.0, **Phase 6 (CV Intake Battle-Test & Hardening, 10/10 plans) closed 2026-08-10.** **Phase 7 (CV Lifecycle & Trust, 8/8 plans) executed 2026-08-11** — mechanical code review closed all 24 findings SHIP-CONFIRMED, the View-CV P1 hotfix (route-handler redirect) is live on production at commit `bbdb004`, and the authed lifecycle smoke ran 7/7 green on production. On 2026-08-12 the **full authed smoke suite ran 24/24 green** against production in a single serial run (`--workers=1`; intake 8 + lifecycle 7 + read-only 9, scratch residue 0 SQL-verified). The sole remaining Phase-7 gate is founder UAT (07-08 Task 4).
 

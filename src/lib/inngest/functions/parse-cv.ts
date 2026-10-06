@@ -1,13 +1,14 @@
 import * as Sentry from '@sentry/nextjs'
 import { NonRetriableError } from 'inngest'
 
-import { CVParseTruncatedError, parseCV } from '@/lib/ai/claude'
+import { CVParseTruncatedError, isAIProviderUnavailable, parseCV } from '@/lib/ai/claude'
 import { DOCX_MIME, extractTextFromBuffer, PDF_MIME } from '@/lib/ai/cv-extract'
 import { candidateEmbeddingText } from '@/lib/ai/embed-text'
 import { isProfileEffectivelyEmpty } from '@/lib/ai/profile-completeness'
 import { embed } from '@/lib/ai/voyage'
 import { classifyExtractionError } from '@/lib/cv/extraction-errors'
 import {
+  CV_AI_UNAVAILABLE_MESSAGE,
   CV_BUDGET_CAPPED_MESSAGE,
   CV_NO_TEXT_MESSAGE,
   CV_PARSE_FAILED_MESSAGE,
@@ -362,11 +363,30 @@ export const parseCVOnUpload = inngest.createFunction(
       // deliberately excludes CV_PARSE_TRUNCATED_MESSAGE).
       const parsed = await step
         .run('claude-parse', async () => {
-          return await parseCV({
-            cvText: text,
-            organizationId: organization_id,
-            userId: user_id,
-          })
+          try {
+            return await parseCV({
+              cvText: text,
+              organizationId: organization_id,
+              userId: user_id,
+            })
+          } catch (err) {
+            // The Anthropic account itself is unusable (out of credits,
+            // billing, key — 2026-09-10 incident). Classified HERE, inside
+            // the step, because only here is the error still the SDK's
+            // APIError instance. Retrying burns attempts on an identical
+            // rejection, so write the honest message and stop; the row stays
+            // retryable from the UI once the account is fixed. The bottom
+            // catch + onFailure both preserve this message.
+            if (isAIProviderUnavailable(err)) {
+              await markCvFailed({
+                candidateCvId: candidate_cv_id,
+                userMessage: CV_AI_UNAVAILABLE_MESSAGE,
+                parseErrorDetail: `claude-parse: AI provider unavailable (${readStatus(err)})`,
+              })
+              throw new NonRetriableError('AI provider unavailable')
+            }
+            throw err
+          }
         })
         .catch(async (err) => {
           if (err instanceof CVParseTruncatedError) {
